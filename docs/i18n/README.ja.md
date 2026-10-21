@@ -1,0 +1,130 @@
+# Locale Jacket
+
+[English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · **日本語** · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md)
+
+> この文書は英語版 README の翻訳です。内容に相違がある場合は[英語版](../../README.md)が優先されます。開発や技術的な詳細も英語版を参照してください。
+
+Locale Jacket は Chrome / Edge（Manifest V3）の拡張機能です。**サイトごとに**ウェブサイトから見えるブラウザのロケールを変えます（例: google.com には `en-US`、apple.com には `ja-JP`）。ブラウザ自体の UI 言語は変わりません。
+
+**デベロッパーツール ▸ センサー ▸ ロケール** と同じ効果を、デベロッパーツールを開かずに一致するすべてのタブへ自動的に適用します。ルールは Clash、sing-box、Shadowrocket と同じ書き方です: `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`DOMAIN-REGEX`、`GEOSITE`、`IP-CIDR`、`IP-CIDR6`、`IP-ASN`、`GEOIP`。`SYSTEM`/`DIRECT` の例外とデフォルトの動作にも対応しています。
+
+## 機能
+
+| サイトが読み取る値 | 偽装の方法 | 対象範囲 |
+|---|---|---|
+| `Intl.*`（DateTimeFormat、NumberFormat、Collator、`toLocaleString` など） | `Emulation.setLocaleOverride` | ページ、同一サイト / クロスサイトのフレーム、専用 Worker |
+| `navigator.language`、`navigator.languages` | `acceptLanguage` だけを指定した `Emulation.setUserAgentOverride`（User-Agent とクライアントヒントはそのまま） | ページ、フレーム、専用 Worker |
+| HTTP `Accept-Language` | 同上。最初のドキュメントリクエストには `declarativeNetRequest` も使用 | ドキュメント、サブリソース、`fetch()`、Worker のリクエスト |
+| タイムゾーン、位置情報 | **既定はオフ**。ルールごとに有効化 | ページとフレーム |
+
+- ページの JavaScript API を書き換えることはなく、Chrome 自身のエミュレーション機能だけを使います。
+- すべてローカルで動作します。サーバー、アカウント、テレメトリはありません。
+- UI は 10 言語に対応しています（後述）。
+
+## インストール
+
+**リリースからインストール（推奨）**
+1. GitHub の Releases ページから `locale-jacket-<バージョン>.zip` をダウンロードして展開します。
+2. `chrome://extensions`（Edge は `edge://extensions`）を開き、「デベロッパー モード」をオンにして「パッケージ化されていない拡張機能を読み込む」から展開したフォルダを選びます。
+3. 拡張機能をツールバーに固定すると、バッジ（`EN`、`JA` など）で現在のタブのプロファイルがわかります。シークレット ウィンドウで使うには、拡張機能の詳細ページで「シークレット モードでの実行を許可する」をオンにします。
+
+**アップデート**: 前のバージョンの展開済みフォルダからは `locale-jacket-<旧>-to-<新>.diff.zip` を使えます。追加・変更されたファイルだけが入っています。旧フォルダに上書きコピーし、`DELETED.txt` に記載されたファイルがあれば削除して、拡張機能を再読み込みしてください。拡張機能 ID と設定はそのまま引き継がれます。
+
+**`.crx` ファイル**: 同じ鍵で署名されています（ID `jenefdmhnbfepiohiplfobageceacokb`）。ただし Chrome / Edge がストア以外の `.crx` をインストールするのは企業ポリシーで許可された場合だけです。個人で使うなら「パッケージ化されていない拡張機能を読み込む」を使ってください。
+
+**ソースからビルド**: Node.js 20 以上が必要です。`npm install` と `npm run build` を実行し、生成された `dist/` を読み込みます。Chrome / Edge 125 以降に対応（155 で開発・テスト）。
+
+**初回起動時のルール**: 新規インストール時、拡張機能はフォルダ内の `presets/default-rules.yaml`（「インポート / エクスポート」と同じ形式）を読み込みます。フォルダを読み込む前にこのファイルを編集すれば、自分のルールから始められます。`.crx` にはこのファイルは含まれず、同じサンプルプリセットが自動生成されます。
+
+## 初期ルール
+
+| ルール | 結果 |
+|---|---|
+| `DOMAIN-SUFFIX,google.com` | `en-US` |
+| `DOMAIN-SUFFIX,openai.com` | `en-US` |
+| `DOMAIN-SUFFIX,apple.com` | `ja-JP` |
+| `DOMAIN-SUFFIX,yahoo.co.jp` | `ja-JP` |
+| `DOMAIN,accounts.google.com` | `SYSTEM`（実際のロケールを維持） |
+| デフォルト | `SYSTEM` |
+
+ポップアップやオプションページで自由に変更・削除できます。
+
+## デバッグ通知バー
+
+いずれかのタブを偽装している間、Chrome は **「Locale Jacket がこのブラウザのデバッグを開始しました」** と表示します。これは `chrome.debugger` API に対する Chrome のセキュリティ通知で、拡張機能はこれを隠しません。「キャンセル」を押すと Locale Jacket は一時停止し、ポップアップの「再開」で戻せます。
+
+セキュリティ上のトレードオフを受け入れる場合は、[`tools/chrome-banner-flag.ps1`](../../tools/chrome-banner-flag.ps1)（Windows）で Chrome に `--silent-debugger-extension-api` 起動オプションを追加できます。これはデバッガー権限を使う**すべての**拡張機能の通知を隠す点に注意してください。詳細は[英語版 README](../../README.md#hiding-the-debugging-banner-optional)を参照してください。
+
+## 使い方
+
+**ポップアップ**（ツールバーのアイコン）: 全体のオン / オフ、現在のタブに一致したルール・プロファイル・状態、「ページから見える値を確認」、現在のサイトのルールの追加・変更、その他のサイトのデフォルト設定。
+
+**オプションページ**:
+- **ルール**: 有効 / 無効、並べ替え、編集、削除。重複・競合・不要なルールを表示します。
+- **テストと検証**: ホスト名を入力して一致するルールと理由を確認したり、開いているタブが実際に報告する値を確認したりできます。
+- **インポート / エクスポート**: JSON または YAML（置き換えまたは統合）。
+- **データセット**: GeoSite / GeoIP / ASN データのダウンロード、インポート、自動更新。
+- **設定**: 表示言語、フレームモードなど。
+- **セッションとログ**: デバッグ中のタブとメモリ内のアクティビティログ。
+
+## ルール
+
+```yaml
+rules:
+  - type: DOMAIN-SUFFIX        # google.com とすべてのサブドメイン（ラベル単位）
+    domain: google.com
+    locale: en-US
+  - type: DOMAIN               # このホスト名に完全一致する場合のみ
+    domain: accounts.google.com
+    action: SYSTEM             # 実際のブラウザのロケールを維持（DIRECT も同じ）
+  - type: DOMAIN-KEYWORD       # ホスト名にこの文字列を含む
+    keyword: microsoft
+    locale: en-GB
+  - DOMAIN-SUFFIX,yahoo.co.jp,ja-JP   # Clash 形式の短い書き方も使えます
+  - GEOSITE,google,en-US              # GeoSite データセットが必要
+  - IP-CIDR,17.0.0.0/8,en-US          # サーバーのアドレスがこの範囲内
+  - GEOIP,LAN,SYSTEM                  # プライベートアドレス（データ不要）
+default:
+  mode: SYSTEM                 # または mode: PROFILE + locale/languages/…
+```
+
+**優先順位**（決定的。最初に異なる項目で決まります）:
+1. ルールの種類: `DOMAIN` › `DOMAIN-SUFFIX` › `DOMAIN-KEYWORD` › `DOMAIN-REGEX` › `GEOSITE` › `IP-CIDR`/`IP-CIDR6` › `IP-ASN` › `GEOIP`。ホスト名ルールは常に IP ルールより優先されます。
+2. 同じ種類の中ではより具体的なもの（ラベルの多いサフィックス、プレフィックスの長い範囲）。
+3. `priority` の大きいもの。
+4. リストで先にあるもの。
+5. 何にも一致しない場合のみデフォルトを適用。
+
+そのため並び順に関係なく、`DOMAIN,accounts.google.com → SYSTEM` は `DOMAIN-SUFFIX,google.com → en-US` より優先されます。
+
+## データセットと自動更新
+
+`GEOSITE`、`GEOIP`（国）、`IP-ASN` ルールにはデータファイルが必要です。ユーザーが求めない限り何もダウンロードされません。「オプション ▸ データセット」で編集可能な URL からダウンロードするか、ローカルファイルをインポートします。
+
+**自動更新**（任意、既定はオフ）: ブラウザの起動時、および / または毎日・毎週・毎月、ダウンロード済みのデータセットを確認します。「最短間隔」（既定 24 時間、1～720 時間）により、データセットごとの自動試行は失敗も含めて制限されるため、ブラウザを何度再起動してもダウンロードが繰り返されることはありません。リクエストは条件付きで、変更のないファイルは再ダウンロードされません。ファイルからインポートしたデータセットは自動更新されません。
+
+IP ルールは Chrome が実際に接続したサーバーのアドレスを使います。拡張機能が DNS を参照することはありません。
+
+## 表示言語
+
+ポップアップとオプションページは English、简体中文、繁體中文、日本語、한국어、Deutsch、Français、Español、Русский、Português (Brasil) に対応しています。既定ではブラウザの UI 言語に従い、「オプション ▸ 設定 ▸ 表示言語」で変更できます。サイトから見える値には影響しません。
+
+## プライバシーと権限
+
+すべてローカルで動作します。「データセット」で自分で開始したダウンロードと、オンにした自動更新（いずれも表示された URL から）を除き、拡張機能がネットワークリクエストを行うことはありません。ルールは `chrome.storage.local` に保存され、アクティビティログはメモリ内のみでホスト名だけを含みます。
+
+権限: `debugger`（エミュレーション本体）、`webNavigation` とホストへのアクセス、`declarativeNetRequestWithHostAccess`（最初のリクエストの Accept-Language）、`webRequest`（IP ルール用のサーバーアドレス、監視のみ）、`alarms`（データセット更新の定期確認、オンにした場合のみ）、`storage`。
+
+## 制限事項
+
+- デバッグ通知バーは拡張機能からは隠せません（上記参照）。
+- `chrome://`・`edge://` のページ、新しいタブページ、ウェブストア、ポリシーでブロックされたサイトはデバッグできません。
+- 新しいタブに URL を直接入力した場合、最初のスクリプトには実際のロケールが見えることがあります。HTTP ヘッダーは正しく、ページは一度自動で再読み込みできます。
+- Intl のロケールはレンダラープロセスごとに 1 つです。異なるプロファイルとプロセスを共有すると「一部のみ」と表示されます。
+- Service Worker と共有 Worker は上書きされません。
+
+詳しくは [docs/LIMITATIONS.md](../LIMITATIONS.md)、よくある問題は [docs/TROUBLESHOOTING.md](../TROUBLESHOOTING.md)（英語）を参照してください。
+
+## ライセンス
+
+GPL-3.0。[LICENSE](../../LICENSE) を参照してください。

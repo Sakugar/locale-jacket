@@ -1,5 +1,7 @@
 # Locale Jacket
 
+**English** · [简体中文](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Deutsch](docs/i18n/README.de.md) · [Français](docs/i18n/README.fr.md) · [Español](docs/i18n/README.es.md) · [Русский](docs/i18n/README.ru.md) · [Português (Brasil)](docs/i18n/README.pt-BR.md)
+
 A Chrome/Edge (Manifest V3) extension that makes websites see a **different browser locale per site** (for example `en-US` on google.com and `ja-JP` on apple.com) while the browser's own UI language stays unchanged (for example Simplified Chinese).
 
 It automates what **DevTools ▸ Sensors ▸ Locale** does, applying it to every matching tab without opening DevTools. Routing works like Clash, sing-box or Shadowrocket rules: `DOMAIN`, `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `DOMAIN-REGEX`, `GEOSITE`, `IP-CIDR`, `IP-CIDR6`, `IP-ASN` and `GEOIP`, with `SYSTEM`/`DIRECT` exceptions and a default action.
@@ -274,14 +276,6 @@ research/        probe extension + scripts behind research/FINDINGS.md
 ```
 
 Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
-
-## 中文快速说明
-
-1. `npm install && npm run build`
-2. 在 `chrome://extensions` 或 `edge://extensions` 打开“开发者模式”，点击“加载已解压的扩展程序”，选择 `dist/` 目录。
-3. 默认规则：google.com / openai.com → en-US，apple.com / yahoo.co.jp → ja-JP，accounts.google.com 保持系统语言，其余网站不修改。可在弹窗或“选项”页面中修改规则，也可以导入或导出 JSON/YAML（支持 `DOMAIN-SUFFIX,google.com,en-US` 这种 Clash 写法）。
-4. 生效时 Chrome 顶部会显示“Locale Jacket 已开始调试此浏览器”。这是 Chrome 的正常安全提示。点击“取消”会暂停扩展，之后可在弹窗中点击 Resume 恢复。
-5. 浏览器界面语言（简体中文）不会被修改。
 
 ## License
 
