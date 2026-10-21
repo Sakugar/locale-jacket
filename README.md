@@ -32,11 +32,16 @@ npm run build        # produces dist/
 
 Pin the extension so its badge (for example `EN` or `JA`) shows which profile the current tab uses. To use it in private windows, enable **Allow in Incognito** on the extension's details page.
 
+**First-run rules.** On a fresh install the extension reads `presets/default-rules.yaml` from its folder (the example preset, same format as *Import / export*). Edit that file before loading the folder to start with your own rules. It is only read when the browser has no saved Locale Jacket settings; later changes are made in the options page. The `.crx` does not contain this file and generates the same example preset instead.
+
 `npm run package` creates `release/locale-jacket-<version>.zip` for uploading to a store.
 
 `npm run crx` creates a signed `release/locale-jacket-<version>.crx` using Chrome's own packer.
 - The signing key is generated on first use in `keys/locale-jacket.pem` (git-ignored) and reused afterwards. It determines the extension ID, so back it up.
 - Chrome and Edge only install `.crx` files from outside their stores when an enterprise policy allows it (`ExtensionInstallAllowlist` / `ExtensionInstallForcelist`). For personal use, **Load unpacked** is the way to install.
+- The `.crx` is packed from a copy of `dist/` without `presets/`, and the packer refuses to write one that contains it.
+
+`npm run diff-pack` creates `release/locale-jacket-<previous>-to-<version>.diff.zip` with only the files that were added or changed since the previous release (`--from <version|zip>` to choose it). To upgrade an unpacked install, copy its contents over the old folder, delete the files listed in `DELETED.txt` (if present) and reload the extension. `CHANGES.txt` lists every added (A), modified (M) and deleted (D) file with its SHA-256.
 
 ### What to expect
 

@@ -13,7 +13,7 @@
 
 import { chromeDebuggerPort, errorMessage } from './cdp.js';
 import { SessionManager, spoofingPossible } from './manager.js';
-import { sanitizeStoredSettings } from '../shared/config-io.js';
+import { importConfigText, sanitizeStoredSettings } from '../shared/config-io.js';
 import { compileDnrRules } from '../shared/dnr.js';
 import { DatasetRuntime } from './datasets.js';
 import { DatasetUpdater } from './dataset-updater.js';
@@ -29,6 +29,7 @@ import { defaultSettings } from '../shared/presets.js';
 import type { Settings } from '../shared/types.js';
 
 const SETTINGS_KEY = 'settings';
+const PRESET_FILE = 'presets/default-rules.yaml';
 const SUSPENDED_KEY = 'suspended';
 const UPDATE_STATE_KEY = 'datasetUpdateState';
 const UPDATE_ALARM = 'dataset-update';
@@ -48,12 +49,37 @@ const info = (msg: string) => log({ t: Date.now(), level: 'info', tabId: null, m
 let settingsProblems: string[] = [];
 const dnrState: GlobalStatus['dnr'] = { active: false, ruleCount: 0, skipped: [], error: null };
 
+/**
+ * Settings for a fresh install. The unpacked build ships an editable rules file,
+ * presets/default-rules.yaml; the .crx does not, and generates the example preset instead.
+ */
+async function firstRunSettings(): Promise<Settings> {
+  let text: string | null = null;
+  try {
+    const res = await fetch(chrome.runtime.getURL(PRESET_FILE));
+    if (res.ok) text = await res.text();
+  } catch {
+    // Not in the package (the .crx build).
+  }
+  if (text !== null) {
+    const r = importConfigText(text, defaultSettings());
+    if (r.settings && !r.errors.length) {
+      info(`First run: installed ${r.settings.rules.length} rule(s) from ${PRESET_FILE}.`);
+      for (const w of r.warnings) log({ t: Date.now(), level: 'warn', tabId: null, msg: `${PRESET_FILE}: ${w}` });
+      return r.settings;
+    }
+    log({ t: Date.now(), level: 'warn', tabId: null, msg: `First run: ${PRESET_FILE} is invalid (${r.errors.join(' ')}); generated the example rule preset instead.` });
+  } else {
+    info(`First run: no ${PRESET_FILE} in the package; generated the example rule preset.`);
+  }
+  return defaultSettings();
+}
+
 async function loadSettings(): Promise<Settings> {
   const stored = (await chrome.storage.local.get(SETTINGS_KEY))[SETTINGS_KEY];
   if (stored === undefined) {
-    const s = defaultSettings();
+    const s = await firstRunSettings();
     await chrome.storage.local.set({ [SETTINGS_KEY]: s });
-    info('First run: installed the example rule preset.');
     return s;
   }
   const { settings, problems } = sanitizeStoredSettings(stored, defaultSettings());

@@ -52,10 +52,10 @@ let extId;
 let PORT;
 const u = (host, p = '/') => `http://${host}:${PORT}${p}`;
 
-async function startBrowser(userDataDir) {
+async function startBrowser(userDataDir, extensionDir = dist) {
   browser = await launch({ executable: findBrowser(kind), headless, userDataDir, keepProfile: Boolean(userDataDir), extraArgs: ['--lang=zh-CN', '--accept-lang=zh-CN,zh'] });
   cdp = browser.cdp;
-  ({ id: extId } = await cdp.send('Extensions.loadUnpacked', { path: dist }));
+  ({ id: extId } = await cdp.send('Extensions.loadUnpacked', { path: extensionDir }));
   const sw = await until(async () => {
     const { targetInfos } = await cdp.send('Target.getTargets');
     return targetInfos.find((t) => t.type === 'service_worker' && t.url.startsWith(`chrome-extension://${extId}/`));
@@ -170,7 +170,17 @@ try {
   await startBrowser(profileDir);
   const version = await cdp.send('Browser.getVersion');
   console.log(`  ${version.product}, extension ${extId}\n`);
+  const firstRun = {
+    settings: await sw(`chrome.storage.local.get('settings').then((r) => r.settings)`),
+    log: (await sw('localeJacket.log()')).map((l) => l.msg),
+  };
   await setSettings(settingsFrom(CONFIG));
+
+  await test('first run installs the rules from presets/default-rules.yaml (unpacked build)', async () => {
+    if (!firstRun.log.some((m) => m.includes('rule(s) from presets/default-rules.yaml'))) throw new Error(`log: ${firstRun.log.join(' | ')}`);
+    const values = firstRun.settings?.rules?.map((r) => r.value) ?? [];
+    if (!values.includes('google.com') || !values.includes('accounts.google.com')) throw new Error(`rules: ${values.join(', ')}`);
+  });
 
   await test('baseline: unmatched site reports the native zh-CN locale', async () => {
     const tab = await openTab(u('plain.localhost', '/plain.html'));
@@ -565,6 +575,25 @@ try {
     if (!stored?.rules?.some((r) => r.value === 'apple.localhost')) throw new Error('settings were not persisted');
     const t2 = await openTab(u('apple.localhost', '/plain.html?after-restart=1'));
     expectLocale(await report(t2), 'ja-JP', 'after restart');
+  });
+
+  await test('first run without presets/ (the .crx contents) generates the example preset', async () => {
+    const crxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lj-e2e-crx-'));
+    const freshProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'lj-e2e-fresh-'));
+    try {
+      fs.cpSync(dist, crxDir, { recursive: true, filter: (src) => path.relative(dist, src).split(path.sep)[0] !== 'presets' });
+      await browser.close();
+      await startBrowser(freshProfile, crxDir);
+      const log = (await sw('localeJacket.log()')).map((l) => l.msg);
+      if (!log.some((m) => m.includes('no presets/default-rules.yaml in the package'))) throw new Error(`log: ${log.join(' | ')}`);
+      const rules = await sw(`chrome.storage.local.get('settings').then((r) => r.settings.rules.map((x) => x.value))`);
+      if (rules.length !== 5 || !rules.includes('apple.com')) throw new Error(`rules: ${rules.join(', ')}`);
+    } finally {
+      await browser.close().catch(() => undefined);
+      browser = null;
+      fs.rmSync(freshProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+      fs.rmSync(crxDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    }
   });
 } catch (e) {
   console.error('\nHarness failure:', e);
