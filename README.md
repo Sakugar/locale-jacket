@@ -175,8 +175,8 @@ Everything runs locally. There is no server, account, telemetry or analytics, an
 ## Development
 
 ```sh
-npm test            # build + 102 unit tests (rule engine, YAML, import/export, DNR, session lifecycle)
-npm run e2e         # build + 21 end-to-end tests in real Chrome (headless), using the verify server
+npm test            # build + unit tests (rule engine, YAML, import/export, DNR, session lifecycle)
+npm run e2e         # build + end-to-end tests in real Chrome (headless), using the verify server
 npm run e2e:edge    # the same in Microsoft Edge
 node e2e/run.mjs --headful            # watch it run
 npm run screenshots # UI screenshots into e2e/artifacts/
