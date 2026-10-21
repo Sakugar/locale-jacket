@@ -13,7 +13,9 @@ const withTests = process.argv.includes('--tests');
 
 function tsc(project) {
   const bin = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
-  const r = spawnSync(bin, ['-p', project], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+  const r = process.platform === 'win32'
+    ? spawnSync(`"${bin}" -p ${project}`, { cwd: root, stdio: 'inherit', shell: true })
+    : spawnSync(bin, ['-p', project], { cwd: root, stdio: 'inherit' });
   if (r.status !== 0) {
     console.error(`tsc -p ${project} failed`);
     process.exit(r.status ?? 1);
