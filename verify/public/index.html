@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>
+// Runs before anything else on the page, like a site's first inline script.
+{{SNAPSHOT_JS}}
+window.__ljStart = __ljSnapshot();
+window.__ljDocumentAcceptLanguage = {{ACCEPT_LANGUAGE_JSON}};
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Locale Verification</title>
+<style>
+  :root {
+    --bg: #f7f7f8; --fg: #1d1d20; --muted: #6b6b75; --card: #fff; --line: #e3e3e8;
+    --ok: #1a7f37; --ok-bg: #e7f6ec; --bad: #b42318; --bad-bg: #fdecea; --accent: #3b5bdb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151518; --fg: #ececf1; --muted: #9a9aa6; --card: #1f1f24; --line: #33333b;
+      --ok: #5cd187; --ok-bg: #12301d; --bad: #ff8a80; --bad-bg: #3a1714; --accent: #8ea2ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 28px 0 8px; }
+  p { margin: 4px 0; color: var(--muted); }
+  code { font: 12.5px ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
+  .kv b { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }
+  .kv span { font: 13px ui-monospace, Consolas, monospace; word-break: break-all; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); white-space: nowrap; }
+  td { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+  td.ok { background: var(--ok-bg); color: var(--ok); }
+  td.bad { background: var(--bad-bg); color: var(--bad); }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .pill.na { background: var(--line); color: var(--muted); }
+  form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  input { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+  button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Locale verification</h1>
+  <p>Host <code>{{HOST}}</code>. This page records locale values at document start (before other scripts) and again after load, in a dedicated worker, and in iframes.</p>
+  <form id="expectForm">
+    <label>Expected locale <input id="expect" placeholder="e.g. en-US or system" size="14"></label>
+    <button type="submit">Compare</button>
+    <span id="verdict"></span>
+  </form>
+
+  <div class="grid">
+    <div class="card kv"><b>Accept-Language received by the server (this document)</b><span id="docAL">{{ACCEPT_LANGUAGE}}</span></div>
+    <div class="card kv"><b>Accept-Language on fetch() from this page</b><span id="fetchAL">…</span></div>
+    <div class="card kv"><b>Accept-Language on fetch() from the worker</b><span id="workerAL">…</span></div>
+    <div class="card kv"><b>navigator.userAgent (should be unchanged)</b><span id="ua">…</span></div>
+  </div>
+
+  <h2>JavaScript locale APIs</h2>
+  <div class="card scroll"><table id="table"></table></div>
+
+  <h2>Frames</h2>
+  <div class="card scroll"><table id="frames"></table></div>
+  <p>Cross-site iframes run in their own renderer process. Locale Jacket overrides them through auto-attached CDP sessions; see the README for limits.</p>
+</main>
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const host = location.hostname;
+  const port = location.port ? ':' + location.port : '';
+  const LOCALE_KEYS = ['language', 'dateLocale', 'numberLocale', 'collatorLocale', 'pluralRulesLocale',
+    'relativeTimeLocale', 'listFormatLocale', 'segmenterLocale', 'displayNamesLocale', 'durationFormatLocale'];
+
+  function sameSite(a, b) {
+    const tail = (h) => h.split('.').slice(-2).join('.');
+    return tail(a) === tail(b);
+  }
+  function frameHosts() {
+    const p = params.get('frames');
+    if (p === 'none') return [];
+    if (p) return p.split(',').map((s) => s.trim()).filter(Boolean);
+    const list = ['xsite-frame.localhost'];
+    if (host.split('.').length >= 2) list.push('frame.' + host);
+    return list;
+  }
+
+  const report = {
+    host, href: location.href,
+    start: window.__ljStart,
+    live: null,
+    documentAcceptLanguage: window.__ljDocumentAcceptLanguage,
+    fetchAcceptLanguage: null,
+    worker: null,
+    frames: [],
+  };
+  window.__ljReport = report;
+
+  const withTimeout = (p, ms, label) => Promise.race([p, new Promise((r) => setTimeout(() => r({ error: label + ' timed out' }), ms))]);
+
+  const fetchP = fetch('/api/headers', { cache: 'no-store' }).then((r) => r.json()).then((j) => j.acceptLanguage)
+    .catch((e) => 'ERR: ' + e.message);
+
+  const workerP = params.get('worker') === '0' ? Promise.resolve(null) : withTimeout(new Promise((resolve) => {
+    try {
+      const w = new Worker('/worker.js');
+      w.onmessage = (e) => { resolve(e.data); w.terminate(); };
+      w.onerror = (e) => resolve({ error: e.message || 'worker error' });
+    } catch (e) { resolve({ error: e.message }); }
+  }), 8000, 'worker');
+
+  const framesP = Promise.all(frameHosts().map((fh) => withTimeout(new Promise((resolve) => {
+    const src = location.protocol + '//' + fh + port + '/frame.html';
+    const iframe = document.createElement('iframe');
+    iframe.src = src;
+    iframe.style.cssText = 'width:1px;height:1px;border:0;position:absolute;left:-10px';
+    const onMsg = (e) => {
+      if (e.source !== iframe.contentWindow || !e.data || e.data.type !== 'lj-frame') return;
+      window.removeEventListener('message', onMsg);
+      resolve({ src, host: fh, kind: sameSite(fh, host) ? 'same-site' : 'cross-site', ...e.data });
+    };
+    window.addEventListener('message', onMsg);
+    document.body.appendChild(iframe);
+  }), 8000, 'frame ' + fh).then((r) => (r.error ? { host: fh, kind: sameSite(fh, host) ? 'same-site' : 'cross-site', ...r } : r))));
+
+  function cell(v) {
+    if (v === undefined || v === null) return '—';
+    return Array.isArray(v) ? v.join(', ') : String(v);
+  }
+  function verdictFor(key, value, expected) {
+    if (!expected || expected === 'system') return '';
+    if (LOCALE_KEYS.includes(key)) return value === expected ? 'ok' : 'bad';
+    if (key === 'languages') return Array.isArray(value) && value[0] === expected ? 'ok' : 'bad';
+    return '';
+  }
+
+  function render() {
+    const expected = document.getElementById('expect').value.trim();
+    const cols = [['At document start', report.start], ['After load', report.live], ['Dedicated worker', report.worker && report.worker.snapshot]];
+    const keys = Object.keys(report.live || report.start);
+    const t = document.getElementById('table');
+    t.innerHTML = '<tr><th>Property</th>' + cols.map((c) => '<th>' + c[0] + '</th>').join('') + '</tr>' +
+      keys.map((k) => '<tr><th>' + k + '</th>' + cols.map((c) => {
+        const v = c[1] ? c[1][k] : undefined;
+        const cls = c[1] ? verdictFor(k, v, expected) : '';
+        return '<td class="' + cls + '">' + escapeText(cell(v)) + '</td>';
+      }).join('') + '</tr>').join('');
+
+    const f = document.getElementById('frames');
+    f.innerHTML = '<tr><th>Frame</th><th>Kind</th><th>Document Accept-Language</th><th>language</th><th>languages</th><th>Intl (DateTimeFormat)</th><th>Intl at frame start</th></tr>' +
+      (report.frames.length ? report.frames.map((fr) => {
+        if (fr.error) return '<tr><th>' + escapeText(fr.host) + '</th><td>' + fr.kind + '</td><td colspan="5">' + escapeText(fr.error) + '</td></tr>';
+        return '<tr><th>' + escapeText(fr.host) + '</th><td>' + fr.kind + '</td><td>' + escapeText(cell(fr.documentAcceptLanguage)) + '</td>' +
+          '<td class="' + verdictFor('language', fr.live.language, expected) + '">' + escapeText(fr.live.language) + '</td>' +
+          '<td>' + escapeText(cell(fr.live.languages)) + '</td>' +
+          '<td class="' + verdictFor('dateLocale', fr.live.dateLocale, expected) + '">' + escapeText(fr.live.dateLocale) + '</td>' +
+          '<td>' + escapeText(fr.start.dateLocale) + '</td></tr>';
+      }).join('') : '<tr><td colspan="7">No frames</td></tr>');
+
+    document.getElementById('fetchAL').textContent = cell(report.fetchAcceptLanguage);
+    document.getElementById('workerAL').textContent = report.worker ? cell(report.worker.fetchAcceptLanguage ?? report.worker.error) : '—';
+    document.getElementById('ua').textContent = report.live ? report.live.userAgent : '';
+
+    const v = document.getElementById('verdict');
+    if (!expected || expected === 'system') { v.innerHTML = ''; return; }
+    const cells = [...document.querySelectorAll('td.ok, td.bad')];
+    const bad = cells.filter((c) => c.classList.contains('bad')).length;
+    v.innerHTML = bad ? '<span class="pill bad">' + bad + ' mismatch(es)</span>' : '<span class="pill ok">All locale APIs report ' + escapeText(expected) + '</span>';
+  }
+  function escapeText(s) {
+    return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  }
+
+  document.getElementById('expect').value = params.get('expect') || '';
+  document.getElementById('expectForm').addEventListener('submit', (e) => { e.preventDefault(); report.live = __ljSnapshot(); render(); });
+
+  window.__ljReportReady = new Promise((resolve) => {
+    window.addEventListener('load', async () => {
+      report.live = __ljSnapshot();
+      report.fetchAcceptLanguage = await fetchP;
+      report.worker = await workerP;
+      report.frames = await framesP;
+      report.done = true;
+      render();
+      console.table({
+        language: report.live.language,
+        languages: report.live.languages.join(', '),
+        dateLocale: report.live.dateLocale,
+        numberLocale: report.live.numberLocale,
+        collatorLocale: report.live.collatorLocale,
+        timeZone: report.live.timeZone,
+      });
+      resolve(report);
+    });
+  });
+})();
+</script>
+</body>
+</html>

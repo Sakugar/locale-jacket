@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>
+{{SNAPSHOT_JS}}
+window.__ljStart = __ljSnapshot();
+window.__ljDocumentAcceptLanguage = {{ACCEPT_LANGUAGE_JSON}};
+</script>
+<title>Plain page</title>
+</head>
+<body>
+<p>Plain page on {{HOST}} — Accept-Language: {{ACCEPT_LANGUAGE}}</p>
+<script>
+window.__ljReport = { host: location.hostname, start: window.__ljStart, live: null, documentAcceptLanguage: window.__ljDocumentAcceptLanguage };
+window.__ljReportReady = new Promise((resolve) => window.addEventListener('load', () => {
+  window.__ljReport.live = __ljSnapshot();
+  window.__ljReport.done = true;
+  resolve(window.__ljReport);
+}));
+</script>
+</body>
+</html>

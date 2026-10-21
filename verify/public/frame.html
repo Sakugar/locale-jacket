@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>
+{{SNAPSHOT_JS}}
+window.__ljStart = __ljSnapshot();
+</script>
+<title>Locale verification frame</title>
+</head>
+<body>
+<p>frame on {{HOST}} — Accept-Language: {{ACCEPT_LANGUAGE}}</p>
+<script>
+window.__ljFrameReport = { start: window.__ljStart, live: null, documentAcceptLanguage: {{ACCEPT_LANGUAGE_JSON}} };
+window.addEventListener('load', () => {
+  window.__ljFrameReport.live = __ljSnapshot();
+  parent.postMessage({ type: 'lj-frame', ...window.__ljFrameReport }, '*');
+});
+</script>
+</body>
+</html>

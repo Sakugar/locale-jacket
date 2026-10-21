@@ -1,0 +1,15 @@
+# Store text with LF and check it out with LF on every OS (overrides core.autocrlf).
+* text=auto eol=lf
+
+# Windows-native scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+*.zip binary
+*.crx binary

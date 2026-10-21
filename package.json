@@ -1,0 +1,21 @@
+{
+  "name": "locale-jacket",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chrome/Edge MV3 extension: per-domain browser locale spoofing via the Chrome DevTools Protocol.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node scripts/build.mjs --tests && node --test --test-reporter=spec build/test/",
+    "e2e": "node scripts/build.mjs && node e2e/run.mjs",
+    "serve:verify": "node verify/server.mjs",
+    "icons": "node scripts/gen-icons.mjs"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.5",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

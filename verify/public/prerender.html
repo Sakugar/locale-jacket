@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>
+{{SNAPSHOT_JS}}
+window.__ljStart = __ljSnapshot();
+</script>
+<title>Prerender launcher</title>
+</head>
+<body>
+<p>Prerender launcher on {{HOST}}. The link target is prerendered with Speculation Rules.</p>
+<a id="target" href="#">target</a>
+<script>
+const target = new URLSearchParams(location.search).get('target') || '/plain.html?prerendered=1';
+document.getElementById('target').href = target;
+const s = document.createElement('script');
+s.type = 'speculationrules';
+s.textContent = JSON.stringify({ prerender: [{ source: 'list', urls: [target] }] });
+document.head.appendChild(s);
+</script>
+</body>
+</html>
