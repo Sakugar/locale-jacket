@@ -395,6 +395,71 @@ try {
     await setSettings(settingsFrom(CONFIG));
   });
 
+  await test('IP-CIDR / IP-CIDR6 rules use the address Chrome connected to (first visit reloads once)', async () => {
+    // *.localhost resolves to 127.0.0.1 or ::1, so both families are covered.
+    await setSettings(settingsFrom(CONFIG.replace('default:', '  - IP-CIDR,127.0.0.0/8,fr-FR\n  - IP-CIDR6,::1/128,fr-FR\ndefault:')));
+    const t = await openTab(u('ip-rule.localhost', '/plain.html'));
+    await sleep(1500);
+    let r = await report(t, { settle: 1200 });
+    expectLocale(r, 'fr-FR', 'first host');
+    const st = await status(t.tabId);
+    if (!/^IP-CIDR6?,/.test(st.resolution.ruleLabel ?? '')) throw new Error(`decided by ${st.resolution.ruleLabel}`);
+    console.log(`      (server address ${st.resolution.ip}, rule ${st.resolution.ruleLabel})`);
+    // A second, never-visited host in the same tab: its address is learned on the way.
+    r = await navigate(t, u('ip-rule-2.localhost', '/plain.html'), 'link');
+    await sleep(1500);
+    r = await report(t, { settle: 1200 });
+    expectLocale(r, 'fr-FR', 'second host');
+    // Hostname rules still win over IP rules.
+    r = await navigate(t, u('google.localhost', '/plain.html?ip=1'), 'link');
+    expectLocale(r, 'en-US', 'hostname rule beats IP rule');
+    await setSettings(settingsFrom(CONFIG));
+  });
+
+  await test('GEOIP,LAN needs no data set', async () => {
+    await setSettings(settingsFrom(CONFIG.replace('default:', '  - GEOIP,LAN,de-DE\ndefault:')));
+    const t = await openTab(u('lan-rule.localhost', '/plain.html'));
+    await sleep(1500);
+    expectLocale(await report(t, { settle: 1200 }), 'de-DE', 'LAN');
+    await setSettings(settingsFrom(CONFIG));
+  });
+
+  await test('GEOSITE rule with an imported geosite.dat (also mirrored into DNR)', async () => {
+    // Minimal geosite.dat: category "lj-test" with suffix geo.localhost and full www.geo-full.localhost.
+    const enc = new TextEncoder();
+    const varint = (n) => { const o = []; while (n > 127) { o.push((n & 127) | 128); n >>>= 7; } o.push(n); return o; };
+    const field = (num, bytes) => [...varint(num * 8 + 2), ...varint(bytes.length), ...bytes];
+    const domain = (type, value) => field(2, [...varint(8), ...varint(type), ...field(2, [...enc.encode(value)])]);
+    const site = [...field(1, [...enc.encode('LJ-TEST')]), ...domain(2, 'geo.localhost'), ...domain(3, 'www.geo-full.localhost')];
+    const dat = Buffer.from(field(1, site)).toString('base64');
+    const opts = await openTab(`chrome-extension://${extId}/options/options.html#data`);
+    await until(() => evaluate(cdp, opts.s, `document.querySelectorAll('#data .card').length >= 3`), { message: 'data sets page' });
+    await evaluate(cdp, opts.s, `(async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(dat)}), (c) => c.charCodeAt(0));
+      const store = await import('/shared/dataset-store.js');
+      await store.putDataset({ kind: 'geosite', source: 'file: e2e.dat', size: bytes.length, savedAt: Date.now(), summary: '1 categories' }, bytes.buffer);
+      return chrome.runtime.sendMessage({ type: 'datasetsChanged' });
+    })()`);
+    await setSettings(settingsFrom(CONFIG.replace('default:', '  - GEOSITE,lj-test,ja-JP\ndefault:')));
+    await evaluate(cdp, opts.s, `location.reload()`).catch(() => undefined);
+    await until(() => evaluate(cdp, opts.s, `document.querySelector('#data')?.textContent.includes('Installed')`), { message: 'GeoSite shown as installed' });
+    srv.clearLog();
+    const t = await openTab(u('www.geo.localhost', '/plain.html?geo=1'));
+    await sleep(1200);
+    const r = await report(t, { settle: 1200 });
+    expectLocale(r, 'ja-JP', 'geosite suffix');
+    const first = srv.log.find((l) => l.search === '?geo=1');
+    expectHeader(first?.acceptLanguage, HEADER['ja-JP'], 'first document request (DNR mirror)');
+    const t2 = await openTab(u('www.geo-full.localhost', '/plain.html'));
+    await sleep(1200);
+    expectLocale(await report(t2, { settle: 1200 }), 'ja-JP', 'geosite full');
+    const t3 = await openTab(u('x.www.geo-full.localhost', '/plain.html'));
+    await sleep(1200);
+    expectLocale(await report(t3, { settle: 800 }), NATIVE, 'full match is exact');
+    await evaluate(cdp, opts.s, `import('/shared/dataset-store.js').then((s) => s.deleteDataset('geosite')).then(() => chrome.runtime.sendMessage({ type: 'datasetsChanged' }))`);
+    await setSettings(settingsFrom(CONFIG));
+  });
+
   await test('restricted pages are left alone (chrome://version)', async () => {
     const t = await openTab('chrome://version/');
     await sleep(500);

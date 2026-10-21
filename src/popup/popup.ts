@@ -2,9 +2,9 @@
 
 import { hostFromUrl, toUnicode } from '../shared/domain.js';
 import { describeProfile, makeProfile } from '../shared/locale.js';
-import { send, type GlobalStatus, type TabStatus, type VerifyResult } from '../shared/messages.js';
-import { newRuleId, resolveHost, ruleLabel } from '../shared/rules.js';
-import type { Rule, RuleType, Settings } from '../shared/types.js';
+import { send, type GlobalStatus, type HostTest, type TabStatus, type VerifyResult } from '../shared/messages.js';
+import { newRuleId, resolveHost } from '../shared/rules.js';
+import type { LocaleProfile, Rule, RuleType, Settings } from '../shared/types.js';
 import { $, chip, clear, h, toggleSwitch } from '../ui/dom.js';
 import { localePicker } from '../ui/locale-picker.js';
 import { describeStatus } from '../ui/status.js';
@@ -16,6 +16,8 @@ let status: TabStatus | null = null;
 let global: GlobalStatus | null = null;
 let verify: VerifyResult | null = null;
 let verifying = false;
+/** Resolution from the background worker (includes data sets and the observed server address). */
+let hostTest: HostTest | null = null;
 
 async function refreshStatus(): Promise<void> {
   if (tab?.id === undefined) return;
@@ -23,6 +25,7 @@ async function refreshStatus(): Promise<void> {
     const r = await send({ type: 'getStatus', tabId: tab.id });
     status = r.status;
     global = r.global;
+    hostTest = tab.url && hostFromUrl(tab.url) ? await send({ type: 'testHost', host: tab.url }) : null;
   } catch {
     status = null;
   }
@@ -63,7 +66,7 @@ function renderTab(): void {
     );
     return;
   }
-  const res = resolveHost(host, settings);
+  const res = effectiveResolution(host);
   const view = describeStatus(status, global);
   card.append(
     h('div', { class: 'row' }, h('div', { class: 'section-title' }, 'This tab'), h('span', { class: 'spacer' }), chip(view.label, view.kind)),
@@ -72,10 +75,11 @@ function renderTab(): void {
       'dl',
       { class: 'kv' },
       h('dt', {}, 'Matched'),
-      h('dd', {}, res.rule ? ruleLabel(res.rule) : res.source === 'default' ? 'No rule — default action' : '—'),
+      h('dd', {}, res.ruleLabel ?? (res.source === 'default' ? 'No rule — default action' : '—')),
       h('dt', {}, 'Profile'),
       h('dd', {}, describeProfile(res.profile)),
       ...(res.profile ? [h('dt', {}, 'Accept-Language'), h('dd', {}, res.profile.acceptLanguage)] : []),
+      ...(res.ip ? [h('dt', {}, 'Server address'), h('dd', {}, res.ip)] : []),
       ...(status && (status.frames || status.workers) ? [h('dt', {}, 'Frames / workers'), h('dd', {}, `${status.frames} cross-site frame(s), ${status.workers} worker(s)`)] : []),
     ),
     h('p', { class: 'small muted' }, view.detail),
@@ -153,6 +157,13 @@ function renderVerify(v: VerifyResult): HTMLElement {
   return box;
 }
 
+/** Prefer the worker's answer; fall back to local hostname rules if it is unavailable. */
+function effectiveResolution(host: string): { action: string; source: string; ruleId: string | null; ruleLabel: string | null; profile: LocaleProfile | null; ip: string | null } {
+  if (hostTest && hostTest.host === host) return hostTest.resolution;
+  const r = resolveHost(host, settings);
+  return { action: r.action, source: r.source, ruleId: r.rule?.id ?? null, ruleLabel: null, profile: r.profile, ip: r.ip };
+}
+
 function suggestedSuffix(host: string): string {
   return host.startsWith('www.') ? host.slice(4) : host;
 }
@@ -163,14 +174,15 @@ function renderSite(): void {
   const host = tab?.url ? hostFromUrl(tab.url) : null;
   card.hidden = !host;
   if (!host) return;
-  const res = resolveHost(host, settings);
+  const res = effectiveResolution(host);
+  const matched = res.ruleId ? settings.rules.find((r) => r.id === res.ruleId) : undefined;
 
   // Scope choices: the suffix rule that matched (if any), the host without "www.", or this exact host.
   const choices: { type: RuleType; value: string; label: string }[] = [];
   const add = (type: RuleType, value: string, label: string) => {
     if (!choices.some((c) => c.type === type && c.value === value)) choices.push({ type, value, label });
   };
-  if (res.rule?.type === 'DOMAIN-SUFFIX') add('DOMAIN-SUFFIX', res.rule.value, `${toUnicode(res.rule.value)} and its subdomains`);
+  if (matched?.type === 'DOMAIN-SUFFIX') add('DOMAIN-SUFFIX', matched.value, `${toUnicode(matched.value)} and its subdomains`);
   add('DOMAIN-SUFFIX', suggestedSuffix(host), `${toUnicode(suggestedSuffix(host))} and its subdomains`);
   add('DOMAIN', host, `only ${toUnicode(host)}`);
   const scope = h('select', { 'aria-label': 'Rule scope' }, ...choices.map((c, i) => h('option', { value: String(i) }, c.label)));

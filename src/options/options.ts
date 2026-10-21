@@ -2,12 +2,14 @@
 // settings, sessions/log and documentation of limitations.
 
 import { exportConfig, importConfigText, mergeRules } from '../shared/config-io.js';
+import { DATASET_KINDS, DATASETS, deleteDataset, listDatasets, putDataset, type DatasetMeta } from '../shared/dataset-store.js';
+import { validateDataset } from '../shared/dataset-validate.js';
 import { compileDnrRules } from '../shared/dnr.js';
 import { hostFromUrl, normalizeHost, toUnicode } from '../shared/domain.js';
 import { describeProfile, makeProfile } from '../shared/locale.js';
-import { send, type TabStatus, type VerifyResult } from '../shared/messages.js';
+import { send, type HostTest, type TabStatus, type VerifyResult } from '../shared/messages.js';
 import { defaultSettings, examplePresetRules, globalEnUsSettings } from '../shared/presets.js';
-import { analyzeRules, describeAction, displayDomain, resolveHost, ruleLabel, rulesInPrecedenceOrder } from '../shared/rules.js';
+import { analyzeRules, describeAction, displayDomain, resolveHost, ruleLabel, rulesInPrecedenceOrder, requiredDatasets } from '../shared/rules.js';
 import type { Options, Rule, Settings } from '../shared/types.js';
 import { $, chip, clear, debounce, h, toggleSwitch } from '../ui/dom.js';
 import { describeStatus } from '../ui/status.js';
@@ -25,7 +27,7 @@ async function commit(next: Settings): Promise<void> {
 
 // ------------------------------------------------------------------ navigation
 
-const PAGES = ['rules', 'test', 'io', 'settings', 'sessions', 'about'] as const;
+const PAGES = ['rules', 'test', 'io', 'data', 'settings', 'sessions', 'about'] as const;
 type Page = (typeof PAGES)[number];
 
 function currentPage(): Page {
@@ -41,6 +43,7 @@ function showPage(): void {
     else a.removeAttribute('aria-current');
   }
   if (page === 'sessions') void renderSessions();
+  if (page === 'data') void renderData();
 }
 
 // ----------------------------------------------------------------------- rules
@@ -126,7 +129,8 @@ function renderRules(): void {
   root.append(tableSlot);
   renderRuleTable(tableSlot, issueIds);
 
-  const skipped = compileDnrRules(settings).skipped;
+  // Only hostname rules are expected in DNR; IP/regex/GeoSite limits are listed under Sessions & log.
+  const skipped = compileDnrRules(settings).skipped.filter((s) => ['DOMAIN', 'DOMAIN-SUFFIX', 'DOMAIN-KEYWORD'].includes(s.rule.type));
   if (skipped.length) {
     root.append(h('div', { class: 'notice warn' }, 'Some rules cannot be mirrored for the first request’s Accept-Language (declarativeNetRequest):', h('ul', {}, ...skipped.map((s) => h('li', {}, `${ruleLabel(s.rule)}: ${s.reason}`)))));
   }
@@ -195,46 +199,66 @@ function renderTest(): void {
   const root = $('#test');
   clear(root);
   const input = h('input', { type: 'text', placeholder: 'Hostname or URL, e.g. mail.google.com', style: 'flex:1', spellcheck: false, 'aria-label': 'Hostname to test' });
+  const ipInput = h('input', { type: 'text', placeholder: 'Server IP (optional)', size: 18, spellcheck: false, 'aria-label': 'Server IP for IP rules' });
   const out = h('div', { class: 'stack' });
-  const run = () => {
-    clear(out);
+  let token = 0;
+  const run = async () => {
+    const mine = ++token;
     const raw = input.value.trim();
-    if (!raw) return;
-    const host = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? hostFromUrl(raw) : normalizeHost(raw)?.ascii ?? null;
+    if (!raw) return clear(out);
+    let t: HostTest;
+    try {
+      t = await send({ type: 'testHost', host: raw, ...(ipInput.value.trim() ? { ip: ipInput.value.trim() } : {}) });
+    } catch (e) {
+      clear(out);
+      out.append(h('div', { class: 'notice bad' }, `Background worker unavailable: ${(e as Error).message}`));
+      return;
+    }
+    if (mine !== token) return;
+    clear(out);
+    const host = t.host;
     if (!host) {
       out.append(h('div', { class: 'notice bad' }, 'Not a valid hostname or http(s) URL.'));
       return;
     }
-    const res = resolveHost(host, settings);
+    const r = t.resolution;
+    const ipText = r.ip
+      ? `${r.ip} (${{ literal: 'the host is an IP address', observed: 'last address Chrome connected to', given: 'entered above', unknown: '' }[t.ipSource]})${t.country ? ` · ${t.country}` : ''}${t.asn !== null ? ` · AS${t.asn}` : ''}`
+      : 'unknown: IP rules cannot match until Chrome has connected to this host (or enter one above)';
     out.append(
       h('div', { class: 'card stack' },
         h('dl', { class: 'kv' },
           h('dt', {}, 'Hostname'), h('dd', {}, host === toUnicode(host) ? host : `${toUnicode(host)} (${host})`),
-          h('dt', {}, 'Decision'), h('dd', {}, res.rule ? ruleLabel(res.rule) : 'No rule matched → default action'),
-          h('dt', {}, 'Result'), h('dd', {}, res.action === 'SYSTEM' ? 'SYSTEM — real browser locale' : describeProfile(res.profile)),
-          ...(res.profile ? [h('dt', {}, 'Accept-Language'), h('dd', {}, res.profile.acceptLanguage)] : []),
+          h('dt', {}, 'Server address'), h('dd', {}, ipText),
+          h('dt', {}, 'Decision'), h('dd', {}, r.ruleLabel ?? 'No rule matched → default action'),
+          h('dt', {}, 'Result'), h('dd', {}, r.action === 'SYSTEM' ? 'SYSTEM — real browser locale' : describeProfile(r.profile)),
+          ...(r.profile ? [h('dt', {}, 'Accept-Language'), h('dd', {}, r.profile.acceptLanguage)] : []),
           ...(settings.enabled ? [] : [h('dt', {}, 'Note'), h('dd', {}, 'Spoofing is currently off.')]),
         ),
-        res.matches.length
+        t.problems.length ? h('div', { class: 'notice warn' }, 'Some rules cannot match yet:', h('ul', {}, ...t.problems.map((p) => h('li', {}, p)))) : null,
+        t.matches.length
           ? h('table', { class: 'trace' },
               h('tr', {}, h('th', {}, '#'), h('th', {}, 'Matching rule'), h('th', {}, 'Action'), h('th', {}, 'Why it ranks here')),
-              ...res.matches.map((r, i) =>
-                h('tr', { class: i === 0 ? 'winner' : '' },
+              ...t.matches.map((m, i) => {
+                const rule = settings.rules.find((x) => x.id === m.ruleId);
+                return h('tr', { class: i === 0 ? 'winner' : '' },
                   h('td', {}, String(i + 1)),
-                  h('td', { class: 'mono' }, ruleLabel(r)),
-                  h('td', {}, describeAction(r)),
-                  h('td', { class: 'small muted' }, why(r)),
-                ),
-              ),
+                  h('td', { class: 'mono' }, m.label),
+                  h('td', {}, m.action),
+                  h('td', { class: 'small muted' }, rule ? why(rule) : ''),
+                );
+              }),
             )
           : h('p', { class: 'muted' }, 'No enabled rule matches this hostname.'),
       ),
     );
   };
-  input.addEventListener('input', debounce(run, 150));
+  const trigger = debounce(() => void run(), 150);
+  input.addEventListener('input', trigger);
+  ipInput.addEventListener('input', trigger);
   root.append(
     h('h1', {}, 'Test & verify'),
-    h('div', { class: 'card stack' }, h('h2', {}, 'Test a hostname against your rules'), h('div', { class: 'row' }, input), out),
+    h('div', { class: 'card stack' }, h('h2', {}, 'Test a hostname against your rules'), h('div', { class: 'row' }, input, ipInput), out),
   );
   root.append(h('div', { class: 'card stack', id: 'verifyCard' }));
   void renderVerifyCard();
@@ -458,6 +482,14 @@ async function renderSessions(): Promise<void> {
     ),
   );
   if (g.dnr.error) root.append(h('div', { class: 'notice bad' }, `declarativeNetRequest: ${g.dnr.error}`));
+  if (g.dnr.skipped.length) {
+    root.append(
+      h('details', { class: 'card' },
+        h('summary', {}, `${g.dnr.skipped.length} rule(s) apply through the debugger only (not mirrored for the first request’s Accept-Language)`),
+        h('ul', { class: 'small' }, ...g.dnr.skipped.map((s) => h('li', {}, s))),
+      ),
+    );
+  }
   if (g.settingsProblems.length) root.append(h('div', { class: 'notice warn' }, 'Stored settings had problems:', h('ul', {}, ...g.settingsProblems.map((p) => h('li', {}, p)))));
 
   const rows = data.statuses.filter((s) => s.host).sort((a, b) => Number(b.session === 'attached') - Number(a.session === 'attached'));
@@ -484,6 +516,124 @@ async function renderSessions(): Promise<void> {
     h('h2', {}, 'Recent activity'),
     h('p', { class: 'hint' }, 'Kept in memory only, never stored or sent anywhere. Contains hostnames, not full URLs.'),
     h('div', { class: 'log' }, log.entries.length ? log.entries.slice(-200).map((e) => `${new Date(e.t).toLocaleTimeString()}  ${e.level.padEnd(5)} ${e.tabId !== null ? `tab ${e.tabId}: ` : ''}${e.msg}`).join('\n') : 'Nothing logged yet.'),
+  );
+}
+
+// ------------------------------------------------------------------- datasets
+
+async function renderData(): Promise<void> {
+  const root = $('#data');
+  const [metas, status] = await Promise.all([listDatasets().catch(() => [] as DatasetMeta[]), send({ type: 'listStatuses' }).catch(() => null)]);
+  clear(root);
+  const needed = requiredDatasets(settings.rules);
+  root.append(
+    h('h1', {}, 'Data sets'),
+    h('p', { class: 'lead' },
+      'Optional. Only needed for GEOSITE, GEOIP (country) and IP-ASN rules. Nothing is downloaded unless you click Download; files are kept locally in the extension’s storage. GEOIP,LAN, IP-CIDR and IP-CIDR6 rules need no data.'),
+  );
+  const problems = status?.global.datasets.problems ?? [];
+  if (problems.length) root.append(h('div', { class: 'notice warn' }, 'Your rules need data that is not available:', h('ul', {}, ...problems.map((p) => h('li', {}, p)))));
+
+  for (const kind of DATASET_KINDS) {
+    const info = DATASETS[kind];
+    const meta = metas.find((m) => m.kind === kind);
+    const usedBy = kind === 'geosite' ? needed.geosite.length > 0 : kind === 'geoip' ? needed.geoip : needed.asn;
+    const url = h('input', { type: 'url', value: meta && /^https?:/.test(meta.source) ? meta.source : info.defaultUrl, style: 'flex:1', spellcheck: false, 'aria-label': `${info.label} download URL` });
+    const msg = h('div', { class: 'small' });
+    const file = h('input', { type: 'file', hidden: true, 'aria-label': `${info.label} file` });
+    const save = async (bytes: ArrayBuffer, source: string) => {
+      msg.className = 'small muted';
+      msg.textContent = 'Checking the file…';
+      try {
+        const v = validateDataset(kind, bytes);
+        await putDataset({ kind, source, size: bytes.byteLength, savedAt: Date.now(), summary: v.summary }, bytes);
+        const r = await send({ type: 'datasetsChanged' });
+        msg.className = 'small';
+        msg.textContent = `Saved: ${v.summary}.${v.warnings.length ? ' ' + v.warnings.join(' ') : ''}${r.problems.length ? ' Still missing: ' + r.problems.join(' ') : ''}`;
+        setTimeout(() => void renderData(), 1500);
+      } catch (e) {
+        msg.className = 'error-text';
+        msg.textContent = `Not saved: ${(e as Error).message}`;
+      }
+    };
+    file.addEventListener('change', async () => {
+      const f = file.files?.[0];
+      if (f) await save(await f.arrayBuffer(), `file: ${f.name}`);
+    });
+    const download = h('button', {
+      class: meta ? '' : 'primary',
+      onclick: async () => {
+        msg.className = 'small muted';
+        try {
+          msg.textContent = `Downloading from ${new URL(url.value).host}…`;
+          const res = await fetch(url.value, { cache: 'no-store' });
+          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+          const total = Number(res.headers.get('content-length')) || 0;
+          const reader = res.body.getReader();
+          const chunks: Uint8Array[] = [];
+          let got = 0;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            got += value.length;
+            msg.textContent = `Downloading… ${(got / 1048576).toFixed(1)} MB${total ? ` of ${(total / 1048576).toFixed(1)} MB` : ''}`;
+          }
+          const bytes = new Uint8Array(got);
+          let o = 0;
+          for (const c of chunks) {
+            bytes.set(c, o);
+            o += c.length;
+          }
+          await save(bytes.buffer, url.value);
+        } catch (e) {
+          msg.className = 'error-text';
+          msg.textContent = `Download failed: ${(e as Error).message}. You can download the file yourself and use Import file.`;
+        }
+      },
+    }, meta ? 'Update' : 'Download');
+    root.append(
+      h('div', { class: 'card stack' },
+        h('div', { class: 'row' },
+          h('h2', {}, info.label),
+          meta ? chip('Installed', 'ok') : usedBy ? chip('Needed by your rules', 'warn') : chip('Not installed', 'off'),
+          h('span', { class: 'spacer' }),
+          meta ? h('span', { class: 'small muted' }, `${meta.summary} · ${(meta.size / 1048576).toFixed(1)} MB · ${new Date(meta.savedAt).toLocaleDateString()}`) : null,
+        ),
+        h('p', {}, info.description),
+        h('p', { class: 'hint' }, `Format: ${info.format}. Source: ${info.license}.`),
+        meta ? h('p', { class: 'hint' }, `Current file from: ${meta.source}`) : null,
+        h('div', { class: 'row wrap' },
+          url,
+          download,
+          h('button', { onclick: () => file.click() }, 'Import file…'),
+          file,
+          meta
+            ? h('button', {
+                class: 'danger',
+                onclick: async () => {
+                  if (!confirm(`Delete the ${info.label} data set?`)) return;
+                  await deleteDataset(kind);
+                  await send({ type: 'datasetsChanged' });
+                  void renderData();
+                },
+              }, 'Delete')
+            : null,
+        ),
+        msg,
+      ),
+    );
+  }
+  const d = status?.global.datasets;
+  root.append(
+    h('div', { class: 'card stack' },
+      h('h2', {}, 'Server addresses for IP rules'),
+      h('p', {},
+        'Extensions cannot look up DNS, and sending every hostname to a DNS-over-HTTPS service would leak your browsing. IP rules therefore use the address Chrome actually connected to, remembered in memory for this browser session only.'),
+      h('p', { class: 'hint' },
+        'On the first visit to a host the address is only known once the server answers, so that page is reloaded once (if “Reload once if the profile arrived late” is on). Later visits are decided before the request is sent.'),
+      h('p', { class: 'small muted' }, d ? `${d.watchingIps ? 'Watching connections' : 'Not watching (no IP rules)'} · ${d.ipCacheSize} host address(es) remembered` : ''),
+    ),
   );
 }
 
@@ -535,6 +685,7 @@ function renderAll(): void {
   renderSettings();
   renderAbout();
   if (currentPage() === 'sessions') void renderSessions();
+  if (currentPage() === 'data') void renderData();
   $('#navStatus').textContent = `${settings.rules.length} rule(s) · ${settings.enabled ? 'on' : 'off'}`;
 }
 

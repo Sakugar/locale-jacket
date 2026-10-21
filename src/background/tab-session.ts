@@ -97,6 +97,7 @@ const ATTACH_FAILURE_WINDOW_MS = 60_000;
 const MAX_ATTACH_FAILURES = 3;
 const AUTO_RELOAD_MAX_AGE_MS = 10_000;
 const AUTO_RELOAD_COOLDOWN_MS = 30_000;
+const AUTO_RELOAD_MAX_PER_WINDOW = 3;
 /** A re-issued navigation that still mismatches is let through instead of looping. */
 const REISSUE_GUARD_MS = 5_000;
 /** How long to wait for the profile commands before re-issuing anyway. */
@@ -152,7 +153,8 @@ export class TabSession {
   private sessionStatus: SessionState = 'none';
   private late = false;
   private lateReason: string | null = null;
-  private autoReloadedAt = 0;
+  /** Recent automatic reloads (URL and time), to rule out loops. */
+  private autoReloads: { url: string; at: number }[] = [];
   private error: string | null = null;
   private pendingGateUrl: string | null = null;
   /** Navigation aborted and re-issued by the gate (suppresses the resulting error event). */
@@ -401,8 +403,11 @@ export class TabSession {
     if (!RELOADABLE_TRANSITIONS.has(d.transitionType ?? '')) return;
     if ((d.transitionQualifiers ?? []).includes('forward_back')) return;
     if (d.timeStamp && now - d.timeStamp > AUTO_RELOAD_MAX_AGE_MS) return;
-    if (now - this.autoReloadedAt < AUTO_RELOAD_COOLDOWN_MS) return;
-    this.autoReloadedAt = now;
+    // Never reload the same URL twice within the cool-down, and at most a few pages per
+    // tab in that window (each new host can need one reload when IP rules are used).
+    this.autoReloads = this.autoReloads.filter((r) => now - r.at < AUTO_RELOAD_COOLDOWN_MS);
+    if (this.autoReloads.some((r) => r.url === this.url) || this.autoReloads.length >= AUTO_RELOAD_MAX_PER_WINDOW) return;
+    this.autoReloads.push({ url: this.url ?? '', at: now });
     this.log('info', 'Reloading once so page scripts start with the locale profile.');
     this.ctx.reloadTab(this.tabId).catch((e) => this.log('warn', `Reload failed: ${errorMessage(e)}`));
   }
@@ -804,7 +809,7 @@ export class TabSession {
       applied: this.state === 'attached' ? this.targetProfile : null,
       late: this.late,
       lateReason: this.lateReason,
-      autoReloaded: this.ctx.now() - this.autoReloadedAt < 15_000,
+      autoReloaded: this.autoReloads.some((r) => r.url === this.url && this.ctx.now() - r.at < 15_000),
       warnings,
       frames,
       workers,

@@ -307,14 +307,18 @@ describe('TabSession lifecycle', () => {
     await t.onCommitted({ url: GOOGLE, transitionType: 'typed' });
     port.attached.clear();
     t.onDebuggerDetached('target_closed');
+    await t.onCommitted({ url: GOOGLE, transitionType: 'typed' });
+    assert.deepEqual(ctx.reloads, [1], 'the same URL is never reloaded twice within the cool-down');
+    port.attached.clear();
+    t.onDebuggerDetached('target_closed');
     await t.onCommitted({ url: APPLE, transitionType: 'typed' });
-    assert.deepEqual(ctx.reloads, [1], 'cool-down prevents a second reload');
+    assert.deepEqual(ctx.reloads, [1, 1], 'a different page may be reloaded once');
     settings.options.reloadOnLate = false;
     ctx.advance(60_000);
     port.attached.clear();
     t.onDebuggerDetached('target_closed');
     await t.onCommitted({ url: GOOGLE, transitionType: 'typed' });
-    assert.deepEqual(ctx.reloads, [1], 'option disables it');
+    assert.deepEqual(ctx.reloads, [1, 1], 'option disables it');
   });
 
   it('onBeforeNavigate only attaches; it never sends overrides', async () => {

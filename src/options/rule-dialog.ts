@@ -4,7 +4,48 @@ import { acceptLanguageHeader, deriveLanguages, normalizeProfile } from '../shar
 import { LOCALE_PRESETS } from '../shared/presets.js';
 import { normalizeRuleValue, newRuleId } from '../shared/rules.js';
 import type { LocaleProfile, Rule, RuleType } from '../shared/types.js';
-import { RULE_TYPES } from '../shared/types.js';
+import { isIpRuleType, RULE_TYPES } from '../shared/types.js';
+import { send } from '../shared/messages.js';
+
+const LABELS: Record<RuleType, string> = {
+  DOMAIN: 'Domain',
+  'DOMAIN-SUFFIX': 'Domain',
+  'DOMAIN-KEYWORD': 'Keyword',
+  'DOMAIN-REGEX': 'Regular expression',
+  GEOSITE: 'GeoSite category',
+  'IP-CIDR': 'IPv4 range (CIDR)',
+  'IP-CIDR6': 'IPv6 range (CIDR)',
+  'IP-ASN': 'AS number',
+  GEOIP: 'Country code or LAN',
+};
+const PLACEHOLDERS: Record<RuleType, string> = {
+  DOMAIN: 'e.g. accounts.google.com',
+  'DOMAIN-SUFFIX': 'e.g. google.com',
+  'DOMAIN-KEYWORD': 'e.g. microsoft',
+  'DOMAIN-REGEX': 'e.g. ^(.+\.)?example\.(com|org)$',
+  GEOSITE: 'e.g. google, cn, apple@cn',
+  'IP-CIDR': 'e.g. 17.0.0.0/8',
+  'IP-CIDR6': 'e.g. 2001:db8::/32',
+  'IP-ASN': 'e.g. 13335',
+  GEOIP: 'e.g. US, JP, LAN',
+};
+
+let geositeList: HTMLDataListElement | null = null;
+/** Offer the installed GeoSite categories as suggestions (loaded once per page). */
+async function loadGeositeNames(input: HTMLInputElement): Promise<void> {
+  if (!geositeList) {
+    geositeList = h('datalist', { id: 'lj-geosite' });
+    document.body.append(geositeList);
+    try {
+      const { names } = await send({ type: 'geositeCategories' });
+      for (const n of names) geositeList.append(h('option', { value: n }));
+    } catch {
+      /* no suggestions */
+    }
+  }
+  input.setAttribute('list', 'lj-geosite');
+}
+
 import { h, clear } from '../ui/dom.js';
 import { localePicker } from '../ui/locale-picker.js';
 
@@ -149,6 +190,9 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
   actionProfile.checked = base.action === 'PROFILE';
   actionSystem.checked = base.action === 'SYSTEM';
   const pf = profileForm(base.profile);
+  const noResolve = h('input', { type: 'checkbox' });
+  noResolve.checked = Boolean(base.noResolve);
+  const noResolveRow = h('label', { class: 'row' }, noResolve, h('span', {}, 'no-resolve'), h('span', { class: 'hint' }, '— match only when the site is opened by IP address, never via the server address'));
   const priority = h('input', { type: 'number', step: 1, value: base.priority, style: 'width:90px', 'aria-label': 'Priority' });
   const note = h('input', { type: 'text', value: base.note, placeholder: 'Optional note', 'aria-label': 'Note' });
   const enabled = h('input', { type: 'checkbox' });
@@ -168,8 +212,11 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
   };
   const syncType = () => {
     typeHint.textContent = TYPE_HINTS[type.value as RuleType];
-    value.placeholder = type.value === 'DOMAIN-KEYWORD' ? 'e.g. microsoft' : 'e.g. google.com';
-    valueLabel.textContent = type.value === 'DOMAIN-KEYWORD' ? 'Keyword' : 'Domain';
+    const t = type.value as RuleType;
+    value.placeholder = PLACEHOLDERS[t];
+    valueLabel.textContent = LABELS[t];
+    noResolveRow.hidden = !isIpRuleType(t);
+    if (t === 'GEOSITE') void loadGeositeNames(value);
     checkValue();
   };
   const checkValue = () => {
@@ -208,6 +255,7 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
       ),
       typeHint,
       valueMsg,
+      noResolveRow,
       h('div', { class: 'field' },
         h('span', {}, 'Action'),
         h('label', { class: 'row' }, actionProfile, h('span', {}, 'Spoof with a locale profile')),
@@ -242,7 +290,9 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
         return;
       }
       dialog.close('save');
-      resolve({ ...base, type: type.value as RuleType, value: v!, action, profile, priority: prio, note: note.value.trim(), enabled: enabled.checked });
+      const t = type.value as RuleType;
+      const { noResolve: _old, ...rest } = base;
+      resolve({ ...rest, type: t, value: v!, action, profile, priority: prio, note: note.value.trim(), enabled: enabled.checked, ...(isIpRuleType(t) && noResolve.checked ? { noResolve: true } : {}) });
     });
     dialog.addEventListener('close', () => resolve(null), { once: true });
     dialog.append(form);
