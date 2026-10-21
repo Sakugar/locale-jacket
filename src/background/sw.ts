@@ -16,6 +16,7 @@ import { compileDnrRules } from '../shared/dnr.js';
 import { DatasetRuntime } from './datasets.js';
 import { IpCache } from './ip-cache.js';
 import { hostFromUrl, normalizeHost } from '../shared/domain.js';
+import { setLanguage, t } from '../shared/i18n.js';
 import { parseIp } from '../shared/ip.js';
 import type { GlobalStatus, HostTest, LogEntry, Request, TabStatus } from '../shared/messages.js';
 import { describeAction, needsServerIp, requiredDatasets, resolveHost, ruleLabel } from '../shared/rules.js';
@@ -84,16 +85,16 @@ function syncDnr(settings: Settings, suspended: boolean): Promise<void> {
 const BADGE_COLORS = { ok: '#1a7f37', warn: '#b54708', off: '#6b6b75' };
 
 function badgeFor(s: TabStatus, suspended: boolean, enabled: boolean): { text: string; color: string; title: string } {
-  if (!enabled) return { text: 'OFF', color: BADGE_COLORS.off, title: 'Locale Jacket: off' };
-  if (suspended) return { text: '||', color: BADGE_COLORS.off, title: 'Locale Jacket: paused (debugging was canceled)' };
+  if (!enabled) return { text: 'OFF', color: BADGE_COLORS.off, title: t('bg.badge.off') };
+  if (suspended) return { text: '||', color: BADGE_COLORS.off, title: t('bg.badge.paused') };
   const p = s.resolution.profile;
-  if (!p) return { text: '', color: BADGE_COLORS.off, title: `Locale Jacket: system locale${s.host ? ` on ${s.host}` : ''}` };
+  if (!p) return { text: '', color: BADGE_COLORS.off, title: t('bg.badge.system', { host: s.host ?? '' }) };
   const code = (p.locale.split('-')[0] ?? '').toUpperCase().slice(0, 3);
-  if (s.session === 'restricted') return { text: '', color: BADGE_COLORS.off, title: 'Locale Jacket: Chrome does not allow debugging this page' };
+  if (s.session === 'restricted') return { text: '', color: BADGE_COLORS.off, title: t('bg.badge.restricted') };
   if (s.session !== 'attached' || s.late || s.warnings.length) {
-    return { text: `${code}!`, color: BADGE_COLORS.warn, title: `Locale Jacket: ${p.locale} — ${s.late ? 'reload recommended' : s.error ?? s.warnings[0] ?? 'not active'}` };
+    return { text: `${code}!`, color: BADGE_COLORS.warn, title: t('bg.badge.warn', { locale: p.locale, reason: s.late ? t('status.reloadNeeded') : (s.error ?? s.warnings[0] ?? t('status.notActive')) }) };
   }
-  return { text: code, color: BADGE_COLORS.ok, title: `Locale Jacket: ${p.locale} on ${s.host}` };
+  return { text: code, color: BADGE_COLORS.ok, title: t('bg.badge.active', { locale: p.locale, host: s.host ?? '' }) };
 }
 
 function updateBadge(s: TabStatus): void {
@@ -145,6 +146,7 @@ function syncIpWatcher(settings: Settings): void {
 const ready: Promise<SessionManager> = (async () => {
   const settings = await loadSettings();
   const suspended = Boolean((await chrome.storage.session.get(SUSPENDED_KEY))[SUSPENDED_KEY]);
+  setLanguage(settings.options.uiLanguage);
   await datasets.ensure(requiredDatasets(settings.rules));
   syncIpWatcher(settings);
   manager = new SessionManager({
@@ -244,6 +246,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   withManager(async (m) => {
     const { settings, problems } = sanitizeStoredSettings(changes[SETTINGS_KEY]!.newValue, defaultSettings());
     settingsProblems = problems;
+    setLanguage(settings.options.uiLanguage);
     await datasets.ensure(requiredDatasets(settings.rules));
     syncIpWatcher(settings);
     await m.updateSettings(settings);

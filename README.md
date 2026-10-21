@@ -83,6 +83,10 @@ pwsh -File tools\chrome-banner-flag.ps1 -Revert           # undo, from the backu
 
 Chrome updates and "make default browser" can rewrite the shortcuts or the link handler, so re-check after updating. To do it by hand instead, add ` --silent-debugger-extension-api` after `chrome.exe` in each shortcut's **Target**, and in the link handler before `--single-argument %1`.
 
+## Interface language
+
+The popup and options page are available in **English** and **简体中文**. By default they follow the browser’s UI language; change it in *Options ▸ Settings ▸ Display language*. This only affects Locale Jacket’s own pages, never what websites see. Detailed input-validation messages and the activity log are in English.
+
 ## Using it
 
 **Popup** (toolbar icon)

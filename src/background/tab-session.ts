@@ -30,6 +30,7 @@ import {
 import { applyState, CLEAN_STATE, desiredFor, fixAcceptLanguage, UNKNOWN_STATE, type AppliedState, type TargetKind } from './overrides.js';
 import { PROBE_WORLD, PROBE_SOURCE, VERIFY_EXPRESSION } from './probe.js';
 import { hostFromUrl } from '../shared/domain.js';
+import { t } from '../shared/i18n.js';
 import { profileKey } from '../shared/locale.js';
 import type { FrameVerification, LocaleSnapshot, LogEntry, SessionState, TabStatus, VerifyResult } from '../shared/messages.js';
 import { ruleLabel } from '../shared/rules.js';
@@ -443,7 +444,7 @@ export class TabSession {
         // profile to its navigation. Applying now would race with that navigation.
         if ((await this.ensureAttached(url)) && existingDocument) {
           await this.applyMain(res, true);
-          if (res.action === 'PROFILE') this.markLate('This page was already open when the profile was applied; reload it.', null);
+          if (res.action === 'PROFILE') this.markLate(t('bg.late.alreadyOpen'), null);
         }
       } else if (this.state !== 'attached') {
         this.sessionStatus = 'none';
@@ -581,7 +582,7 @@ export class TabSession {
     if (this.state !== 'attached') {
       if (this.needsSession(res) && (await this.ensureAttached(d.url))) {
         await this.applyMain(res, true);
-        this.markLate(res.action === 'PROFILE' ? 'Chrome only allowed debugging after this page had started loading.' : null, d);
+        this.markLate(res.action === 'PROFILE' ? t('bg.late.attachedLate') : null, d);
       } else if (!this.needsSession(res)) {
         this.sessionStatus = 'none';
         this.markLate(null, null);
@@ -603,12 +604,12 @@ export class TabSession {
     }
     const expected = res.profile ?? this.ctx.native();
     if (probe) {
-      this.markLate(probeMatches(probe, expected) ? null : `Page scripts started with ${probe.language} / ${probe.dateLocale} instead of ${expected.locale}.`, d);
+      this.markLate(probeMatches(probe, expected) ? null : t('bg.late.probe', { language: probe.language, intl: probe.dateLocale, expected: expected.locale }), d);
     } else if (gated || (wasApplied && !res.profile)) {
       this.markLate(null, null); // the gate applied the profile before the request was sent
     } else {
       this.markLate(
-        res.profile ? 'This page started loading before its profile could be applied.' : 'The page started with the previous site’s locale profile.',
+        res.profile ? t('bg.late.beforeProfile') : t('bg.late.previousProfile'),
         d,
       );
     }
@@ -653,13 +654,13 @@ export class TabSession {
           await this.detachInternal(this.ctx.spoofingActive() ? 'not needed on this site' : 'spoofing turned off');
         } else if (!this.isApplied(res)) {
           await this.applyMain(res, true);
-          this.markLate('Settings changed after this page loaded; reload so page scripts see the new profile.', null);
+          this.markLate(t('bg.late.settingsChanged'), null);
         } else {
           await this.applyChildren();
         }
       } else if (this.needsSession(res) && this.url && (await this.ensureAttached(this.url))) {
         await this.applyMain(res, true);
-        this.markLate(res.action === 'PROFILE' ? 'The profile was applied to an already-loaded page; reload it.' : null, null);
+        this.markLate(res.action === 'PROFILE' ? t('bg.late.alreadyLoaded') : null, null);
       } else if (!this.needsSession(res)) {
         this.sessionStatus = 'none';
         this.markLate(null, null);

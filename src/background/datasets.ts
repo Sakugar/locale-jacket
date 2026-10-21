@@ -7,6 +7,7 @@ import { getDatasetBytes, listDatasets, type DatasetKind, type DatasetMeta } fro
 import { indexGeosite, loadGeositeCategory, parseGeositeValue, type GeositeIndex, type GeositeList } from '../shared/geosite.js';
 import type { IpAddr } from '../shared/ip.js';
 import { asnOf, countryOf, MmdbReader } from '../shared/mmdb.js';
+import { t } from '../shared/i18n.js';
 import type { MatchContext } from '../shared/rules.js';
 
 export interface Requirements {
@@ -45,12 +46,12 @@ export class DatasetRuntime {
     try {
       this.meta = await listDatasets();
     } catch (e) {
-      this.problems.push(`Data sets unavailable: ${(e as Error).message}`);
+      this.problems.push(t('bg.data.unavailable', { error: (e as Error).message }));
       return;
     }
     if (req.geosite.length) {
       if (!this.has('geosite')) {
-        this.problems.push(`GEOSITE rules (${req.geosite.join(', ')}) need the GeoSite data set.`);
+        this.problems.push(t('bg.data.needGeosite', { categories: req.geosite.join(', ') }));
       } else {
         try {
           if (!this.geositeIndex) {
@@ -62,16 +63,16 @@ export class DatasetRuntime {
             const { name, filter } = parseGeositeValue(value);
             const list = loadGeositeCategory(this.geositeIndex, name, filter);
             this.categories.set(value, list);
-            if (!list) this.problems.push(`GeoSite category "${name}" does not exist in the data set.`);
+            if (!list) this.problems.push(t('bg.data.noCategory', { name }));
             else this.log(`GeoSite ${value}: ${list.size} entries`);
           }
         } catch (e) {
-          this.problems.push(`GeoSite data set could not be read: ${(e as Error).message}`);
+          this.problems.push(t('bg.data.unreadable', { name: 'GeoSite', error: (e as Error).message }));
         }
       }
     }
-    if (req.geoip) this.geoipReader = await this.openMmdb('geoip', this.geoipReader, 'GEOIP country rules need the GeoIP data set.');
-    if (req.asn) this.asnReader = await this.openMmdb('asn', this.asnReader, 'IP-ASN rules need the ASN data set.');
+    if (req.geoip) this.geoipReader = await this.openMmdb('geoip', this.geoipReader, t('bg.data.needGeoip'));
+    if (req.asn) this.asnReader = await this.openMmdb('asn', this.asnReader, t('bg.data.needAsn'));
   }
 
   private async openMmdb(kind: DatasetKind, current: MmdbReader | null, missing: string): Promise<MmdbReader | null> {
@@ -84,7 +85,7 @@ export class DatasetRuntime {
       const bytes = await getDatasetBytes(kind);
       return bytes ? new MmdbReader(bytes) : null;
     } catch (e) {
-      this.problems.push(`${kind} data set could not be read: ${(e as Error).message}`);
+      this.problems.push(t('bg.data.unreadable', { name: kind, error: (e as Error).message }));
       return null;
     }
   }

@@ -15,6 +15,7 @@
 // them before Fetch.continueRequest is what guarantees they apply first.
 
 import { isDetachedError, isProcessLockError, isUnsupportedError, protocolMessage, type DebuggerPort, type Target } from './cdp.js';
+import { t, type MessageKey } from '../shared/i18n.js';
 import type { LocaleProfile } from '../shared/types.js';
 
 export type TargetKind = 'page' | 'iframe' | 'worker';
@@ -86,11 +87,11 @@ function commandFor(field: Field, value: string | null): [string, object] {
   }
 }
 
-const FIELD_LABEL: Record<Field, string> = {
-  locale: 'Intl locale',
-  languages: 'navigator.language / Accept-Language',
-  timezone: 'time zone',
-  geolocation: 'geolocation',
+const FIELD_LABEL: Record<Field, MessageKey> = {
+  locale: 'bg.field.locale',
+  languages: 'bg.field.languages',
+  timezone: 'bg.field.timezone',
+  geolocation: 'bg.field.geolocation',
 };
 
 /** Send the commands needed to move `current` to `desired`. Never awaits. */
@@ -127,16 +128,16 @@ export function applyState(port: DebuggerPort, target: Target, current: AppliedS
         if (kind !== 'page') {
           // Frames of one site share a renderer process; usually that is the same tab and
           // profile, but another tab embedding the same site can hold a different locale.
-          result.warnings.push(`A cross-site frame shares its renderer process with another frame that already set the ${FIELD_LABEL[field]}; it may report that frame's value.`);
+          result.warnings.push(t('bg.warn.sharedFrame', { field: t(FIELD_LABEL[field]) }));
           continue;
         }
         result.failed.push({ field, value });
-        result.warnings.push(`${FIELD_LABEL[field]} could not be set: another tab or DevTools already overrides it in this renderer process.`);
+        result.warnings.push(t('bg.warn.locked', { field: t(FIELD_LABEL[field]) }));
       } else if (isUnsupportedError(error)) {
-        if (kind === 'page') result.warnings.push(`${method} is not supported by this browser (${protocolMessage(error)}).`);
+        if (kind === 'page') result.warnings.push(t('bg.warn.unsupported', { method, error: protocolMessage(error) }));
       } else {
         result.failed.push({ field, value });
-        result.warnings.push(`${method} failed: ${protocolMessage(error)}`);
+        result.warnings.push(t('bg.warn.failed', { method, error: protocolMessage(error) }));
       }
     }
     return result;

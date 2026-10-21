@@ -36,7 +36,8 @@ default:
 function settingsFrom(yaml, patch = {}) {
   const r = importConfigText(yaml);
   if (!r.settings) throw new Error(`bad test config: ${r.errors.join('; ')}`);
-  return { ...r.settings, ...patch, options: { ...r.settings.options, ...(patch.options ?? {}) } };
+  // Tests match English UI text; the Chinese UI has its own test.
+  return { ...r.settings, ...patch, options: { ...r.settings.options, uiLanguage: 'en', ...(patch.options ?? {}) } };
 }
 
 // ----------------------------------------------------------------- harness
@@ -458,6 +459,14 @@ try {
     expectLocale(await report(t3, { settle: 800 }), NATIVE, 'full match is exact');
     await evaluate(cdp, opts.s, `import('/shared/dataset-store.js').then((s) => s.deleteDataset('geosite')).then(() => chrome.runtime.sendMessage({ type: 'datasetsChanged' }))`);
     await setSettings(settingsFrom(CONFIG));
+  });
+
+  await test('UI follows the browser language (zh-CN) unless set otherwise', async () => {
+    await setSettings({ ...settingsFrom(CONFIG), options: { ...settingsFrom(CONFIG).options, uiLanguage: 'auto' } });
+    const p = await openTab(`chrome-extension://${extId}/options/options.html#rules`);
+    await until(() => evaluate(cdp, p.s, `document.querySelector('nav a[href="#rules"]')?.textContent === '规则' && document.documentElement.lang === 'zh-CN'`), { message: 'Chinese UI' });
+    await setSettings(settingsFrom(CONFIG));
+    await until(() => evaluate(cdp, p.s, `document.querySelector('nav a[href="#rules"]')?.textContent === 'Rules'`), { message: 'switches to English live' });
   });
 
   await test('restricted pages are left alone (chrome://version)', async () => {

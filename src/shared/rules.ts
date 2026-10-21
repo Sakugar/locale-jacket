@@ -15,6 +15,7 @@
 import { hostKind, labelCount, matchesSuffix, normalizeDomainInput, toUnicode } from './domain.js';
 import { geositeMatches, type GeositeList } from './geosite.js';
 import { cidrContains, formatCidr, formatIp, isLanIp, parseCidr, parseIp, type Cidr, type IpAddr } from './ip.js';
+import { t } from './i18n.js';
 import { describeProfile, profileKey } from './locale.js';
 import type { Resolution, Rule, RuleType, Settings } from './types.js';
 import { isIpRuleType } from './types.js';
@@ -307,8 +308,8 @@ export function analyzeRules(settings: Pick<Settings, 'rules' | 'defaultAction'>
       level: sameEffect ? 'warning' : 'error',
       ruleIds: group.map((r) => r.id),
       message: sameEffect
-        ? `Duplicate rules for ${ruleLabel(group[0]!)}; only one is needed.`
-        : `Conflicting rules for ${ruleLabel(group[0]!)}: ${group.map((r) => describeAction(r)).join(' vs ')}. ${winner ? `"${describeAction(winner)}" wins (priority, then list order).` : ''}`,
+        ? t('check.duplicate', { rule: ruleLabel(group[0]!) })
+        : t('check.conflict', { rule: ruleLabel(group[0]!), actions: group.map((r) => describeAction(r)).join(' vs '), winner: winner ? describeAction(winner) : '' }),
     });
   }
 
@@ -324,24 +325,24 @@ export function analyzeRules(settings: Pick<Settings, 'rules' | 'defaultAction'>
         ruleIds: [r.id],
         message:
           r.action === 'SYSTEM' && !res.rule
-            ? `${ruleLabel(r)} → SYSTEM has no effect: the default action is already SYSTEM and no broader rule matches.`
-            : `${ruleLabel(r)} is redundant: ${res.rule ? ruleLabel(res.rule) : 'the default action'} already gives ${describeAction(r)}.`,
+            ? t('check.noEffect', { rule: ruleLabel(r) })
+            : t('check.redundant', { rule: ruleLabel(r), by: res.rule ? ruleLabel(res.rule) : t('check.defaultAction'), action: describeAction(r) }),
       });
     }
   }
 
   for (const r of enabled) {
     if (r.type === 'DOMAIN-SUFFIX' && !r.value.includes('.')) {
-      issues.push({ level: 'warning', ruleIds: [r.id], message: `${ruleLabel(r)} matches every site under ".${r.value}".` });
+      issues.push({ level: 'warning', ruleIds: [r.id], message: t('check.tldSuffix', { rule: ruleLabel(r), value: r.value }) });
     }
     if (r.type === 'DOMAIN-KEYWORD' && r.value.length <= 2) {
-      issues.push({ level: 'warning', ruleIds: [r.id], message: `Keyword "${r.value}" is very short and will match many unrelated sites.` });
+      issues.push({ level: 'warning', ruleIds: [r.id], message: t('check.shortKeyword', { value: r.value }) });
     }
     if ((r.type === 'IP-CIDR' || r.type === 'IP-CIDR6') && compiledCidr(r.value)?.prefix === 0) {
-      issues.push({ level: 'warning', ruleIds: [r.id], message: `${ruleLabel(r)} matches every address of its family.` });
+      issues.push({ level: 'warning', ruleIds: [r.id], message: t('check.allAddresses', { rule: ruleLabel(r) }) });
     }
     if (r.action === 'PROFILE' && !r.profile) {
-      issues.push({ level: 'error', ruleIds: [r.id], message: `${ruleLabel(r)} has no locale profile.` });
+      issues.push({ level: 'error', ruleIds: [r.id], message: t('check.noProfile', { rule: ruleLabel(r) }) });
     }
   }
   return issues;
