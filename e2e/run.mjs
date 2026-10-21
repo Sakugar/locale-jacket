@@ -234,6 +234,35 @@ try {
     expectHeader(r.documentAcceptLanguage, HEADER['ja-JP'], 'document after redirect');
   });
 
+  await test('profile switch via link keeps the Referer and adds exactly one history entry', async () => {
+    await navigate(tab, u('google.localhost', '/plain.html?from=1'), 'link');
+    const before = await evaluate(cdp, tab.s, 'history.length');
+    srv.clearLog();
+    const r = await navigate(tab, u('apple.localhost', '/plain.html?ref=1'), 'link');
+    expectLocale(r, 'ja-JP', 'after switch');
+    const after = await evaluate(cdp, tab.s, 'history.length');
+    if (after !== before + 1) throw new Error(`history.length ${before} → ${after}`);
+    const docs = srv.log.filter((l) => l.search === '?ref=1');
+    if (docs.length !== 1) throw new Error(`server saw ${docs.length} document requests (the aborted one must never be sent)`);
+    if (!docs[0].referer?.startsWith(u('google.localhost', '/'))) throw new Error(`Referer ${docs[0].referer}`);
+  });
+
+  await test('optional time zone override follows the rule and is cleared on SYSTEM sites', async () => {
+    const withTz = CONFIG.replace(
+      '  - DOMAIN-SUFFIX,apple.localhost,ja-JP\n',
+      '  - type: DOMAIN-SUFFIX\n    domain: apple.localhost\n    locale: ja-JP\n    timezone: Asia/Tokyo\n',
+    );
+    if (withTz === CONFIG) throw new Error('test config replacement failed');
+    await setSettings(settingsFrom(withTz));
+    const t = await openTab(u('plain.localhost', '/plain.html'));
+    const native = (await report(t)).live.timeZone;
+    let r = await navigate(t, u('apple.localhost', '/plain.html?tz=1'), 'link');
+    if (r.start.timeZone !== 'Asia/Tokyo' || r.live.timezoneOffset !== -540) throw new Error(`apple: ${r.start.timeZone} offset ${r.live.timezoneOffset}`);
+    r = await navigate(t, u('accounts.google.localhost', '/plain.html?tz=2'), 'link');
+    if (r.start.timeZone !== native) throw new Error(`SYSTEM site time zone ${r.start.timeZone}, expected ${native}`);
+    await setSettings(settingsFrom(CONFIG));
+  });
+
   await test('reload keeps the profile; status reports attached and on time', async () => {
     await navigate(tab, u('google.localhost', '/plain.html'), 'link');
     await cdp.send('Page.reload', {}, tab.s);
@@ -308,9 +337,48 @@ try {
     const st = await status(t.tabId);
     console.log(`      (page Intl=${r.live.dateLocale}, navigator.language=${r.live.language}; warnings: ${st.warnings.join(' | ') || 'none'})`);
     if (r.live.language !== 'en-US') throw new Error('navigator.language should still be spoofed');
-    if (!st.warnings.some((w) => /another tab or DevTools/.test(w))) throw new Error('conflict not reported');
+    // Both sessions restore their override into the new renderer process and the first one
+    // holds the process-wide lock, so either may win. What must hold: if the page does not
+    // show the profile's Intl locale, the status says so instead of claiming success.
+    const reported = st.warnings.some((w) => /another tab or DevTools/.test(w));
+    if (r.live.dateLocale !== 'en-US' && !reported) throw new Error('conflict not reported');
+    if (r.live.dateLocale === 'en-US' && !reported) console.log('      (the extension won the process lock this time)');
     await cdp.send('Emulation.setLocaleOverride', {}, t.s);
     await closeTab(t);
+  });
+
+  await test('popup and options pages load without errors; popup "Save rule" drives spoofing', async () => {
+    const site = await openTab(u('fr.localhost', '/plain.html'));
+    expectLocale(await report(site), NATIVE, 'before rule');
+    const errors = [];
+    const onException = (p) => errors.push(p.exceptionDetails?.exception?.description ?? p.exceptionDetails?.text);
+    cdp.on('Runtime.exceptionThrown', onException);
+    const opts = await openTab(`chrome-extension://${extId}/options/options.html#rules`);
+    await cdp.send('Runtime.enable', {}, opts.s);
+    await until(() => evaluate(cdp, opts.s, `document.querySelectorAll('#rules table tr').length > 1`), { message: 'options rules table' });
+    for (const page of ['test', 'io', 'settings', 'sessions', 'about']) {
+      await evaluate(cdp, opts.s, `location.hash = '#${page}'`);
+      await until(() => evaluate(cdp, opts.s, `!document.getElementById('${page}').hidden && document.getElementById('${page}').childElementCount > 0`), { message: `options page ${page}` });
+    }
+    const popup = await openTab(`chrome-extension://${extId}/popup/popup.html?tabId=${site.tabId}`);
+    await cdp.send('Runtime.enable', {}, popup.s);
+    await until(() => evaluate(cdp, popup.s, `!!document.querySelector('#siteCard select')`), { message: 'popup rendered' });
+    await evaluate(cdp, popup.s, `(() => {
+      const sel = document.querySelector('#siteCard .stack select');
+      sel.value = 'fr-FR'; sel.dispatchEvent(new Event('change'));
+      [...document.querySelectorAll('#siteCard button')].find((b) => b.textContent === 'Save rule').click();
+    })()`);
+    await until(async () => (await sw(`chrome.storage.local.get('settings').then(r => r.settings.rules.some(x => x.value === 'fr.localhost' && x.profile?.locale === 'fr-FR'))`)) || null, { message: 'rule saved from popup' }).catch(async (e) => {
+      const html = await evaluate(cdp, popup.s, `document.querySelector('#siteCard').innerText`).catch((x) => x.message);
+      throw new Error(`${e.message}; popup: ${html.replace(/s+/g, ' ').slice(0, 300)}; errors: ${errors.join(' | ')}`);
+    });
+    await sleep(300);
+    await cdp.send('Page.reload', {}, site.s);
+    await sleep(300);
+    expectLocale(await report(site), 'fr-FR', 'after popup rule');
+    cdp.off('Runtime.exceptionThrown', onException);
+    if (errors.length) throw new Error(`page errors: ${errors.join(' | ')}`);
+    await setSettings(settingsFrom(CONFIG));
   });
 
   await test('restricted pages are left alone (chrome://version)', async () => {

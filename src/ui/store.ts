@@ -18,8 +18,9 @@ export async function saveSettings(s: Settings): Promise<void> {
 
 /** Load, change and save in one step. */
 export async function updateSettings(fn: (s: Settings) => Settings | void): Promise<Settings> {
-  const current = await loadSettings();
-  const next = fn(structuredClone(current)) ?? current;
+  const draft = structuredClone(await loadSettings());
+  // Callers may either mutate the draft or return a new object.
+  const next = fn(draft) ?? draft;
   await saveSettings(next);
   return next;
 }

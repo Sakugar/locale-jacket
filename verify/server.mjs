@@ -45,6 +45,7 @@ export function startServer({ port = 8787, quiet = false } = {}) {
         search: url.search,
         acceptLanguage: al,
         dest: req.headers['sec-fetch-dest'] ?? null,
+        referer: req.headers.referer ?? null,
         userAgent: req.headers['user-agent'] ?? null,
         secChUa: req.headers['sec-ch-ua'] ?? null,
       });
