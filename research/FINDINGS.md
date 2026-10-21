@@ -1,0 +1,21 @@
+# CDP research findings (Chrome 155.0.8059.85, Windows 11, UI language zh-CN)
+
+Reproduce with `node research/probe.mjs <experiment>` (experiments: `basic`, `autoattach`,
+`fetch`, `ntp`, `shared`, `dnr`, `prerender`). The harness loads `research/probe-ext` through
+`Extensions.loadUnpacked` and drives pages served by `verify/server.mjs` on `*.localhost`.
+
+| # | Question | Observed |
+|---|----------|----------|
+| 1 | Native values | `navigator.language` `zh-CN`, `languages` `zh-CN,zh`, all `Intl` `zh-CN`, `Accept-Language: zh-CN,zh;q=0.9` (full list, no reduced Accept-Language). |
+| 2 | `Emulation.setLocaleOverride({locale})` alone | Changes **only** `Intl.*` (DateTimeFormat, NumberFormat, Collator, …). `navigator.language(s)` stay `zh-CN`. |
+| 3 | `Emulation.setUserAgentOverride({userAgent: "", acceptLanguage: "en-US,en"})` | Sets `navigator.language`/`languages` to `en-US` / `en-US,en` and the HTTP header to `en-US,en;q=0.9` (Chrome generates the q-values, so pass a plain list). The empty `userAgent` leaves `navigator.userAgent`, `navigator.userAgentData.brands` and `Sec-CH-UA*` untouched. |
+| 4 | Persistence across navigation | Overrides set on a tab session **persist across cross-site, cross-process navigations** (alpha → beta keeps `en-US` from document start). So a stale profile leaks unless every navigation is gated. |
+| 5 | Same-site iframe | Inherits everything from the parent session. |
+| 6 | Cross-site iframe (OOPIF) | The document request carries the parent's header, but its JS shows the **native** locale. With `Target.setAutoAttach({autoAttach, waitForDebuggerOnStart: true, flatten: true})` the extension receives child sessions (`chrome.debugger.sendCommand({tabId, sessionId})` works). Overrides sent before `Runtime.runIfWaitingForDebugger` apply from document start, **and they can differ from the parent** (iframe `ja-JP` while parent `en-US` was verified). The child's `targetInfo.url` is empty at attach time; the URL arrives later via `Target.targetInfoChanged`. |
+| 7 | Dedicated worker | `Intl` follows the page process automatically. `navigator.language(s)` and the worker's own `fetch()` header stay native unless the worker session gets `setUserAgentOverride` (verified). `setLocaleOverride` on the worker returns *"Another locale override is already in effect"*, which proves the locale is per renderer process. |
+| 8 | Locale override scope | **Per renderer process** (`LocaleController` singleton). A same-site popup opened by a spoofed tab shows the spoofed `Intl` locale without any session. A second session in that process cannot set or clear the locale until the first clears it. DevTools gets the same error, so DevTools Sensors ▸ Locale cannot be used on a tab the extension is spoofing. |
+| 9 | Clearing on a live page | After clearing both overrides, `navigator.language` returns to `zh-CN` but `navigator.languages` stays `en-US,en` until the next document. Switching back to SYSTEM must therefore happen **before** the next document is created. |
+| 10 | `Fetch.enable({patterns:[{resourceType:"Document", requestStage:"Request"}]})` | Pauses main-frame and subframe document requests (frameId included). Without an override the paused request has **no** `Accept-Language` header, and the network stack adds the native value later. With an override the header is explicit. Removing it via `Fetch.continueRequest({headers})` brings back the native header; setting it works. Redirect hops pause again (`redirectedRequestId`). |
+| 11 | Attaching from the New Tab Page | `chrome.debugger.attach` fails with *"Cannot access a chrome:// URL"* during `onBeforeNavigate` from `chrome://new-tab-page/`. The earliest successful attach is at `onCommitted`, which is too late for the first document: its request and its first scripts see `zh-CN`. |
+| 12 | `declarativeNetRequest` modifyHeaders | A `main_frame` rule (`requestDomains`) sets `Accept-Language` deterministically, even with no debugger attached (fixes the NTP case for HTTP). A higher-priority `allow` rule cancels it for SYSTEM exceptions. |
+| 13 | Prerender (Speculation Rules) | Not observed while the tab was being debugged in headless mode; the click produced a normal, gated navigation. Treated as best effort: the URL-change fallback re-applies and flags the page. |
