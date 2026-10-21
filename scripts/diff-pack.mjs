@@ -2,10 +2,10 @@
 // Build the per-release diff pack: only the files that were added or changed since the
 // previous release, so an unpacked install can be upgraded by copying them over it.
 //
-//   node scripts/diff-pack.mjs [--from <version|zip>] [--out <dir>]
+//   node scripts/diff-pack.mjs [--from <version|zip>] [--to <zip>] [--out <dir>]
 //     → <out>/locale-jacket-<from>-to-<version>.diff.zip
 //
-// The new release is dist/ (run `npm run build` first). The previous release defaults to
+// The new release is dist/ (run `npm run build` first), or a release zip given with --to. The previous release defaults to
 // the newest locale-jacket-<v>.zip under release/ with a lower version. The pack contains
 // the changed files at their normal paths, plus:
 //   CHANGES.txt   one line per file: A (added) / M (modified) / D (deleted), path, SHA-256
@@ -24,11 +24,28 @@ const arg = (name) => {
   return i > 0 ? process.argv[i + 1] : undefined;
 };
 
-if (!fs.existsSync(path.join(dist, 'manifest.json'))) {
-  console.error('dist/ is missing; run npm run build first.');
+function walk(dir, base = '') {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(dir, e.name), `${base}${e.name}/`) : [`${base}${e.name}`],
+  );
+}
+
+let newFiles;
+const to = arg('--to');
+if (to) {
+  newFiles = new Map([...readZip(fs.readFileSync(path.resolve(to)))].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+} else {
+  if (!fs.existsSync(path.join(dist, 'manifest.json'))) {
+    console.error('dist/ is missing; run npm run build first.');
+    process.exit(1);
+  }
+  newFiles = new Map(walk(dist).sort().map((n) => [n, fs.readFileSync(path.join(dist, n))]));
+}
+if (!newFiles.has('manifest.json')) {
+  console.error('The new release has no manifest.json.');
   process.exit(1);
 }
-const { version } = JSON.parse(fs.readFileSync(path.join(dist, 'manifest.json'), 'utf8'));
+const { version } = JSON.parse(newFiles.get('manifest.json').toString('utf8'));
 
 const cmp = (a, b) => {
   const pa = a.split('.').map(Number);
@@ -67,15 +84,9 @@ if (!fromZip || !fs.existsSync(fromZip)) {
   process.exit(1);
 }
 
-function walk(dir, base = '') {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? walk(path.join(dir, e.name), `${base}${e.name}/`) : [`${base}${e.name}`],
-  );
-}
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
 const oldFiles = readZip(fs.readFileSync(fromZip));
-const newFiles = new Map(walk(dist).sort().map((n) => [n, fs.readFileSync(path.join(dist, n))]));
 
 const lines = [];
 const entries = [];
