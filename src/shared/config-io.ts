@@ -7,6 +7,7 @@
 //   - "DOMAIN-SUFFIX,google.com,en-US"   (Clash-style compact strings; "MATCH,<locale|SYSTEM>" sets the default)
 // Profile fields may be given inline on the rule or under `profile:`.
 
+import { isUiLanguagePref, UI_LANGUAGES } from './i18n.js';
 import { normalizeProfile } from './locale.js';
 import { DEFAULT_OPTIONS } from './presets.js';
 import { newRuleId, normalizeRuleValue } from './rules.js';
@@ -331,8 +332,8 @@ function parseOptions(raw: unknown, base: Options, errors: string[]): Options {
     else errors.push('options.frameMode must be "inherit" or "per-frame".');
   }
   if (raw.uiLanguage !== undefined) {
-    if (raw.uiLanguage === 'auto' || raw.uiLanguage === 'en' || raw.uiLanguage === 'zh-CN') out.uiLanguage = raw.uiLanguage;
-    else errors.push('options.uiLanguage must be "auto", "en" or "zh-CN".');
+    if (isUiLanguagePref(raw.uiLanguage)) out.uiLanguage = raw.uiLanguage;
+    else errors.push(`options.uiLanguage must be "auto" or one of ${UI_LANGUAGES.map((l) => `"${l.value}"`).join(', ')}.`);
   }
   for (const k of ['keepSessionOnSystem', 'reloadOnLate', 'dnrHeaders', 'overrideWorkers'] as const) {
     if (raw[k] === undefined) continue;

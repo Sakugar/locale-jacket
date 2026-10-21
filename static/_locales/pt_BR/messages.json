@@ -1,0 +1,4 @@
+{
+  "extName": { "message": "Locale Jacket" },
+  "extDescription": { "message": "Disfarça a localidade do navegador por site (navigator.language, Intl, Accept-Language) usando a emulação das ferramentas para desenvolvedores do Chrome. O idioma da interface do navegador não muda." }
+}

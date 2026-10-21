@@ -1,0 +1,4 @@
+{
+  "extName": { "message": "Locale Jacket" },
+  "extDescription": { "message": "사이트별로 브라우저 로캘(navigator.language, Intl, Accept-Language)을 위장합니다. Chrome 개발자 도구 에뮬레이션을 사용하며 브라우저 UI 언어는 바뀌지 않습니다." }
+}

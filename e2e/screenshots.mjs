@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Capture screenshots of the popup and options page in a real browser.
-// Output: e2e/artifacts/*.png (git-ignored).  Usage: node e2e/screenshots.mjs [--dark]
+// Output: e2e/artifacts/*.png (git-ignored).  Usage: node e2e/screenshots.mjs [--dark] [--ui=<language>]
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,7 +11,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'e2e', 'artifacts');
 fs.mkdirSync(out, { recursive: true });
 const dark = process.argv.includes('--dark');
+const ui = process.argv.find((a) => a.startsWith('--ui='))?.slice(5) ?? 'en';
 const { importConfigText } = await import(pathToFileURL(path.join(root, 'dist', 'shared', 'config-io.js')).href);
+const { setLanguage, t } = await import(pathToFileURL(path.join(root, 'dist', 'shared', 'i18n.js')).href);
+setLanguage(ui);
+const suffix = `${ui === 'en' ? '' : `-${ui}`}${dark ? '-dark' : ''}`;
 
 const srv = await startServer({ port: 0, quiet: true });
 const b = await launch({ executable: findBrowser('chrome'), extraArgs: ['--lang=zh-CN'] });
@@ -33,6 +37,7 @@ rules:
   - DOMAIN-SUFFIX,google.localhost,de-DE
   - DOMAIN-SUFFIX,例子.localhost,zh-TW
 `).settings;
+  s.options.uiLanguage = ui;
   await evaluate(cdp, sws, `chrome.storage.local.set({ settings: ${JSON.stringify(s)} }).then(() => true)`);
   await sleep(500);
 
@@ -51,7 +56,7 @@ rules:
       await sleep(900);
     }
     const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sess);
-    const name = `${file}${dark ? '-dark' : ''}.png`;
+    const name = `${file}${suffix}.png`;
     fs.writeFileSync(path.join(out, name), Buffer.from(data, 'base64'));
     console.log(`saved ${name}`);
     await cdp.send('Target.closeTarget', { targetId });
@@ -64,10 +69,10 @@ rules:
     before: `(() => { const i = document.querySelector('#test input'); i.value = 'accounts.google.localhost'; i.dispatchEvent(new Event('input')); document.querySelector('#verifyCard button')?.click(); })()`,
   });
   await shot(`${base}/options/options.html#rules`, 'options-editor', {
-    before: `[...document.querySelectorAll('#rules button')].find(b => b.textContent === 'Edit').click()`,
+    before: `[...document.querySelectorAll('#rules button')].find(b => b.textContent === ${JSON.stringify(t('common.edit'))}).click()`,
     height: 1000,
   });
-  await shot(`${base}/options/options.html#io`, 'options-io', { before: `[...document.querySelectorAll('#io button')].find(b => b.textContent === 'Show as YAML').click()` });
+  await shot(`${base}/options/options.html#io`, 'options-io', { before: `[...document.querySelectorAll('#io button')].find(b => b.textContent === ${JSON.stringify(t('opt.io.showYaml'))}).click()` });
   await shot(`${base}/options/options.html#data`, 'options-data', { height: 1000 });
   await shot(`${base}/options/options.html#settings`, 'options-settings');
   await shot(`${base}/options/options.html#sessions`, 'options-sessions');

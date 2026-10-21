@@ -1,0 +1,4 @@
+{
+  "extName": { "message": "Locale Jacket" },
+  "extDescription": { "message": "Browser-Gebietsschema pro Website vortäuschen (navigator.language, Intl, Accept-Language) über Chromes DevTools-Emulation. Die UI-Sprache Ihres Browsers bleibt unverändert." }
+}

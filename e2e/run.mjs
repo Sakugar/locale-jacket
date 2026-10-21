@@ -465,6 +465,8 @@ try {
     await setSettings({ ...settingsFrom(CONFIG), options: { ...settingsFrom(CONFIG).options, uiLanguage: 'auto' } });
     const p = await openTab(`chrome-extension://${extId}/options/options.html#rules`);
     await until(() => evaluate(cdp, p.s, `document.querySelector('nav a[href="#rules"]')?.textContent === '规则' && document.documentElement.lang === 'zh-CN'`), { message: 'Chinese UI' });
+    await setSettings({ ...settingsFrom(CONFIG), options: { ...settingsFrom(CONFIG).options, uiLanguage: 'ja' } });
+    await until(() => evaluate(cdp, p.s, `document.querySelector('nav a[href="#rules"]')?.textContent === 'ルール' && document.documentElement.lang === 'ja'`), { message: 'Japanese UI' });
     await setSettings(settingsFrom(CONFIG));
     await until(() => evaluate(cdp, p.s, `document.querySelector('nav a[href="#rules"]')?.textContent === 'Rules'`), { message: 'switches to English live' });
   });

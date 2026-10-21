@@ -1,0 +1,4 @@
+{
+  "extName": { "message": "Locale Jacket" },
+  "extDescription": { "message": "サイトごとにブラウザのロケール（navigator.language、Intl、Accept-Language）を偽装します。Chrome のデベロッパーツールのエミュレーションを使用し、ブラウザの UI 言語は変わりません。" }
+}

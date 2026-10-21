@@ -1,0 +1,4 @@
+{
+  "extName": { "message": "Locale Jacket" },
+  "extDescription": { "message": "Suplanta la configuración regional del navegador por sitio (navigator.language, Intl, Accept-Language) mediante la emulación de las herramientas para desarrolladores de Chrome. El idioma de la interfaz no cambia." }
+}

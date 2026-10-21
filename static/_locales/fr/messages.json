@@ -1,0 +1,4 @@
+{
+  "extName": { "message": "Locale Jacket" },
+  "extDescription": { "message": "Usurpe les paramètres régionaux du navigateur par site (navigator.language, Intl, Accept-Language) grâce à l’émulation des outils de développement de Chrome. La langue de l’interface reste inchangée." }
+}

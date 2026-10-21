@@ -1,0 +1,4 @@
+{
+  "extName": { "message": "Locale Jacket" },
+  "extDescription": { "message": "按網站偽裝瀏覽器語言（navigator.language、Intl、Accept-Language），基於 Chrome 開發人員工具的模擬功能。瀏覽器介面語言保持不變。" }
+}

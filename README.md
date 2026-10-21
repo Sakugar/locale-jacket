@@ -85,7 +85,9 @@ Chrome updates and "make default browser" can rewrite the shortcuts or the link 
 
 ## Interface language
 
-The popup and options page are available in **English** and **简体中文**. By default they follow the browser’s UI language; change it in *Options ▸ Settings ▸ Display language*. This only affects Locale Jacket’s own pages, never what websites see. Detailed input-validation messages and the activity log are in English.
+The popup and options page are available in **English**, **简体中文**, **繁體中文**, **日本語**, **한국어**, **Deutsch**, **Français**, **Español**, **Русский** and **Português (Brasil)**. By default they follow the browser’s UI language (other Chinese variants map to 简体中文 or 繁體中文 by script/region, Portuguese to Brazilian Portuguese, anything else to English); change it in *Options ▸ Settings ▸ Display language*. This only affects Locale Jacket’s own pages, never what websites see. Detailed input-validation messages and the activity log are in English.
+
+To add a language: copy `src/shared/i18n/en.ts` to a new catalog, register it in `src/shared/i18n.ts` (`CATALOGS`, `UI_LANGUAGES` and, if needed, `matchLanguage`), and add `static/_locales/<code>/messages.json` for the extension name and description. A missing key is a compile error, and `npm test` checks that every translation keeps the English placeholders.
 
 ## Using it
 
@@ -245,7 +247,7 @@ npm test            # build + unit tests (rule engine, YAML, import/export, DNR,
 npm run e2e         # build + end-to-end tests in real Chrome (headless), using the verify server
 npm run e2e:edge    # the same in Microsoft Edge
 node e2e/run.mjs --headful            # watch it run
-npm run screenshots # UI screenshots into e2e/artifacts/
+npm run screenshots # UI screenshots into e2e/artifacts/ (add -- --ui=ja etc. for another language)
 npm run typecheck
 ```
 

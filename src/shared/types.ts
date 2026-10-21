@@ -1,5 +1,7 @@
 // Core data model shared by the background service worker and the UI pages.
 
+import type { UiLanguagePref } from './i18n.js';
+
 export type HostRuleType = 'DOMAIN' | 'DOMAIN-SUFFIX' | 'DOMAIN-KEYWORD' | 'DOMAIN-REGEX' | 'GEOSITE';
 /** Rules that need the server's IP address (known from connections Chrome made). */
 export type IpRuleType = 'IP-CIDR' | 'IP-CIDR6' | 'IP-ASN' | 'GEOIP';
@@ -69,7 +71,7 @@ export interface Options {
   /** Apply navigator.language(s) overrides to dedicated workers. */
   overrideWorkers: boolean;
   /** Language of the extension's own interface. */
-  uiLanguage: 'auto' | 'en' | 'zh-CN';
+  uiLanguage: UiLanguagePref;
 }
 
 export interface Settings {

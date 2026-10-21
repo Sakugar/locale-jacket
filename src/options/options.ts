@@ -457,12 +457,14 @@ function renderSettings(): void {
 }
 
 function languageCard(): HTMLElement {
-  const sel = h('select', { 'aria-label': t('opt.settings.language') }, ...UI_LANGUAGES.map((l) => h('option', { value: l.value }, l.label)));
+  const sel = h('select', { 'aria-label': t('opt.settings.language') },
+    h('option', { value: 'auto' }, t('opt.settings.languageAuto')),
+    ...UI_LANGUAGES.map((l) => h('option', { value: l.value, lang: l.value }, l.label)));
   sel.value = settings.options.uiLanguage ?? 'auto';
   sel.addEventListener('change', () => void commit({ ...settings, options: { ...settings.options, uiLanguage: sel.value as UiLanguagePref } }));
   return h('div', { class: 'card stack' },
     h('h2', {}, t('opt.settings.language')),
-    h('div', { class: 'row' }, sel, h('span', { class: 'hint' }, t('opt.settings.languageCurrent', { lang: getLanguage() === 'zh-CN' ? '简体中文' : 'English' }))),
+    h('div', { class: 'row' }, sel, h('span', { class: 'hint' }, t('opt.settings.languageCurrent', { lang: UI_LANGUAGES.find((l) => l.value === getLanguage())?.label ?? getLanguage() }))),
     h('p', { class: 'hint' }, t('opt.settings.languageHint')),
   );
 }

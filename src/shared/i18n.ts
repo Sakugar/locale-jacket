@@ -6,18 +6,47 @@
 
 import { en, type MessageKey } from './i18n/en.js';
 import { zhCN } from './i18n/zh-CN.js';
+import { zhTW } from './i18n/zh-TW.js';
+import { ja } from './i18n/ja.js';
+import { ko } from './i18n/ko.js';
+import { de } from './i18n/de.js';
+import { fr } from './i18n/fr.js';
+import { es } from './i18n/es.js';
+import { ru } from './i18n/ru.js';
+import { ptBR } from './i18n/pt-BR.js';
 
 export type { MessageKey };
-export type UiLanguagePref = 'auto' | 'en' | 'zh-CN';
-export type UiLanguage = 'en' | 'zh-CN';
 
-export const UI_LANGUAGES: readonly { value: UiLanguagePref; label: string }[] = [
-  { value: 'auto', label: 'Auto / 自动' },
+const CATALOGS = { en, 'zh-CN': zhCN, 'zh-TW': zhTW, ja, ko, de, fr, es, ru, 'pt-BR': ptBR } satisfies Record<string, Record<MessageKey, string>>;
+
+export type UiLanguage = keyof typeof CATALOGS;
+export type UiLanguagePref = 'auto' | UiLanguage;
+
+/** Supported interface languages, each named in its own language. */
+export const UI_LANGUAGES: readonly { value: UiLanguage; label: string }[] = [
   { value: 'en', label: 'English' },
   { value: 'zh-CN', label: '简体中文' },
+  { value: 'zh-TW', label: '繁體中文' },
+  { value: 'ja', label: '日本語' },
+  { value: 'ko', label: '한국어' },
+  { value: 'de', label: 'Deutsch' },
+  { value: 'fr', label: 'Français' },
+  { value: 'es', label: 'Español' },
+  { value: 'ru', label: 'Русский' },
+  { value: 'pt-BR', label: 'Português (Brasil)' },
 ];
 
-const CATALOGS: Record<UiLanguage, Record<MessageKey, string>> = { en, 'zh-CN': zhCN };
+export function isUiLanguagePref(v: unknown): v is UiLanguagePref {
+  return v === 'auto' || (typeof v === 'string' && Object.hasOwn(CATALOGS, v));
+}
+
+/** Maps a BCP 47 tag (e.g. the browser UI language) to a supported catalog. */
+export function matchLanguage(tag: string): UiLanguage {
+  const [lang = '', ...rest] = tag.toLowerCase().replace(/_/g, '-').split('-');
+  if (lang === 'zh') return rest.some((p) => p === 'hant' || p === 'tw' || p === 'hk' || p === 'mo') ? 'zh-TW' : 'zh-CN';
+  if (lang === 'pt') return 'pt-BR';
+  return Object.hasOwn(CATALOGS, lang) ? (lang as UiLanguage) : 'en';
+}
 
 let current: UiLanguage = 'en';
 
@@ -29,11 +58,11 @@ export function detectLanguage(): UiLanguage {
   } catch {
     /* default */
   }
-  return /^zh\b/i.test(ui) ? 'zh-CN' : 'en';
+  return matchLanguage(ui);
 }
 
 export function setLanguage(pref: UiLanguagePref | undefined): UiLanguage {
-  current = !pref || pref === 'auto' ? detectLanguage() : pref;
+  current = isUiLanguagePref(pref) && pref !== 'auto' ? pref : detectLanguage();
   if (typeof document !== 'undefined') document.documentElement.lang = current;
   return current;
 }

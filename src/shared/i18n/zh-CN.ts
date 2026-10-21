@@ -238,6 +238,7 @@ export const zhCN: Record<MessageKey, string> = {
   'opt.io.import': '校验并导入',
   'opt.settings.title': '设置',
   'opt.settings.language': '界面语言',
+  'opt.settings.languageAuto': '自动（跟随浏览器）',
   'opt.settings.languageCurrent': '当前：{lang}',
   'opt.settings.languageHint': 'Locale Jacket 自身页面使用的语言。“自动”跟随浏览器界面语言。此设置不会影响网站看到的语言。',
   'opt.settings.frames': '框架',

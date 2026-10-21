@@ -236,6 +236,7 @@ export const en = {
   'opt.io.import': 'Validate & import',
   'opt.settings.title': 'Settings',
   'opt.settings.language': 'Display language',
+  'opt.settings.languageAuto': 'Auto (browser language)',
   'opt.settings.languageCurrent': 'Currently: {lang}',
   'opt.settings.languageHint': 'Language of Locale Jacket’s own pages. “Auto” follows the browser’s UI language. This never changes what websites see.',
   'opt.settings.frames': 'Frames',

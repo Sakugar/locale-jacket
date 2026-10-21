@@ -1,0 +1,4 @@
+{
+  "extName": { "message": "Locale Jacket" },
+  "extDescription": { "message": "Подмена языка браузера для отдельных сайтов (navigator.language, Intl, Accept-Language) с помощью эмуляции Инструментов разработчика Chrome. Язык интерфейса браузера не меняется." }
+}
