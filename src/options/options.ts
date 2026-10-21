@@ -2,6 +2,8 @@
 // settings, sessions/log and documentation of limitations.
 
 import { exportConfig, importConfigText, mergeRules } from '../shared/config-io.js';
+import { downloadDataset } from '../shared/dataset-download.js';
+import { autoUpdatesEnabled, isUrlSource, MAX_UPDATE_GAP_HOURS, MIN_UPDATE_GAP_HOURS, minGapMs, type DatasetUpdateRecord, type UpdateOutcome } from '../shared/dataset-schedule.js';
 import { DATASET_KINDS, DATASETS, deleteDataset, listDatasets, putDataset, type DatasetMeta } from '../shared/dataset-store.js';
 import { validateDataset } from '../shared/dataset-validate.js';
 import { compileDnrRules } from '../shared/dnr.js';
@@ -10,7 +12,7 @@ import { describeProfile, makeProfile } from '../shared/locale.js';
 import { send, type HostTest, type TabStatus, type VerifyResult } from '../shared/messages.js';
 import { defaultSettings, examplePresetRules, globalEnUsSettings } from '../shared/presets.js';
 import { analyzeRules, describeAction, displayDomain, resolveHost, ruleLabel, rulesInPrecedenceOrder, requiredDatasets } from '../shared/rules.js';
-import type { Options, Rule, Settings } from '../shared/types.js';
+import type { DatasetUpdateOptions, Options, Rule, Settings } from '../shared/types.js';
 import { $, chip, clear, debounce, h, toggleSwitch } from '../ui/dom.js';
 import { getLanguage, setLanguage, t, translateDocument, UI_LANGUAGES, type MessageKey, type UiLanguagePref } from '../shared/i18n.js';
 import { describeStatus } from '../ui/status.js';
@@ -542,7 +544,11 @@ async function renderSessions(): Promise<void> {
 
 async function renderData(): Promise<void> {
   const root = $('#data');
-  const [metas, status] = await Promise.all([listDatasets().catch(() => [] as DatasetMeta[]), send({ type: 'listStatuses' }).catch(() => null)]);
+  const [metas, status, upd] = await Promise.all([
+    listDatasets().catch(() => [] as DatasetMeta[]),
+    send({ type: 'listStatuses' }).catch(() => null),
+    send({ type: 'getDatasetUpdateState' }).catch(() => null),
+  ]);
   clear(root);
   const needed = requiredDatasets(settings.rules);
   root.append(
@@ -551,6 +557,7 @@ async function renderData(): Promise<void> {
   );
   const problems = status?.global.datasets.problems ?? [];
   if (problems.length) root.append(h('div', { class: 'notice warn' }, t('opt.data.needed'), h('ul', {}, ...problems.map((p) => h('li', {}, p)))));
+  root.append(updatesCard(metas));
 
   for (const kind of DATASET_KINDS) {
     const info = DATASETS[kind];
@@ -559,16 +566,19 @@ async function renderData(): Promise<void> {
     const url = h('input', { type: 'url', value: meta && /^https?:/.test(meta.source) ? meta.source : info.defaultUrl, style: 'flex:1', spellcheck: false, 'aria-label': t('opt.data.url', { name: info.label }) });
     const msg = h('div', { class: 'small' });
     const file = h('input', { type: 'file', hidden: true, 'aria-label': t('opt.data.import') });
+    const stored = async (summary: string, warnings: string[]) => {
+      const r = await send({ type: 'datasetsChanged' });
+      msg.className = 'small';
+      msg.textContent = t('opt.data.saved', { summary }) + (warnings.length ? ' ' + warnings.join(' ') : '') + (r.problems.length ? ' ' + t('opt.data.stillMissing', { problems: r.problems.join(' ') }) : '');
+      setTimeout(() => void renderData(), 1500);
+    };
     const save = async (bytes: ArrayBuffer, source: string) => {
       msg.className = 'small muted';
       msg.textContent = t('opt.data.checking');
       try {
         const v = validateDataset(kind, bytes);
         await putDataset({ kind, source, size: bytes.byteLength, savedAt: Date.now(), summary: v.summary }, bytes);
-        const r = await send({ type: 'datasetsChanged' });
-        msg.className = 'small';
-        msg.textContent = t('opt.data.saved', { summary: v.summary }) + (v.warnings.length ? ' ' + v.warnings.join(' ') : '') + (r.problems.length ? ' ' + t('opt.data.stillMissing', { problems: r.problems.join(' ') }) : '');
-        setTimeout(() => void renderData(), 1500);
+        await stored(v.summary, v.warnings);
       } catch (e) {
         msg.className = 'error-text';
         msg.textContent = t('opt.data.notSaved', { error: (e as Error).message });
@@ -584,26 +594,12 @@ async function renderData(): Promise<void> {
         msg.className = 'small muted';
         try {
           msg.textContent = t('opt.data.downloadingFrom', { host: new URL(url.value).host });
-          const res = await fetch(url.value, { cache: 'no-store' });
-          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-          const total = Number(res.headers.get('content-length')) || 0;
-          const reader = res.body.getReader();
-          const chunks: Uint8Array[] = [];
-          let got = 0;
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            got += value.length;
-            msg.textContent = t('opt.data.progress', { got: (got / 1048576).toFixed(1), total: total ? (total / 1048576).toFixed(1) : '?' });
-          }
-          const bytes = new Uint8Array(got);
-          let o = 0;
-          for (const c of chunks) {
-            bytes.set(c, o);
-            o += c.length;
-          }
-          await save(bytes.buffer, url.value);
+          const r = await downloadDataset(kind, url.value, {
+            onProgress: (got, total) => {
+              msg.textContent = t('opt.data.progress', { got: (got / 1048576).toFixed(1), total: total ? (total / 1048576).toFixed(1) : '?' });
+            },
+          });
+          if (r.status === 'saved') await stored(r.meta.summary, r.warnings);
         } catch (e) {
           msg.className = 'error-text';
           msg.textContent = t('opt.data.downloadFailed', { error: (e as Error).message });
@@ -621,6 +617,7 @@ async function renderData(): Promise<void> {
         h('p', {}, t(`opt.data.desc.${kind}`)),
         h('p', { class: 'hint' }, t('opt.data.formatSource', { format: info.format, source: info.license })),
         meta ? h('p', { class: 'hint' }, t('opt.data.currentFrom', { source: meta.source })) : null,
+        meta ? updateLine(meta, upd?.state[kind]) : null,
         h('div', { class: 'row wrap' },
           url,
           download,
@@ -650,6 +647,89 @@ async function renderData(): Promise<void> {
       h('p', { class: 'hint' }, t('opt.data.ipHint')),
       h('p', { class: 'small muted' }, d ? t(d.watchingIps ? 'opt.data.watching' : 'opt.data.notWatching', { count: d.ipCacheSize }) : ''),
     ),
+  );
+}
+
+function updatesCard(metas: DatasetMeta[]): HTMLElement {
+  const u = settings.options.datasetUpdates;
+  const set = (patch: Partial<DatasetUpdateOptions>) => void commit({ ...settings, options: { ...settings.options, datasetUpdates: { ...u, ...patch } } });
+  const checkbox = (checked: boolean, onChange: (v: boolean) => void) => {
+    const c = h('input', { type: 'checkbox' });
+    c.checked = checked;
+    c.addEventListener('change', () => onChange(c.checked));
+    return c;
+  };
+  const interval = h('select', { 'aria-label': t('opt.upd.interval') },
+    ...(['off', 'daily', 'weekly', 'monthly'] as const).map((v) => h('option', { value: v }, t(`opt.upd.interval.${v}`))));
+  interval.value = u.interval;
+  interval.addEventListener('change', () => set({ interval: interval.value as DatasetUpdateOptions['interval'] }));
+  const gap = h('input', { type: 'number', min: String(MIN_UPDATE_GAP_HOURS), max: String(MAX_UPDATE_GAP_HOURS), step: '1', value: String(u.minIntervalHours), style: 'width:6em', 'aria-label': t('opt.upd.minGap') });
+  gap.addEventListener('change', () => {
+    const n = Math.round(Number(gap.value));
+    if (Number.isFinite(n) && n >= MIN_UPDATE_GAP_HOURS && n <= MAX_UPDATE_GAP_HOURS) set({ minIntervalHours: n });
+    else gap.value = String(u.minIntervalHours);
+  });
+  const msg = h('div', { class: 'small' });
+  const check = h('button', {
+    onclick: async () => {
+      check.disabled = true;
+      msg.className = 'small muted';
+      msg.textContent = t('opt.upd.checking');
+      try {
+        const r = await send({ type: 'checkDatasetUpdates' });
+        msg.className = 'small';
+        msg.replaceChildren(...outcomeLines(r.outcomes));
+        setTimeout(() => void renderData(), 2500);
+      } catch (e) {
+        msg.className = 'error-text';
+        msg.textContent = (e as Error).message;
+      } finally {
+        check.disabled = false;
+      }
+    },
+  }, t('opt.upd.checkNow'));
+  check.disabled = !metas.some((m) => isUrlSource(m.source));
+  return h('div', { class: 'card stack', id: 'datasetUpdates' },
+    h('div', { class: 'row' }, h('h2', {}, t('opt.upd.title')), autoUpdatesEnabled(u) ? chip(t('common.on'), 'ok') : chip(t('common.off'), 'off')),
+    h('p', { class: 'hint' }, t('opt.upd.lead')),
+    h('label', { class: 'row' }, checkbox(u.onStartup, (v) => set({ onStartup: v })), h('span', {}, t('opt.upd.onStartup'))),
+    h('label', { class: 'row' }, h('span', {}, t('opt.upd.interval')), interval),
+    h('label', { class: 'row' }, h('span', {}, t('opt.upd.minGap')), gap, h('span', {}, t('opt.upd.hours'))),
+    h('p', { class: 'hint' }, t('opt.upd.minGapHint', { min: MIN_UPDATE_GAP_HOURS, max: MAX_UPDATE_GAP_HOURS })),
+    h('label', { class: 'row' }, checkbox(u.onlyNeeded, (v) => set({ onlyNeeded: v })), h('span', {}, t('opt.upd.onlyNeeded'))),
+    h('div', { class: 'row wrap' }, check, h('span', { class: 'hint' }, t('opt.upd.checkNowHint'))),
+    msg,
+  );
+}
+
+function outcomeLines(outcomes: UpdateOutcome[]): HTMLElement[] {
+  const lines = outcomes
+    .filter((o) => o.result !== 'skipped')
+    .map((o) => {
+      const name = DATASETS[o.kind].label;
+      if (o.result === 'updated') return h('div', {}, t('opt.upd.outcome.updated', { name, summary: o.summary ?? '' }));
+      if (o.result === 'unchanged') return h('div', {}, t('opt.upd.outcome.unchanged', { name }));
+      return h('div', { class: 'error-text' }, t('opt.upd.outcome.failed', { name, error: o.error ?? '' }));
+    });
+  return lines.length ? lines : [h('div', {}, t('opt.upd.outcome.none'))];
+}
+
+/** Last automatic/manual check of one data set, and when the next automatic attempt may happen. */
+function updateLine(meta: DatasetMeta, rec: DatasetUpdateRecord | undefined): HTMLElement | null {
+  const u = settings.options.datasetUpdates;
+  const auto = autoUpdatesEnabled(u);
+  if (!isUrlSource(meta.source)) return auto ? h('p', { class: 'hint' }, t('opt.upd.notUrl')) : null;
+  if (!rec) return auto ? h('p', { class: 'hint' }, t('opt.upd.never')) : null;
+  const when = (ms: number) => new Date(ms).toLocaleString(getLanguage());
+  const result =
+    rec.lastResult === 'updated' ? t('opt.upd.result.updated')
+    : rec.lastResult === 'unchanged' ? t('opt.upd.result.unchanged')
+    : rec.lastResult === 'failed' ? t('opt.upd.result.failed', { error: rec.lastError ?? '' })
+    : '…';
+  const next = rec.lastAttempt + minGapMs(u);
+  return h('p', { class: rec.lastResult === 'failed' ? 'small error-text' : 'hint' },
+    t('opt.upd.status', { when: when(rec.lastAttempt), result }),
+    auto && next > Date.now() ? ' ' + t('opt.upd.next', { when: when(next) }) : '',
   );
 }
 

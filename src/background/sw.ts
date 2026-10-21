@@ -6,14 +6,19 @@
 // the worker alive (Chrome 118+). When nothing is attached, the worker may
 // sleep and is revived by the next tab/navigation event.
 //
-// Privacy: nothing here makes network requests or persists URLs. The in-memory
-// log keeps only hostnames and is dropped when the worker stops.
+// Privacy: the only network requests made here are data-set updates the user opted
+// into (Options ▸ Data sets), to the URL each data set was downloaded from. No URLs
+// are persisted; the in-memory log keeps only hostnames and is dropped when the
+// worker stops.
 
 import { chromeDebuggerPort, errorMessage } from './cdp.js';
 import { SessionManager, spoofingPossible } from './manager.js';
 import { sanitizeStoredSettings } from '../shared/config-io.js';
 import { compileDnrRules } from '../shared/dnr.js';
 import { DatasetRuntime } from './datasets.js';
+import { DatasetUpdater } from './dataset-updater.js';
+import { listDatasets } from '../shared/dataset-store.js';
+import { autoUpdatesEnabled, type DatasetUpdateState } from '../shared/dataset-schedule.js';
 import { IpCache } from './ip-cache.js';
 import { hostFromUrl, normalizeHost } from '../shared/domain.js';
 import { setLanguage, t } from '../shared/i18n.js';
@@ -25,6 +30,8 @@ import type { Settings } from '../shared/types.js';
 
 const SETTINGS_KEY = 'settings';
 const SUSPENDED_KEY = 'suspended';
+const UPDATE_STATE_KEY = 'datasetUpdateState';
+const UPDATE_ALARM = 'dataset-update';
 const LOG_LIMIT = 300;
 
 const logEntries: LogEntry[] = [];
@@ -143,6 +150,46 @@ function syncIpWatcher(settings: Settings): void {
   watchingIps = want;
 }
 
+/** Re-read the data sets after they were downloaded, replaced or deleted. */
+async function reloadDatasets(m: SessionManager): Promise<void> {
+  datasets.reset();
+  await datasets.ensure(requiredDatasets(m.currentSettings.rules));
+  await m.updateSettings(m.currentSettings);
+  await syncDnr(m.currentSettings, m.isSuspended);
+  await refreshGlobalBadge();
+}
+
+const updater = new DatasetUpdater({
+  now: () => Date.now(),
+  options: () => manager!.currentSettings.options.datasetUpdates,
+  needed: () => {
+    const r = requiredDatasets(manager!.currentSettings.rules);
+    return { geosite: r.geosite.length > 0, geoip: r.geoip, asn: r.asn };
+  },
+  listMetas: () => listDatasets(),
+  getState: async () => ((await chrome.storage.local.get(UPDATE_STATE_KEY))[UPDATE_STATE_KEY] as DatasetUpdateState | undefined) ?? {},
+  setState: (s) => chrome.storage.local.set({ [UPDATE_STATE_KEY]: s }),
+  onUpdated: async () => {
+    await reloadDatasets(manager!);
+    info('Data sets updated; rules re-evaluated.');
+  },
+  log: (level, msg) => log({ t: Date.now(), level, tabId: null, msg }),
+  keepAlive: () => {
+    // A long download is not an extension event; touch an extension API so Chrome
+    // does not stop the idle worker halfway through.
+    const timer = setInterval(() => void chrome.runtime.getPlatformInfo(), 20_000);
+    return () => clearInterval(timer);
+  },
+});
+
+/** The hourly alarm exists only while a regular interval is chosen; it just checks whether one is due. */
+async function syncUpdateAlarm(settings: Settings): Promise<void> {
+  const want = settings.options.datasetUpdates.interval !== 'off';
+  const has = await chrome.alarms.get(UPDATE_ALARM);
+  if (want && !has) await chrome.alarms.create(UPDATE_ALARM, { delayInMinutes: 1, periodInMinutes: 60 });
+  if (!want && has) await chrome.alarms.clear(UPDATE_ALARM);
+}
+
 const ready: Promise<SessionManager> = (async () => {
   const settings = await loadSettings();
   const suspended = Boolean((await chrome.storage.session.get(SUSPENDED_KEY))[SUSPENDED_KEY]);
@@ -169,6 +216,7 @@ const ready: Promise<SessionManager> = (async () => {
   });
   await syncDnr(settings, suspended);
   await refreshGlobalBadge();
+  await syncUpdateAlarm(settings).catch((e) => log({ t: Date.now(), level: 'warn', tabId: null, msg: `Update alarm: ${errorMessage(e)}` }));
   void manager.reconcileAll();
   info(`Service worker ready (${settings.rules.length} rules, ${settings.enabled ? 'enabled' : 'disabled'}${suspended ? ', paused' : ''}).`);
   return manager;
@@ -176,7 +224,7 @@ const ready: Promise<SessionManager> = (async () => {
 
 ready.catch((e) => log({ t: Date.now(), level: 'error', tabId: null, msg: `Initialization failed: ${errorMessage(e)}` }));
 
-// Read-only diagnostics handle, reachable only from this worker's own DevTools console
+// Diagnostics handle, reachable only from this worker's own DevTools console
 // (chrome://extensions → "service worker"). Used by the e2e suite.
 (globalThis as unknown as { localeJacket: unknown }).localeJacket = {
   ready: () => ready.then(() => true),
@@ -184,6 +232,8 @@ ready.catch((e) => log({ t: Date.now(), level: 'error', tabId: null, msg: `Initi
   statuses: () => manager?.statuses() ?? [],
   global: () => (manager ? globalStatus(manager) : null),
   log: () => [...logEntries],
+  /** Run the data-set updater as if triggered by a browser start or the alarm. */
+  runDatasetUpdates: (trigger: 'startup' | 'alarm') => ready.then(() => updater.run(trigger)),
 };
 
 const withManager = (fn: (m: SessionManager) => unknown) => {
@@ -252,12 +302,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
     await m.updateSettings(settings);
     await syncDnr(settings, m.isSuspended);
     await refreshGlobalBadge();
+    await syncUpdateAlarm(settings).catch(() => undefined);
     info(`Settings updated (${settings.rules.length} rules, ${settings.enabled ? 'enabled' : 'disabled'}).`);
   });
 });
 
 chrome.runtime.onInstalled.addListener((d) => info(`Installed (${d.reason}${d.previousVersion ? ` from ${d.previousVersion}` : ''}).`));
-chrome.runtime.onStartup.addListener(() => info('Browser started.'));
+chrome.runtime.onStartup.addListener(() => {
+  info('Browser started.');
+  withManager((m) => (autoUpdatesEnabled(m.currentSettings.options.datasetUpdates) ? updater.run('startup') : undefined));
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === UPDATE_ALARM) withManager(() => updater.run('alarm'));
+});
 
 function globalStatus(m: SessionManager): GlobalStatus {
   return {
@@ -318,13 +375,17 @@ chrome.runtime.onMessage.addListener((msg: Request, sender, sendResponse) => {
         case 'testHost':
           return testHost(m, msg.host, msg.ip);
         case 'datasetsChanged':
-          datasets.reset();
-          await datasets.ensure(requiredDatasets(m.currentSettings.rules));
-          await m.updateSettings(m.currentSettings);
-          await syncDnr(m.currentSettings, m.isSuspended);
-          await refreshGlobalBadge();
+          await reloadDatasets(m);
           info('Data sets changed; rules re-evaluated.');
           return { ok: true, problems: datasets.missing };
+        case 'checkDatasetUpdates':
+          return { outcomes: await updater.run('manual'), problems: datasets.missing };
+        case 'getDatasetUpdateState':
+          return {
+            state: ((await chrome.storage.local.get(UPDATE_STATE_KEY))[UPDATE_STATE_KEY] as DatasetUpdateState | undefined) ?? {},
+            busy: updater.busy,
+            alarm: Boolean(await chrome.alarms.get(UPDATE_ALARM)),
+          };
         case 'geositeCategories':
           await datasets.loadGeositeIndex().catch(() => undefined);
           return { names: datasets.geositeCategoryNames() };

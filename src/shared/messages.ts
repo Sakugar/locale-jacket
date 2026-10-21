@@ -3,6 +3,7 @@
 // pages write chrome.storage.local and the worker reacts to storage.onChanged.
 
 import type { DatasetMeta } from './dataset-store.js';
+import type { DatasetUpdateState, UpdateOutcome } from './dataset-schedule.js';
 import type { LocaleProfile, ResolutionSource, RuleAction } from './types.js';
 
 export type SessionState =
@@ -112,6 +113,8 @@ export type Request =
   | { type: 'getLog' }
   | { type: 'testHost'; host: string; ip?: string }
   | { type: 'datasetsChanged' }
+  | { type: 'checkDatasetUpdates' }
+  | { type: 'getDatasetUpdateState' }
   | { type: 'geositeCategories' };
 
 export interface ResponseMap {
@@ -124,6 +127,8 @@ export interface ResponseMap {
   getLog: { entries: LogEntry[] };
   testHost: HostTest;
   datasetsChanged: { ok: boolean; problems: string[] };
+  checkDatasetUpdates: { outcomes: UpdateOutcome[]; problems: string[] };
+  getDatasetUpdateState: { state: DatasetUpdateState; busy: boolean; alarm: boolean };
   geositeCategories: { names: string[] };
 }
 

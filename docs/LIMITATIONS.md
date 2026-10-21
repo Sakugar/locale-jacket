@@ -39,7 +39,7 @@ Everything below was observed in Chrome 155 / Edge 155 on Windows 11 (see `resea
   - The first visit to a host is decided without it. If an IP rule then applies, the page is flagged and reloaded once (if that option is on); later visits are gated correctly.
   - Hosts behind CDNs or DNS load balancing can change address between visits, so a decision can change too.
   - The address cache is cleared when the browser or the service worker restarts.
-- **Data sets are snapshots.** `GEOSITE`, `GEOIP` country and `IP-ASN` rules only match with an installed data set, and only as current as the file. Update them from *Options ▸ Data sets*.
+- **Data sets are snapshots.** `GEOSITE`, `GEOIP` country and `IP-ASN` rules only match with an installed data set, and only as current as the file. Update them from *Options ▸ Data sets*, or turn on automatic updates there (browser start and/or a daily, weekly or monthly interval, with a minimum gap between attempts). Imported files are not updated automatically.
   - GeoSite regex entries use RE2 syntax; the few that JavaScript cannot compile are skipped and counted.
 - **First-request header.** `GEOSITE` lists larger than 20,000 domains, regex rules and IP rules are not mirrored into declarativeNetRequest; they apply through the debugger session. When IP rules exist, a spoofing default action is not mirrored either, because an IP rule might override it.
 

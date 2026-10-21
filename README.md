@@ -174,7 +174,7 @@ rules:
   - On the first visit to a host that address is known only once the server answers. If an IP rule then changes the decision, the page is flagged and reloaded once.
   - Later visits are decided before the request is sent.
   - `no-resolve` rules only ever look at hosts that are IP literals.
-- **Data sets.** `GEOSITE`, `GEOIP` country rules and `IP-ASN` need data files that are **never downloaded automatically**. In *Options ▸ Data sets*, either download them from an editable URL or import a local file. They are stored in the extension's IndexedDB.
+- **Data sets.** `GEOSITE`, `GEOIP` country rules and `IP-ASN` need data files that are **not downloaded unless you ask**. In *Options ▸ Data sets*, either download them from an editable URL or import a local file. They are stored in the extension's IndexedDB.
 
   | Data set | Default source | Format |
   |---|---|---|
@@ -183,6 +183,7 @@ rules:
   | ASN | MetaCubeX `GeoLite2-ASN.mmdb` (≈9 MB) | MaxMind DB, GeoLite2-ASN schema |
 
   GeoLite2 data is © MaxMind (CC BY-SA 4.0), the domain lists come from v2fly/domain-list-community. A rule whose data set is missing simply does not match, and the UI says so. Note that the community GeoIP files (MetaCubeX, Loyalsoldier) give some networks a special code *instead of* their country: 8.8.8.8 is `GOOGLE`, 1.1.1.1 is `CLOUDFLARE`. A `GEOIP,US` rule therefore does not match Google DNS; add `GEOIP,GOOGLE` if you want it to. *Options ▸ Test & verify* shows the code an address gets.
+- **Automatic updates (opt-in, off by default).** *Options ▸ Data sets ▸ Automatic updates* re-checks downloaded data sets **when the browser starts** and/or **every day, week or month**. A **minimum gap** (default 24 h, 1–720 h) limits every data set to one automatic attempt per period, failed attempts included, so restarts never trigger repeated downloads. By default only data sets your rules use are checked. Requests are conditional (`If-None-Match` / `If-Modified-Since`), so an unchanged file costs a 304 and is not downloaded again. Imported files are never updated automatically. **Check now** checks every downloaded data set immediately. Results appear on the page and in the activity log.
 - **First-request header.** `GEOSITE` domain lists (up to 20,000 domains) are mirrored into declarativeNetRequest for the first request's `Accept-Language`. IP and regex rules apply through the debugger only.
 
 **Accept-Language** is always derived from `languages` the way Chrome does it (`en-US,en;q=0.9`, `…;q=0.8`, and so on). An `acceptLanguage` value given on import must agree with `languages`, or you get a warning.
@@ -230,7 +231,7 @@ These are documented in the extension (*Options ▸ Limitations & privacy*) and 
 
 ## Privacy and permissions
 
-Everything runs locally. There is no server, account, telemetry or analytics. The extension makes no network requests of its own, except data-set downloads you start yourself in *Options ▸ Data sets*, from the URL shown there. Rules are stored in `chrome.storage.local`. The activity log lives in memory only and contains hostnames, not URLs.
+Everything runs locally. There is no server, account, telemetry or analytics. The extension makes no network requests of its own, except data-set downloads you start yourself in *Options ▸ Data sets* and the automatic updates you can turn on there, always from the URL shown there. Rules are stored in `chrome.storage.local`. The activity log lives in memory only and contains hostnames, not URLs.
 
 | Permission | Why |
 |---|---|
@@ -238,6 +239,7 @@ Everything runs locally. There is no server, account, telemetry or analytics. Th
 | `webNavigation` | Know when a tab navigates, to attach and reconcile in time |
 | `declarativeNetRequestWithHostAccess` + `http://*/*`, `https://*/*` | Correct `Accept-Language` on the first document request; host access also lets the popup see the current tab's hostname |
 | `storage` | Save your rules |
+| `alarms` | Hourly check whether a scheduled data-set update is due (only while a regular interval is chosen) |
 | `webRequest` | Read the server address of page loads, for IP rules (observe only; registered only while IP rules exist) |
 
 ## Development

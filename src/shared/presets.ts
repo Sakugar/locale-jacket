@@ -45,6 +45,7 @@ export const DEFAULT_OPTIONS: Options = {
   dnrHeaders: true,
   overrideWorkers: true,
   uiLanguage: 'auto',
+  datasetUpdates: { onStartup: false, interval: 'off', minIntervalHours: 24, onlyNeeded: true },
 };
 
 function rule(id: string, partial: Omit<Rule, 'id' | 'enabled' | 'priority' | 'note' | 'profile'> & { locale?: string; note?: string }): Rule {

@@ -1,6 +1,6 @@
 // Optional rule datasets (GeoSite, GeoIP, ASN) stored in the extension's IndexedDB.
 // Shared by the options page (download/import) and the service worker (lookups).
-// Nothing is downloaded unless the user asks for it.
+// Nothing is downloaded unless the user asks for it (a download, or opting in to automatic updates).
 
 export type DatasetKind = 'geosite' | 'geoip' | 'asn';
 export const DATASET_KINDS: readonly DatasetKind[] = ['geosite', 'geoip', 'asn'];
@@ -13,6 +13,9 @@ export interface DatasetMeta {
   savedAt: number;
   /** Human-readable summary, e.g. "1559 categories" or "GeoLite2-Country, built 2026-10-15". */
   summary: string;
+  /** HTTP validators of the downloaded file, for conditional update checks. */
+  etag?: string;
+  lastModified?: string;
 }
 
 export interface DatasetInfo {

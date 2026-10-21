@@ -7,6 +7,7 @@
 // The browser runs with --lang=zh-CN so the "real" locale is Simplified Chinese.
 
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -459,6 +460,54 @@ try {
     expectLocale(await report(t3, { settle: 800 }), NATIVE, 'full match is exact');
     await evaluate(cdp, opts.s, `import('/shared/dataset-store.js').then((s) => s.deleteDataset('geosite')).then(() => chrome.runtime.sendMessage({ type: 'datasetsChanged' }))`);
     await setSettings(settingsFrom(CONFIG));
+  });
+
+  await test('automatic data-set updates: conditional request, update, minimum gap', async () => {
+    // A tiny "CDN" serving geosite.dat with an ETag; the category's domain changes between versions.
+    const enc = new TextEncoder();
+    const varint = (n) => { const o = []; while (n > 127) { o.push((n & 127) | 128); n >>>= 7; } o.push(n); return o; };
+    const field = (num, bytes) => [...varint(num * 8 + 2), ...varint(bytes.length), ...bytes];
+    const dat = (host) => Buffer.from(field(1, [...field(1, [...enc.encode('LJ-UPD')]), ...field(2, [...varint(8), ...varint(2), ...field(2, [...enc.encode(host)])])]));
+    let version = { etag: '"v1"', body: dat('upd-a.localhost') };
+    const hits = [];
+    const cdn = http.createServer((req, res) => {
+      hits.push(req.headers['if-none-match'] ?? null);
+      if (req.headers['if-none-match'] === version.etag) { res.writeHead(304, { ETag: version.etag }); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', ETag: version.etag, 'Content-Length': version.body.length });
+      res.end(version.body);
+    });
+    await new Promise((r) => cdn.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${cdn.address().port}/geosite.dat`;
+    try {
+      const opts = await openTab(`chrome-extension://${extId}/options/options.html#data`);
+      await until(() => evaluate(cdp, opts.s, `document.querySelector('#datasetUpdates') !== null`), { message: 'updates card' });
+      const saved = await evaluate(cdp, opts.s, `import('/shared/dataset-download.js').then((d) => d.downloadDataset('geosite', ${JSON.stringify(url)})).then((r) => chrome.runtime.sendMessage({ type: 'datasetsChanged' }).then(() => r.status))`);
+      if (saved !== 'saved') throw new Error(`manual download: ${saved}`);
+      const base = settingsFrom(CONFIG.replace('default:', '  - GEOSITE,lj-upd,ja-JP\ndefault:'));
+      await setSettings({ ...base, options: { ...base.options, datasetUpdates: { onStartup: true, interval: 'weekly', minIntervalHours: 1, onlyNeeded: true } } });
+      await until(() => sw(`chrome.alarms.get('dataset-update').then((a) => Boolean(a))`), { message: 'hourly alarm created for the weekly interval' });
+      const check = () => evaluate(cdp, opts.s, `chrome.runtime.sendMessage({ type: 'checkDatasetUpdates' }).then((r) => r.outcomes.map((o) => o.kind + ':' + o.result).join(','))`);
+      const first = await check();
+      if (first !== 'geosite:unchanged') throw new Error(`expected unchanged (304), got ${first}`);
+      if (hits.at(-1) !== '"v1"') throw new Error(`conditional request missing If-None-Match: ${hits.at(-1)}`);
+      version = { etag: '"v2"', body: dat('upd-b.localhost') };
+      const second = await check();
+      if (second !== 'geosite:updated') throw new Error(`expected updated, got ${second}`);
+      const t = await openTab(u('www.upd-b.localhost', '/plain.html'));
+      await sleep(1200);
+      expectLocale(await report(t, { settle: 1000 }), 'ja-JP', 'rule uses the updated data set');
+      // A browser start right after: blocked by the minimum gap, no request.
+      const before = hits.length;
+      const startup = await sw(`localeJacket.runDatasetUpdates('startup').then((o) => o.map((x) => x.result + ':' + (x.reason ?? '')).join(','))`);
+      if (startup !== 'skipped:too-soon' || hits.length !== before) throw new Error(`startup within the minimum gap: ${startup}, ${hits.length - before} request(s)`);
+      await evaluate(cdp, opts.s, `location.reload()`).catch(() => undefined);
+      await until(() => evaluate(cdp, opts.s, `document.querySelector('#data')?.textContent.includes('Last checked')`), { message: 'last check shown' });
+      await evaluate(cdp, opts.s, `import('/shared/dataset-store.js').then((s) => s.deleteDataset('geosite')).then(() => chrome.runtime.sendMessage({ type: 'datasetsChanged' }))`);
+      await setSettings(settingsFrom(CONFIG));
+      await until(() => sw(`chrome.alarms.get('dataset-update').then((a) => !a)`), { message: 'alarm cleared when updates are off' });
+    } finally {
+      cdn.close();
+    }
   });
 
   await test('UI follows the browser language (zh-CN) unless set otherwise', async () => {

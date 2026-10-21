@@ -11,7 +11,8 @@ import { isUiLanguagePref, UI_LANGUAGES } from './i18n.js';
 import { normalizeProfile } from './locale.js';
 import { DEFAULT_OPTIONS } from './presets.js';
 import { newRuleId, normalizeRuleValue } from './rules.js';
-import type { DefaultAction, LocaleProfile, Options, Rule, RuleType, Settings } from './types.js';
+import { MAX_UPDATE_GAP_HOURS, MIN_UPDATE_GAP_HOURS } from './dataset-schedule.js';
+import type { DatasetUpdateOptions, DefaultAction, LocaleProfile, Options, Rule, RuleType, Settings } from './types.js';
 import { isIpRuleType, RULE_TYPES } from './types.js';
 import { parseYaml, stringifyYaml, YamlError, type YamlValue } from './yaml.js';
 
@@ -340,6 +341,30 @@ function parseOptions(raw: unknown, base: Options, errors: string[]): Options {
     if (typeof raw[k] === 'boolean') out[k] = raw[k];
     else errors.push(`options.${k} must be true or false.`);
   }
+  if (raw.datasetUpdates !== undefined) out.datasetUpdates = parseDatasetUpdates(raw.datasetUpdates, base.datasetUpdates, errors);
+  return out;
+}
+
+function parseDatasetUpdates(raw: unknown, base: DatasetUpdateOptions, errors: string[]): DatasetUpdateOptions {
+  const out: DatasetUpdateOptions = { ...(base ?? DEFAULT_OPTIONS.datasetUpdates) };
+  if (!isRecord(raw)) {
+    errors.push('options.datasetUpdates must be an object.');
+    return out;
+  }
+  for (const k of ['onStartup', 'onlyNeeded'] as const) {
+    if (raw[k] === undefined) continue;
+    if (typeof raw[k] === 'boolean') out[k] = raw[k];
+    else errors.push(`options.datasetUpdates.${k} must be true or false.`);
+  }
+  if (raw.interval !== undefined) {
+    if (raw.interval === 'off' || raw.interval === 'daily' || raw.interval === 'weekly' || raw.interval === 'monthly') out.interval = raw.interval;
+    else errors.push('options.datasetUpdates.interval must be "off", "daily", "weekly" or "monthly".');
+  }
+  if (raw.minIntervalHours !== undefined) {
+    const n = raw.minIntervalHours;
+    if (typeof n === 'number' && Number.isFinite(n) && n >= MIN_UPDATE_GAP_HOURS && n <= MAX_UPDATE_GAP_HOURS) out.minIntervalHours = Math.round(n);
+    else errors.push(`options.datasetUpdates.minIntervalHours must be a number from ${MIN_UPDATE_GAP_HOURS} to ${MAX_UPDATE_GAP_HOURS}.`);
+  }
   return out;
 }
 
@@ -374,7 +399,7 @@ export function settingsToConfigObject(s: Settings): { [k: string]: YamlValue } 
     enabled: s.enabled,
     rules,
     default: def,
-    options: { ...s.options },
+    options: { ...s.options, datasetUpdates: { ...s.options.datasetUpdates } },
   };
 }
 

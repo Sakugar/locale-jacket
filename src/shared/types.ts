@@ -59,6 +59,20 @@ export type DefaultAction = { action: 'SYSTEM' } | { action: 'PROFILE'; profile:
 
 export type FrameMode = 'inherit' | 'per-frame';
 
+export type DatasetUpdateInterval = 'off' | 'daily' | 'weekly' | 'monthly';
+
+/** Automatic updates of downloaded data sets (opt-in). */
+export interface DatasetUpdateOptions {
+  /** Check when the browser starts. */
+  onStartup: boolean;
+  /** Check regularly. */
+  interval: DatasetUpdateInterval;
+  /** At most one automatic attempt per data set within this many hours (1–720). */
+  minIntervalHours: number;
+  /** Only update data sets that the current rules use. */
+  onlyNeeded: boolean;
+}
+
 export interface Options {
   /** inherit: frames use the tab's top-level profile. per-frame: cross-site frames resolve their own rule. */
   frameMode: FrameMode;
@@ -72,6 +86,8 @@ export interface Options {
   overrideWorkers: boolean;
   /** Language of the extension's own interface. */
   uiLanguage: UiLanguagePref;
+  /** Automatic data-set updates. */
+  datasetUpdates: DatasetUpdateOptions;
 }
 
 export interface Settings {
