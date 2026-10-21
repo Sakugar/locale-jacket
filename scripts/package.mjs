@@ -66,7 +66,8 @@ end.writeUInt16LE(centrals.length / 2, 10);
 end.writeUInt32LE(centralSize, 12);
 end.writeUInt32LE(offset, 16);
 
-const outDir = path.join(root, 'release');
+const outArg = process.argv.indexOf('--out');
+const outDir = outArg > 0 ? path.resolve(process.argv[outArg + 1]) : path.join(root, 'release');
 fs.mkdirSync(outDir, { recursive: true });
 const out = path.join(outDir, `locale-jacket-${version}.zip`);
 fs.writeFileSync(out, Buffer.concat([...locals, ...centrals, end]));
