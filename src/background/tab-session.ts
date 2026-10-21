@@ -32,7 +32,7 @@ import { PROBE_WORLD, PROBE_SOURCE, VERIFY_EXPRESSION } from './probe.js';
 import { hostFromUrl } from '../shared/domain.js';
 import { profileKey } from '../shared/locale.js';
 import type { FrameVerification, LocaleSnapshot, LogEntry, SessionState, TabStatus, VerifyResult } from '../shared/messages.js';
-import { resolveHost, ruleLabel } from '../shared/rules.js';
+import { ruleLabel } from '../shared/rules.js';
 import type { LocaleProfile, Resolution, Settings } from '../shared/types.js';
 
 export interface TabContext {
@@ -48,6 +48,8 @@ export interface TabContext {
   now(): number;
   /** The browser's own locale values (what SYSTEM pages should report). */
   native(): { locale: string; languages: string[] };
+  /** Resolve a hostname with the current rules, datasets and known server address. */
+  resolve(host: string | null): Resolution;
 }
 
 export interface CommitDetails {
@@ -177,7 +179,7 @@ export class TabSession {
   }
 
   private resolveUrl(url: string | null): Resolution {
-    return resolveHost(url ? hostFromUrl(url) : null, this.settings());
+    return this.ctx.resolve(url ? hostFromUrl(url) : null);
   }
 
   private log(level: LogEntry['level'], msg: string): void {
@@ -796,6 +798,7 @@ export class TabSession {
         ruleId: res.rule?.id ?? null,
         ruleLabel: res.rule ? ruleLabel(res.rule) : null,
         profile: res.profile,
+        ip: res.ip,
       },
       session: this.state === 'attached' ? 'attached' : this.sessionStatus,
       applied: this.state === 'attached' ? this.targetProfile : null,

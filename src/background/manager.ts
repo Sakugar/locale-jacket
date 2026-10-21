@@ -4,6 +4,7 @@
 import { errorMessage, type DebuggerPort } from './cdp.js';
 import { TabSession, type CommitDetails, type PausedRequest, type TabContext, type TargetInfo } from './tab-session.js';
 import type { LogEntry, TabStatus, VerifyResult } from '../shared/messages.js';
+import { resolveHost, type MatchContext } from '../shared/rules.js';
 import type { Settings } from '../shared/types.js';
 
 export interface ManagerDeps {
@@ -19,6 +20,8 @@ export interface ManagerDeps {
   now?: () => number;
   /** The browser's own locale (the service worker itself is never overridden). */
   native?: () => { locale: string; languages: string[] };
+  /** Datasets and server address for a host (IP/GEO rules); omitted in tests. */
+  matchContext?: (host: string) => MatchContext;
 }
 
 export function spoofingPossible(s: Settings): boolean {
@@ -48,6 +51,7 @@ export class SessionManager {
       },
       log: (level, tabId, msg) => deps.log({ t: this.now(), level, tabId, msg }),
       now: this.now,
+      resolve: (host) => resolveHost(host, this.settings, host && deps.matchContext ? deps.matchContext(host) : {}),
       native: deps.native ?? (() => ({ locale: Intl.DateTimeFormat().resolvedOptions().locale, languages: [...navigator.languages] })),
     };
   }

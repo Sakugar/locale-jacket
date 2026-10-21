@@ -3,7 +3,9 @@ import { beforeEach, describe, it } from 'node:test';
 import type { DebuggerPort, Target } from '../src/background/cdp.js';
 import { SessionManager } from '../src/background/manager.js';
 import { TabSession, type TabContext } from '../src/background/tab-session.js';
+import { parseIp } from '../src/shared/ip.js';
 import { makeProfile } from '../src/shared/locale.js';
+import { normalizeRuleValue, resolveHost } from '../src/shared/rules.js';
 import type { LocaleSnapshot, LogEntry, TabStatus } from '../src/shared/messages.js';
 import { defaultSettings } from '../src/shared/presets.js';
 import type { Settings } from '../src/shared/types.js';
@@ -100,6 +102,7 @@ function makeCtx(port: FakePort, settings: Settings, opts: { active?: () => bool
     log: (level, tabId, msg) => logs.push({ t: now, level, tabId, msg }),
     now: () => now,
     native: () => ({ locale: 'zh-CN', languages: ['zh-CN', 'zh'] }),
+    resolve: (h) => resolveHost(h, settings),
     reloads,
     logs,
     advance: (ms) => {
@@ -599,6 +602,43 @@ describe('SessionManager', () => {
     m.onTabRemoved(5);
     assert.equal(m.status(5), null);
     assert.deepEqual(port.detachCalls, [5]);
+  });
+
+  it('IP rules decide with the server address observed for the host', async () => {
+    const s = defaultSettings();
+    s.rules.push({ id: 'ip', type: 'IP-CIDR', value: normalizeRuleValue('IP-CIDR', '17.0.0.0/8').value!, action: 'PROFILE', profile: makeProfile('ja-JP'), enabled: true, priority: 0, note: '' });
+    const ips = new Map<string, string>();
+    const port = new FakePort();
+    const reloads: number[] = [];
+    const m = new SessionManager({
+      port,
+      initialSettings: s,
+      suspended: false,
+      reloadTab: async (id) => {
+        reloads.push(id);
+      },
+      getTabUrl: async () => null,
+      listTabs: async () => [],
+      onStatus: () => undefined,
+      onTabGone: () => undefined,
+      log: () => undefined,
+      native: () => ({ locale: 'zh-CN', languages: ['zh-CN', 'zh'] }),
+      matchContext: (host) => ({ ip: ips.has(host) ? parseIp(ips.get(host)!) : null }),
+    });
+    // Address unknown yet: nothing matches, no session.
+    m.onBeforeNavigate(7, 0, 'https://cdn.example/');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(port.attachCalls, 0);
+    // The response reveals the address before the commit: the IP rule now applies.
+    ips.set('cdn.example', '17.1.2.3');
+    m.onCommitted(7, 0, { url: 'https://cdn.example/', transitionType: 'typed', timeStamp: Date.now() });
+    await new Promise((r) => setTimeout(r, 10));
+    const st = m.status(7)!;
+    assert.equal(st.resolution.ruleLabel, 'IP-CIDR,17.0.0.0/8');
+    assert.equal(st.resolution.ip, '17.1.2.3');
+    assert.equal(st.applied?.locale, 'ja-JP');
+    assert.equal(st.late, true, 'first visit: the page started before the address was known');
+    assert.deepEqual(reloads, [7], 'reloaded once; the next load is gated with the cached address');
   });
 
   it('a global default profile spoofs unmatched sites', async () => {

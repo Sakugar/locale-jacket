@@ -2,6 +2,7 @@
 // plus the status shapes they exchange. Settings are not sent through messages:
 // pages write chrome.storage.local and the worker reacts to storage.onChanged.
 
+import type { DatasetMeta } from './dataset-store.js';
 import type { LocaleProfile, ResolutionSource, RuleAction } from './types.js';
 
 export type SessionState =
@@ -20,6 +21,8 @@ export interface ResolutionSummary {
   ruleId: string | null;
   ruleLabel: string | null;
   profile: LocaleProfile | null;
+  /** Server address used for IP rules, if known. */
+  ip: string | null;
 }
 
 export interface TabStatus {
@@ -48,6 +51,19 @@ export interface GlobalStatus {
   attachedTabs: number;
   settingsProblems: string[];
   dnr: { active: boolean; ruleCount: number; skipped: string[]; error: string | null };
+  datasets: { installed: DatasetMeta[]; problems: string[]; ipCacheSize: number; watchingIps: boolean };
+}
+
+export interface HostTest {
+  host: string | null;
+  resolution: ResolutionSummary;
+  /** Matching rules, best first (labels). */
+  matches: { label: string; action: string; ruleId: string }[];
+  /** Where the address came from. */
+  ipSource: 'literal' | 'observed' | 'given' | 'unknown';
+  country: string | null;
+  asn: number | null;
+  problems: string[];
 }
 
 export interface LocaleSnapshot {
@@ -93,7 +109,10 @@ export type Request =
   | { type: 'reloadTab'; tabId: number }
   | { type: 'resume' }
   | { type: 'detachAll' }
-  | { type: 'getLog' };
+  | { type: 'getLog' }
+  | { type: 'testHost'; host: string; ip?: string }
+  | { type: 'datasetsChanged' }
+  | { type: 'geositeCategories' };
 
 export interface ResponseMap {
   getStatus: { status: TabStatus | null; global: GlobalStatus };
@@ -103,6 +122,9 @@ export interface ResponseMap {
   resume: { ok: boolean };
   detachAll: { detached: number };
   getLog: { entries: LogEntry[] };
+  testHost: HostTest;
+  datasetsChanged: { ok: boolean; problems: string[] };
+  geositeCategories: { names: string[] };
 }
 
 export type Response<T extends Request['type']> = ResponseMap[T] | { error: string };

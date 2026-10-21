@@ -13,7 +13,12 @@ import { chromeDebuggerPort, errorMessage } from './cdp.js';
 import { SessionManager, spoofingPossible } from './manager.js';
 import { sanitizeStoredSettings } from '../shared/config-io.js';
 import { compileDnrRules } from '../shared/dnr.js';
-import type { GlobalStatus, LogEntry, Request, TabStatus } from '../shared/messages.js';
+import { DatasetRuntime } from './datasets.js';
+import { IpCache } from './ip-cache.js';
+import { hostFromUrl, normalizeHost } from '../shared/domain.js';
+import { parseIp } from '../shared/ip.js';
+import type { GlobalStatus, HostTest, LogEntry, Request, TabStatus } from '../shared/messages.js';
+import { describeAction, needsServerIp, requiredDatasets, resolveHost, ruleLabel } from '../shared/rules.js';
 import { defaultSettings } from '../shared/presets.js';
 import type { Settings } from '../shared/types.js';
 
@@ -57,7 +62,7 @@ function syncDnr(settings: Settings, suspended: boolean): Promise<void> {
     try {
       const existing = await chrome.declarativeNetRequest.getDynamicRules();
       const want = settings.options.dnrHeaders && !suspended && spoofingPossible(settings);
-      const compiled = want ? compileDnrRules(settings) : { rules: [], skipped: [] };
+      const compiled = want ? compileDnrRules(settings, { geosite: (v) => datasets.context(null).geosite?.(v) }) : { rules: [], skipped: [] };
       await chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: existing.map((r) => r.id),
         addRules: compiled.rules as unknown as chrome.declarativeNetRequest.Rule[],
@@ -111,10 +116,39 @@ async function refreshGlobalBadge(): Promise<void> {
 
 let manager: SessionManager | null = null;
 
+// --------------------------------------------------- datasets and server IPs
+
+const datasets = new DatasetRuntime((msg) => log({ t: Date.now(), level: 'debug', tabId: null, msg }));
+const ipCache = new IpCache();
+let watchingIps = false;
+
+function onResponseStarted(d: chrome.webRequest.OnResponseStartedDetails): void {
+  const host = d.ip ? hostFromUrl(d.url) : null;
+  if (host && d.ip) ipCache.set(host, d.ip);
+}
+
+/**
+ * IP rules need the address Chrome connected to. The listener is only registered
+ * while such rules exist, so the worker is not woken for every request otherwise.
+ */
+function syncIpWatcher(settings: Settings): void {
+  const want = settings.enabled && needsServerIp(settings.rules);
+  if (want === watchingIps) return;
+  if (want) chrome.webRequest.onResponseStarted.addListener(onResponseStarted, { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame'] });
+  else {
+    chrome.webRequest.onResponseStarted.removeListener(onResponseStarted);
+    ipCache.clear();
+  }
+  watchingIps = want;
+}
+
 const ready: Promise<SessionManager> = (async () => {
   const settings = await loadSettings();
   const suspended = Boolean((await chrome.storage.session.get(SUSPENDED_KEY))[SUSPENDED_KEY]);
+  await datasets.ensure(requiredDatasets(settings.rules));
+  syncIpWatcher(settings);
   manager = new SessionManager({
+    matchContext: (host) => datasets.context(ipCache.get(host)),
     port: chromeDebuggerPort((method, ms) => log({ t: Date.now(), level: 'warn', tabId: null, msg: `Slow CDP command ${method}: ${ms} ms` })),
     initialSettings: settings,
     suspended,
@@ -210,6 +244,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
   withManager(async (m) => {
     const { settings, problems } = sanitizeStoredSettings(changes[SETTINGS_KEY]!.newValue, defaultSettings());
     settingsProblems = problems;
+    await datasets.ensure(requiredDatasets(settings.rules));
+    syncIpWatcher(settings);
     await m.updateSettings(settings);
     await syncDnr(settings, m.isSuspended);
     await refreshGlobalBadge();
@@ -227,6 +263,29 @@ function globalStatus(m: SessionManager): GlobalStatus {
     attachedTabs: m.attachedCount(),
     settingsProblems,
     dnr: { ...dnrState },
+    datasets: { installed: datasets.meta, problems: datasets.missing, ipCacheSize: ipCache.size, watchingIps },
+  };
+}
+
+/** Resolve a hostname (or URL) the way a tab would, for the options tester and popup. */
+function testHost(m: SessionManager, input: string, ipInput?: string): HostTest {
+  const raw = input.trim();
+  const host = raw.includes('://') ? hostFromUrl(raw) : (normalizeHost(raw)?.ascii ?? null);
+  const given = ipInput ? parseIp(ipInput) : null;
+  const literal = host ? parseIp(host) : null;
+  const observed = host ? ipCache.get(host) : null;
+  const ip = given ?? observed;
+  const ctx = datasets.context(ip);
+  const res = resolveHost(host, m.currentSettings, ctx);
+  const addr = literal ?? ip;
+  return {
+    host,
+    resolution: { action: res.action, source: res.source, ruleId: res.rule?.id ?? null, ruleLabel: res.rule ? ruleLabel(res.rule) : null, profile: res.profile, ip: res.ip },
+    matches: res.matches.map((r) => ({ label: ruleLabel(r), action: describeAction(r), ruleId: r.id })),
+    ipSource: literal ? 'literal' : given ? 'given' : observed ? 'observed' : 'unknown',
+    country: addr ? (ctx.geoip?.(addr) ?? null) : null,
+    asn: addr ? (ctx.asn?.(addr) ?? null) : null,
+    problems: datasets.missing,
   };
 }
 
@@ -253,6 +312,19 @@ chrome.runtime.onMessage.addListener((msg: Request, sender, sendResponse) => {
           return { ok: true };
         case 'detachAll':
           return { detached: await m.detachAll('requested from options page') };
+        case 'testHost':
+          return testHost(m, msg.host, msg.ip);
+        case 'datasetsChanged':
+          datasets.reset();
+          await datasets.ensure(requiredDatasets(m.currentSettings.rules));
+          await m.updateSettings(m.currentSettings);
+          await syncDnr(m.currentSettings, m.isSuspended);
+          await refreshGlobalBadge();
+          info('Data sets changed; rules re-evaluated.');
+          return { ok: true, problems: datasets.missing };
+        case 'geositeCategories':
+          await datasets.loadGeositeIndex().catch(() => undefined);
+          return { names: datasets.geositeCategoryNames() };
         case 'getLog':
           return { entries: [...logEntries] };
         default:

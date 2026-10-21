@@ -5,8 +5,17 @@
   "version": "1.0.0",
   "description": "Per-site browser locale spoofing (navigator.language, Intl, Accept-Language) via Chrome's DevTools emulation. Your browser UI language stays unchanged.",
   "minimum_chrome_version": "125",
-  "permissions": ["debugger", "storage", "webNavigation", "declarativeNetRequestWithHostAccess"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "permissions": [
+    "debugger",
+    "storage",
+    "webNavigation",
+    "webRequest",
+    "declarativeNetRequestWithHostAccess"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "background": {
     "service_worker": "background/sw.js",
     "type": "module"
