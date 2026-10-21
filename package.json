@@ -11,7 +11,10 @@
     "test": "node scripts/build.mjs --tests && node --test --test-reporter=spec \"build/test/**/*.test.js\"",
     "e2e": "node scripts/build.mjs && node e2e/run.mjs",
     "serve:verify": "node verify/server.mjs",
-    "icons": "node scripts/gen-icons.mjs"
+    "icons": "node scripts/gen-icons.mjs",
+    "package": "node scripts/build.mjs && node scripts/package.mjs",
+    "e2e:edge": "node scripts/build.mjs && node e2e/run.mjs --edge",
+    "screenshots": "node scripts/build.mjs && node e2e/screenshots.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.5",

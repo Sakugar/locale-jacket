@@ -37,3 +37,4 @@ e2e/artifacts/
 .DS_Store
 Thumbs.db
 desktop.ini
+release/

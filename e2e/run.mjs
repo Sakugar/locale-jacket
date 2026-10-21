@@ -123,6 +123,9 @@ function expectLocale(r, locale, label) {
     if (snap.numberLocale !== locale) problems.push(`${where}.Intl.NumberFormat=${snap.numberLocale}`);
     if (snap.collatorLocale !== locale) problems.push(`${where}.Intl.Collator=${snap.collatorLocale}`);
     if (snap.pluralRulesLocale !== locale) problems.push(`${where}.Intl.PluralRules=${snap.pluralRulesLocale}`);
+    for (const k of ['relativeTimeLocale', 'listFormatLocale', 'segmenterLocale', 'displayNamesLocale']) {
+      if (snap[k] !== undefined && snap[k] !== locale) problems.push(`${where}.${k}=${snap[k]}`);
+    }
     if (snap.languages?.[0] !== locale) problems.push(`${where}.languages=${snap.languages}`);
   };
   check('start', r.start);

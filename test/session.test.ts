@@ -408,7 +408,13 @@ describe('TabSession lifecycle', () => {
     await t.onCommitted({ url: GOOGLE, transitionType: 'typed' });
     const s = t.status();
     assert.ok(s.warnings.some((w) => /another tab or DevTools/.test(w)));
-    assert.deepEqual(ctx.reloads, [], 'a reload would not fix it');
+    assert.deepEqual(ctx.reloads, [1], 'reloaded once: navigator.language still benefits even though Intl is locked');
+    port.failures.set('main:Emulation.setUserAgentOverride', 'boom');
+    const p2 = new FakePort();
+    p2.failures.set('Emulation.setUserAgentOverride', 'boom');
+    const ctx2 = makeCtx(p2, settings);
+    await new TabSession(2, ctx2).onCommitted({ url: GOOGLE, transitionType: 'typed', timeStamp: ctx2.now() });
+    assert.deepEqual(ctx2.reloads, [], 'nothing would improve: no reload');
   });
 
   it('a failed navigation reverts to the committed page’s profile', async () => {

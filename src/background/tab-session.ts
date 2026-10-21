@@ -391,7 +391,9 @@ export class TabSession {
   private maybeAutoReload(d: CommitDetails): void {
     const now = this.ctx.now();
     if (!this.settings().options.reloadOnLate) return;
-    if (!this.isApplied(this.resolution)) return; // a reload would not help
+    // A reload helps if at least navigator.language / Accept-Language are in place; a
+    // process-wide Intl lock held by another tab or DevTools would survive the reload.
+    if (this.state !== 'attached' || this.mainState.languages !== desiredFor(this.resolution.profile, 'page').languages) return;
     if (!RELOADABLE_TRANSITIONS.has(d.transitionType ?? '')) return;
     if ((d.transitionQualifiers ?? []).includes('forward_back')) return;
     if (d.timeStamp && now - d.timeStamp > AUTO_RELOAD_MAX_AGE_MS) return;
