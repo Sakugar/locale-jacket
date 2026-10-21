@@ -34,6 +34,10 @@ Pin the extension so its badge (for example `EN` or `JA`) shows which profile th
 
 `npm run package` creates `release/locale-jacket-<version>.zip` for uploading to a store.
 
+`npm run crx` creates a signed `release/locale-jacket-<version>.crx` using Chrome's own packer.
+- The signing key is generated on first use in `keys/locale-jacket.pem` (git-ignored) and reused afterwards. It determines the extension ID, so back it up.
+- Chrome and Edge only install `.crx` files from outside their stores when an enterprise policy allows it (`ExtensionInstallAllowlist` / `ExtensionInstallForcelist`). For personal use, **Load unpacked** is the way to install.
+
 ### What to expect
 
 - On first install the **example preset** from the specification is active:

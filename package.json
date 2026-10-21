@@ -14,7 +14,8 @@
     "icons": "node scripts/gen-icons.mjs",
     "package": "node scripts/build.mjs && node scripts/package.mjs",
     "e2e:edge": "node scripts/build.mjs && node e2e/run.mjs --edge",
-    "screenshots": "node scripts/build.mjs && node e2e/screenshots.mjs"
+    "screenshots": "node scripts/build.mjs && node e2e/screenshots.mjs",
+    "crx": "node scripts/build.mjs && node scripts/pack-crx.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.5",
