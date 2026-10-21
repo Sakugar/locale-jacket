@@ -44,6 +44,7 @@ export const DEFAULT_OPTIONS: Options = {
   reloadOnLate: true,
   dnrHeaders: true,
   overrideWorkers: true,
+  uiLanguage: 'auto',
 };
 
 function rule(id: string, partial: Omit<Rule, 'id' | 'enabled' | 'priority' | 'note' | 'profile'> & { locale?: string; note?: string }): Rule {

@@ -6,28 +6,29 @@ import { normalizeRuleValue, newRuleId } from '../shared/rules.js';
 import type { LocaleProfile, Rule, RuleType } from '../shared/types.js';
 import { isIpRuleType, RULE_TYPES } from '../shared/types.js';
 import { send } from '../shared/messages.js';
+import { t as tr, type MessageKey } from '../shared/i18n.js';
 
-const LABELS: Record<RuleType, string> = {
-  DOMAIN: 'Domain',
-  'DOMAIN-SUFFIX': 'Domain',
-  'DOMAIN-KEYWORD': 'Keyword',
-  'DOMAIN-REGEX': 'Regular expression',
-  GEOSITE: 'GeoSite category',
-  'IP-CIDR': 'IPv4 range (CIDR)',
-  'IP-CIDR6': 'IPv6 range (CIDR)',
-  'IP-ASN': 'AS number',
-  GEOIP: 'Country code or LAN',
+const LABELS: Record<RuleType, MessageKey> = {
+  DOMAIN: 'rule.label.domain',
+  'DOMAIN-SUFFIX': 'rule.label.domain',
+  'DOMAIN-KEYWORD': 'rule.label.keyword',
+  'DOMAIN-REGEX': 'rule.label.regex',
+  GEOSITE: 'rule.label.geosite',
+  'IP-CIDR': 'rule.label.cidr4',
+  'IP-CIDR6': 'rule.label.cidr6',
+  'IP-ASN': 'rule.label.asn',
+  GEOIP: 'rule.label.geoip',
 };
 const PLACEHOLDERS: Record<RuleType, string> = {
-  DOMAIN: 'e.g. accounts.google.com',
-  'DOMAIN-SUFFIX': 'e.g. google.com',
-  'DOMAIN-KEYWORD': 'e.g. microsoft',
-  'DOMAIN-REGEX': 'e.g. ^(.+\.)?example\.(com|org)$',
-  GEOSITE: 'e.g. google, cn, apple@cn',
-  'IP-CIDR': 'e.g. 17.0.0.0/8',
-  'IP-CIDR6': 'e.g. 2001:db8::/32',
-  'IP-ASN': 'e.g. 13335',
-  GEOIP: 'e.g. US, JP, LAN',
+  DOMAIN: 'accounts.google.com',
+  'DOMAIN-SUFFIX': 'google.com',
+  'DOMAIN-KEYWORD': 'microsoft',
+  'DOMAIN-REGEX': '^(.+\.)?example\.(com|org)$',
+  GEOSITE: 'google, cn, apple@cn',
+  'IP-CIDR': '17.0.0.0/8',
+  'IP-CIDR6': '2001:db8::/32',
+  'IP-ASN': '13335',
+  GEOIP: 'US, JP, LAN',
 };
 
 let geositeList: HTMLDataListElement | null = null;
@@ -79,12 +80,12 @@ export function profileForm(initial: LocaleProfile | null): ProfileForm {
   const tzOn = h('input', { type: 'checkbox' });
   tzOn.checked = Boolean(start.timezone);
   const presetTz = () => LOCALE_PRESETS.find((p) => p.locale === picker.value())?.timezone ?? '';
-  const tz = h('input', { type: 'text', list: 'lj-timezones', value: start.timezone ?? '', placeholder: 'e.g. America/New_York', spellcheck: false, 'aria-label': 'Time zone' });
+  const tz = h('input', { type: 'text', list: 'lj-timezones', value: start.timezone ?? '', placeholder: tr('common.eg', { x: 'America/New_York' }), spellcheck: false, 'aria-label': tr('common.timeZone') });
   const geoOn = h('input', { type: 'checkbox' });
   geoOn.checked = Boolean(start.geolocation);
-  const lat = h('input', { type: 'number', step: 'any', min: -90, max: 90, value: start.geolocation?.latitude ?? '', placeholder: 'latitude', 'aria-label': 'Latitude' });
-  const lon = h('input', { type: 'number', step: 'any', min: -180, max: 180, value: start.geolocation?.longitude ?? '', placeholder: 'longitude', 'aria-label': 'Longitude' });
-  const acc = h('input', { type: 'number', step: 'any', min: 1, value: start.geolocation?.accuracy ?? 100, placeholder: 'accuracy (m)', 'aria-label': 'Accuracy in meters' });
+  const lat = h('input', { type: 'number', step: 'any', min: -90, max: 90, value: start.geolocation?.latitude ?? '', placeholder: tr('profile.latitude'), 'aria-label': tr('profile.latitude') });
+  const lon = h('input', { type: 'number', step: 'any', min: -180, max: 180, value: start.geolocation?.longitude ?? '', placeholder: tr('profile.longitude'), 'aria-label': tr('profile.longitude') });
+  const acc = h('input', { type: 'number', step: 'any', min: 1, value: start.geolocation?.accuracy ?? 100, placeholder: tr('profile.accuracy'), 'aria-label': tr('profile.accuracy') });
   const msg = h('div', { class: 'stack', style: 'gap:2px' });
 
   const picker = localePicker(start.locale, {
@@ -108,7 +109,7 @@ export function profileForm(initial: LocaleProfile | null): ProfileForm {
       languagesTouched = false;
       update();
     },
-  }, 'Reset from locale');
+  }, tr('profile.resetLanguages'));
   const tzRow = h('div', { class: 'row' }, tz);
   const geoRow = h('div', { class: 'grid3' }, lat, lon, acc);
   tzOn.addEventListener('change', () => {
@@ -120,7 +121,7 @@ export function profileForm(initial: LocaleProfile | null): ProfileForm {
 
   function read() {
     const locale = picker.value();
-    if (locale === undefined || locale === null) return { profile: null, errors: ['Choose a valid locale.'], warnings: [] };
+    if (locale === undefined || locale === null) return { profile: null, errors: [tr('profile.chooseLocale')], warnings: [] };
     return normalizeProfile({
       locale,
       languages: langs.value.split(',').map((s) => s.trim()).filter(Boolean),
@@ -141,16 +142,16 @@ export function profileForm(initial: LocaleProfile | null): ProfileForm {
   }
 
   const el = h('fieldset', {},
-    h('legend', {}, 'Locale profile'),
-    h('div', { class: 'field' }, h('span', {}, 'Locale (Intl.* and the default for navigator.language)'), picker.el),
+    h('legend', {}, tr('profile.legend')),
+    h('div', { class: 'field' }, h('span', {}, tr('profile.localeField')), picker.el),
     h('div', { class: 'field' },
       h('span', {}, 'navigator.languages'),
       langs,
-      h('div', { class: 'row hint' }, h('span', {}, 'Accept-Language sent:'), header, h('span', { class: 'spacer' }), resetLangs),
+      h('div', { class: 'row hint' }, h('span', {}, tr('profile.headerSent')), header, h('span', { class: 'spacer' }), resetLangs),
     ),
-    h('label', { class: 'row' }, tzOn, h('span', {}, 'Override time zone'), h('span', { class: 'hint' }, '(off by default; affects Date and Intl time zone)')),
+    h('label', { class: 'row' }, tzOn, h('span', {}, tr('profile.tzOverride')), h('span', { class: 'hint' }, tr('profile.tzHint'))),
     tzRow,
-    h('label', { class: 'row' }, geoOn, h('span', {}, 'Override geolocation'), h('span', { class: 'hint' }, '(off by default; sites still need location permission)')),
+    h('label', { class: 'row' }, geoOn, h('span', {}, tr('profile.geoOverride')), h('span', { class: 'hint' }, tr('profile.geoHint'))),
     geoRow,
     msg,
   );
@@ -179,10 +180,10 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
     ...prefill,
   };
 
-  const type = h('select', { 'aria-label': 'Match type' }, ...RULE_TYPES.map((t) => h('option', { value: t }, t)));
+  const type = h('select', { 'aria-label': tr('rule.matchType') }, ...RULE_TYPES.map((t) => h('option', { value: t }, t)));
   type.value = base.type;
   const typeHint = h('div', { class: 'hint' });
-  const value = h('input', { type: 'text', value: base.value, spellcheck: false, autofocus: true, 'aria-label': 'Domain or keyword' });
+  const value = h('input', { type: 'text', value: base.value, spellcheck: false, autofocus: true, 'aria-label': tr('rule.value') });
   const valueMsg = h('div', { class: 'hint' });
   const valueLabel = h('span', {});
   const actionProfile = h('input', { type: 'radio', name: 'action', value: 'PROFILE' });
@@ -192,29 +193,29 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
   const pf = profileForm(base.profile);
   const noResolve = h('input', { type: 'checkbox' });
   noResolve.checked = Boolean(base.noResolve);
-  const noResolveRow = h('label', { class: 'row' }, noResolve, h('span', {}, 'no-resolve'), h('span', { class: 'hint' }, '— match only when the site is opened by IP address, never via the server address'));
-  const priority = h('input', { type: 'number', step: 1, value: base.priority, style: 'width:90px', 'aria-label': 'Priority' });
-  const note = h('input', { type: 'text', value: base.note, placeholder: 'Optional note', 'aria-label': 'Note' });
+  const noResolveRow = h('label', { class: 'row' }, noResolve, h('span', {}, 'no-resolve'), h('span', { class: 'hint' }, tr('rule.noResolveHint')));
+  const priority = h('input', { type: 'number', step: 1, value: base.priority, style: 'width:90px', 'aria-label': tr('rule.priorityShort') });
+  const note = h('input', { type: 'text', value: base.note, placeholder: tr('rule.notePlaceholder'), 'aria-label': tr('rule.note') });
   const enabled = h('input', { type: 'checkbox' });
   enabled.checked = base.enabled;
   const formErrors = h('div', {});
 
-  const TYPE_HINTS: Record<RuleType, string> = {
-    'DOMAIN-SUFFIX': 'Matches the domain and every subdomain on label boundaries: google.com matches mail.google.com but not fakegoogle.com.',
-    DOMAIN: 'Matches this exact hostname only. Exact rules beat every suffix and keyword rule.',
-    'DOMAIN-KEYWORD': 'Matches any hostname containing the text. After exact and suffix rules.',
-    'DOMAIN-REGEX': 'JavaScript regular expression tested against the hostname (case-insensitive), e.g. ^(.+\\.)?example\\.(com|org)$.',
-    GEOSITE: 'A category from the GeoSite data set (Options ▸ Data sets), e.g. google, cn, apple@cn, geolocation-!cn. Matches nothing until the data set is downloaded or imported.',
-    'IP-CIDR': 'Matches when the site’s server address is in this IPv4 range, e.g. 17.0.0.0/8. Hostname rules always win over IP rules.',
-    'IP-CIDR6': 'Matches when the site’s server address is in this IPv6 range, e.g. 2001:db8::/32.',
-    'IP-ASN': 'Matches the server’s autonomous system number, e.g. 13335 (Cloudflare). Needs the ASN data set.',
-    GEOIP: 'Matches the server’s country (US, CN, JP …) or LAN (private addresses, no data needed). Country codes need the GeoIP data set.',
+  const TYPE_HINTS: Record<RuleType, MessageKey> = {
+    'DOMAIN-SUFFIX': 'rule.hint.suffix',
+    DOMAIN: 'rule.hint.domain',
+    'DOMAIN-KEYWORD': 'rule.hint.keyword',
+    'DOMAIN-REGEX': 'rule.hint.regex',
+    GEOSITE: 'rule.hint.geosite',
+    'IP-CIDR': 'rule.hint.cidr4',
+    'IP-CIDR6': 'rule.hint.cidr6',
+    'IP-ASN': 'rule.hint.asn',
+    GEOIP: 'rule.hint.geoip',
   };
   const syncType = () => {
-    typeHint.textContent = TYPE_HINTS[type.value as RuleType];
+    typeHint.textContent = tr(TYPE_HINTS[type.value as RuleType]);
     const t = type.value as RuleType;
-    value.placeholder = PLACEHOLDERS[t];
-    valueLabel.textContent = LABELS[t];
+    value.placeholder = tr('common.eg', { x: PLACEHOLDERS[t] });
+    valueLabel.textContent = tr(LABELS[t]);
     noResolveRow.hidden = !isIpRuleType(t);
     if (t === 'GEOSITE') void loadGeositeNames(value);
     checkValue();
@@ -229,7 +230,7 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
     const r = normalizeRuleValue(type.value as RuleType, value.value);
     if (!r.value) {
       valueMsg.className = 'error-text';
-      valueMsg.textContent = r.error ?? 'Invalid value.';
+      valueMsg.textContent = r.error ?? tr('rule.invalidValue');
       value.classList.add('invalid');
       return null;
     }
@@ -245,28 +246,28 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
   actionSystem.addEventListener('change', syncAction);
 
   return new Promise((resolve) => {
-    const cancel = h('button', { type: 'button', onclick: () => dialog.close('cancel') }, 'Cancel');
-    const save = h('button', { type: 'submit', class: 'primary' }, rule ? 'Save rule' : 'Add rule');
+    const cancel = h('button', { type: 'button', onclick: () => dialog.close('cancel') }, tr('common.cancel'));
+    const save = h('button', { type: 'submit', class: 'primary' }, tr(rule ? 'rule.save' : 'rule.add'));
     const form = h('form', { method: 'dialog' },
-      h('h2', {}, rule ? 'Edit rule' : 'New rule'),
+      h('h2', {}, tr(rule ? 'rule.editTitle' : 'rule.newTitle')),
       h('div', { class: 'grid2' },
-        h('label', { class: 'field' }, h('span', {}, 'Match type'), type),
+        h('label', { class: 'field' }, h('span', {}, tr('rule.matchType')), type),
         h('label', { class: 'field' }, valueLabel, value),
       ),
       typeHint,
       valueMsg,
       noResolveRow,
       h('div', { class: 'field' },
-        h('span', {}, 'Action'),
-        h('label', { class: 'row' }, actionProfile, h('span', {}, 'Spoof with a locale profile')),
-        h('label', { class: 'row' }, actionSystem, h('span', {}, 'SYSTEM — keep the real browser locale (exception)')),
+        h('span', {}, tr('rule.action')),
+        h('label', { class: 'row' }, actionProfile, h('span', {}, tr('rule.actionProfile'))),
+        h('label', { class: 'row' }, actionSystem, h('span', {}, tr('rule.actionSystem'))),
       ),
       pf.el,
       h('div', { class: 'grid2' },
-        h('label', { class: 'field' }, h('span', {}, 'Priority (tie-breaker, higher wins)'), priority),
-        h('label', { class: 'field' }, h('span', {}, 'Note'), note),
+        h('label', { class: 'field' }, h('span', {}, tr('rule.priority')), priority),
+        h('label', { class: 'field' }, h('span', {}, tr('rule.note')), note),
       ),
-      h('label', { class: 'row' }, enabled, h('span', {}, 'Enabled')),
+      h('label', { class: 'row' }, enabled, h('span', {}, tr('rule.enabled'))),
       formErrors,
       h('div', { class: 'row' }, h('span', { class: 'spacer' }), cancel, save),
     );
@@ -275,7 +276,7 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
       clear(formErrors);
       const errors: string[] = [];
       const v = checkValue();
-      if (!v) errors.push(value.value.trim() ? 'Fix the domain/keyword.' : 'Enter a domain or keyword.');
+      if (!v) errors.push(tr(value.value.trim() ? 'rule.fixValue' : 'rule.enterValue'));
       const action = actionSystem.checked ? 'SYSTEM' : 'PROFILE';
       let profile: LocaleProfile | null = null;
       if (action === 'PROFILE') {
@@ -284,7 +285,7 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
         profile = r.profile;
       }
       const prio = Number(priority.value || 0);
-      if (!Number.isInteger(prio)) errors.push('Priority must be a whole number.');
+      if (!Number.isInteger(prio)) errors.push(tr('rule.priorityInteger'));
       if (errors.length) {
         for (const err of errors) formErrors.append(h('div', { class: 'error-text' }, err));
         return;
@@ -312,7 +313,7 @@ export function editProfile(dialog: HTMLDialogElement, title: string, profile: L
       h('h2', {}, title),
       pf.el,
       errors,
-      h('div', { class: 'row' }, h('span', { class: 'spacer' }), h('button', { type: 'button', onclick: () => dialog.close() }, 'Cancel'), h('button', { type: 'submit', class: 'primary' }, 'Save')),
+      h('div', { class: 'row' }, h('span', { class: 'spacer' }), h('button', { type: 'button', onclick: () => dialog.close() }, tr('common.cancel')), h('button', { type: 'submit', class: 'primary' }, tr('common.save'))),
     );
     form.addEventListener('submit', (e) => {
       e.preventDefault();

@@ -1,0 +1,4 @@
+{
+  "extName": { "message": "Locale Jacket" },
+  "extDescription": { "message": "Per-site browser locale spoofing (navigator.language, Intl, Accept-Language) via Chrome's DevTools emulation. Your browser UI language stays unchanged." }
+}

@@ -2,6 +2,7 @@
 
 import { canonicalizeLocale, isSupportedLocale } from '../shared/locale.js';
 import { LOCALE_PRESETS } from '../shared/presets.js';
+import { t } from '../shared/i18n.js';
 import { h } from './dom.js';
 
 const SYSTEM = '__system__';
@@ -15,12 +16,12 @@ export interface LocalePicker {
 }
 
 export function localePicker(initial: string | null, opts: { allowSystem?: boolean; onChange?: () => void; id?: string } = {}): LocalePicker {
-  const select = h('select', { id: opts.id ?? null, 'aria-label': 'Locale' });
-  if (opts.allowSystem) select.append(h('option', { value: SYSTEM }, 'System locale (no spoofing)'));
+  const select = h('select', { id: opts.id ?? null, 'aria-label': t('picker.locale') });
+  if (opts.allowSystem) select.append(h('option', { value: SYSTEM }, t('picker.system')));
   for (const p of LOCALE_PRESETS) select.append(h('option', { value: p.locale }, `${p.locale} — ${p.label}`));
-  select.append(h('option', { value: CUSTOM }, 'Custom BCP 47 tag…'));
+  select.append(h('option', { value: CUSTOM }, t('picker.custom')));
 
-  const custom = h('input', { type: 'text', placeholder: 'e.g. en-NZ, sr-Latn-RS, de-CH', spellcheck: false, size: 16, 'aria-label': 'Custom locale tag' });
+  const custom = h('input', { type: 'text', placeholder: t('picker.customPlaceholder'), spellcheck: false, size: 16, 'aria-label': t('picker.customLabel') });
   const msg = h('div', { class: 'hint' });
   const el = h('div', { class: 'stack', style: 'gap:4px' }, select, custom, msg);
 
@@ -32,21 +33,21 @@ export function localePicker(initial: string | null, opts: { allowSystem?: boole
     if (select.value !== CUSTOM) return select.value;
     const raw = custom.value.trim();
     if (!raw) {
-      msg.textContent = 'Enter a BCP 47 language tag.';
+      msg.textContent = t('picker.enterTag');
       return undefined;
     }
     const canonical = canonicalizeLocale(raw);
     if (!canonical) {
       custom.classList.add('invalid');
       msg.className = 'error-text';
-      msg.textContent = `“${raw}” is not a valid BCP 47 tag.`;
+      msg.textContent = t('picker.invalid', { tag: raw });
       return undefined;
     }
     if (!isSupportedLocale(canonical)) {
       msg.className = 'warn-text';
-      msg.textContent = `${canonical} is valid but has no ICU data; Intl may fall back to a parent locale.`;
+      msg.textContent = t('picker.noIcu', { tag: canonical });
     } else if (canonical !== raw) {
-      msg.textContent = `Will be saved as ${canonical}.`;
+      msg.textContent = t('picker.savedAs', { tag: canonical });
     }
     return canonical;
   };

@@ -42,7 +42,7 @@ const manifestPath = path.join(dist, 'manifest.json');
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 manifest.version = pkg.version;
 fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-console.log(`Built ${manifest.name} ${manifest.version} → ${path.relative(root, dist)}${path.sep}`);
+console.log(`Built Locale Jacket ${manifest.version} → ${path.relative(root, dist)}${path.sep}`);
 
 if (withTests) {
   fs.rmSync(path.join(root, 'build'), { recursive: true, force: true });

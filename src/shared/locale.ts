@@ -1,5 +1,6 @@
 // BCP 47 validation and locale-profile construction.
 
+import { t } from './i18n.js';
 import type { Geolocation, LocaleProfile } from './types.js';
 
 /** Canonical BCP 47 form (e.g. `en-us` -> `en-US`), or null if the tag is invalid. */
@@ -210,7 +211,7 @@ export function profileKey(p: LocaleProfile | null): string {
 }
 
 export function describeProfile(p: LocaleProfile | null): string {
-  if (!p) return 'System locale';
+  if (!p) return t('profile.system');
   const bits = [p.locale];
   if (p.languages.join(',') !== deriveLanguages(p.locale).join(',')) bits.push(`[${p.languages.join(', ')}]`);
   if (p.timezone) bits.push(p.timezone);

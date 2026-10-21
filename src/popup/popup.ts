@@ -1,6 +1,7 @@
 // Popup: global switch, current-tab status, quick per-site rule, default action.
 
 import { hostFromUrl, toUnicode } from '../shared/domain.js';
+import { setLanguage, t, translateDocument } from '../shared/i18n.js';
 import { describeProfile, makeProfile } from '../shared/locale.js';
 import { send, type GlobalStatus, type HostTest, type TabStatus, type VerifyResult } from '../shared/messages.js';
 import { newRuleId, resolveHost } from '../shared/rules.js';
@@ -35,7 +36,7 @@ function renderHeader(): void {
   const slot = $('#globalToggle');
   clear(slot);
   slot.append(
-    toggleSwitch(settings.enabled, (v) => void updateSettings((s) => ({ ...s, enabled: v })), settings.enabled ? 'Turn spoofing off' : 'Turn spoofing on'),
+    toggleSwitch(settings.enabled, (v) => void updateSettings((s) => ({ ...s, enabled: v })), t(settings.enabled ? 'popup.turnOff' : 'popup.turnOn')),
   );
   const banner = $('#banner');
   banner.hidden = !global?.suspended;
@@ -43,14 +44,14 @@ function renderHeader(): void {
   if (global?.suspended) {
     banner.className = 'notice warn row';
     banner.append(
-      h('span', { class: 'spacer' }, 'Paused: debugging was canceled from Chrome’s banner.'),
+      h('span', { class: 'spacer' }, t('popup.pausedBanner')),
       h('button', {
         class: 'primary',
         onclick: async () => {
           await send({ type: 'resume' });
           await refresh();
         },
-      }, 'Resume'),
+      }, t('common.resume')),
     );
   }
 }
@@ -60,27 +61,26 @@ function renderTab(): void {
   clear(card);
   const host = tab?.url ? hostFromUrl(tab.url) : null;
   if (!host) {
-    card.append(
-      h('div', { class: 'section-title' }, 'This tab'),
-      h('p', { class: 'muted' }, 'Internal or non-web page. Chrome does not allow extensions to change it, and nothing is spoofed here.'),
-    );
+    card.append(h('div', { class: 'section-title' }, t('popup.thisTab')), h('p', { class: 'muted' }, t('popup.internalPage')));
     return;
   }
   const res = effectiveResolution(host);
   const view = describeStatus(status, global);
   card.append(
-    h('div', { class: 'row' }, h('div', { class: 'section-title' }, 'This tab'), h('span', { class: 'spacer' }), chip(view.label, view.kind)),
+    h('div', { class: 'row' }, h('div', { class: 'section-title' }, t('popup.thisTab')), h('span', { class: 'spacer' }), chip(view.label, view.kind)),
     h('div', { class: 'host' }, toUnicode(host)),
     h(
       'dl',
       { class: 'kv' },
-      h('dt', {}, 'Matched'),
-      h('dd', {}, res.ruleLabel ?? (res.source === 'default' ? 'No rule — default action' : '—')),
-      h('dt', {}, 'Profile'),
+      h('dt', {}, t('popup.matched')),
+      h('dd', {}, res.ruleLabel ?? (res.source === 'default' ? t('popup.noRuleDefault') : '—')),
+      h('dt', {}, t('popup.profile')),
       h('dd', {}, describeProfile(res.profile)),
       ...(res.profile ? [h('dt', {}, 'Accept-Language'), h('dd', {}, res.profile.acceptLanguage)] : []),
-      ...(res.ip ? [h('dt', {}, 'Server address'), h('dd', {}, res.ip)] : []),
-      ...(status && (status.frames || status.workers) ? [h('dt', {}, 'Frames / workers'), h('dd', {}, `${status.frames} cross-site frame(s), ${status.workers} worker(s)`)] : []),
+      ...(res.ip ? [h('dt', {}, t('popup.serverAddress')), h('dd', {}, res.ip)] : []),
+      ...(status && (status.frames || status.workers)
+        ? [h('dt', {}, t('popup.framesWorkers')), h('dd', {}, t('popup.framesWorkersValue', { frames: status.frames, workers: status.workers }))]
+        : []),
     ),
     h('p', { class: 'small muted' }, view.detail),
   );
@@ -97,7 +97,7 @@ function renderTab(): void {
           if (tab?.id !== undefined) await send({ type: 'reloadTab', tabId: tab.id });
           window.close();
         },
-      }, 'Reload tab'),
+      }, t('popup.reloadTab')),
     );
   }
   if (status?.session === 'attached') {
@@ -116,7 +116,7 @@ function renderTab(): void {
           verifying = false;
           renderTab();
         },
-      }, verifying ? 'Checking…' : 'Check what the page sees'),
+      }, t(verifying ? 'popup.checking' : 'popup.checkPage')),
     );
   }
   if (actions.childElementCount) card.append(actions);
@@ -129,31 +129,29 @@ function renderVerify(v: VerifyResult): HTMLElement {
     box.append(h('div', { class: 'notice bad' }, v.error));
     return box;
   }
-  const rows: [string, (s: NonNullable<VerifyResult['frames'][number]['live']>) => string][] = [
-    ['navigator.language', (s) => s.language],
-    ['navigator.languages', (s) => s.languages.join(', ')],
-    ['Intl.DateTimeFormat', (s) => s.dateLocale],
-    ['Intl.NumberFormat', (s) => s.numberLocale],
-    ['Intl.Collator', (s) => s.collatorLocale],
-    ['Time zone', (s) => s.timeZone],
+  const rows: [string, (s: NonNullable<VerifyResult['frames'][number]['live']>) => string, boolean][] = [
+    ['navigator.language', (s) => s.language, true],
+    ['navigator.languages', (s) => s.languages.join(', '), false],
+    ['Intl.DateTimeFormat', (s) => s.dateLocale, true],
+    ['Intl.NumberFormat', (s) => s.numberLocale, true],
+    ['Intl.Collator', (s) => s.collatorLocale, true],
+    [t('common.timeZone'), (s) => s.timeZone, false],
   ];
   for (const f of v.frames) {
-    const table = h('table', {}, h('tr', {}, h('th', {}, f.kind === 'main' ? 'Page' : `Frame ${hostFromUrl(f.url) ?? ''}`), h('th', {}, 'At start'), h('th', {}, 'Now')));
+    const table = h('table', {}, h('tr', {}, h('th', {}, f.kind === 'main' ? t('common.page') : t('common.frameHost', { host: hostFromUrl(f.url) ?? '' })), h('th', {}, t('common.atStart')), h('th', {}, t('common.now'))));
     if (f.error) {
       box.append(h('div', { class: 'notice bad' }, `${f.kind}: ${f.error}`));
       continue;
     }
-    for (const [label, get] of rows) {
+    for (const [label, get, checked] of rows) {
       const start = f.start ? get(f.start) : 'n/a';
       const live = f.live ? get(f.live) : 'n/a';
-      const check = (val: string) => (f.expectedLocale && label !== 'Time zone' && !label.endsWith('languages') ? (val === f.expectedLocale ? 'ok' : 'bad') : '');
+      const check = (val: string) => (f.expectedLocale && checked ? (val === f.expectedLocale ? 'ok' : 'bad') : '');
       table.append(h('tr', {}, h('th', {}, label), h('td', { class: check(start) }, start), h('td', { class: check(live) }, live)));
     }
     box.append(table);
   }
-  box.append(
-    h('p', { class: 'small muted' }, '“At start” is what the page’s first scripts saw (n/a if the page loaded before the extension attached). Read from an isolated world, invisible to the page.'),
-  );
+  box.append(h('p', { class: 'small muted' }, t('popup.verifyNote')));
   return box;
 }
 
@@ -182,10 +180,10 @@ function renderSite(): void {
   const add = (type: RuleType, value: string, label: string) => {
     if (!choices.some((c) => c.type === type && c.value === value)) choices.push({ type, value, label });
   };
-  if (matched?.type === 'DOMAIN-SUFFIX') add('DOMAIN-SUFFIX', matched.value, `${toUnicode(matched.value)} and its subdomains`);
-  add('DOMAIN-SUFFIX', suggestedSuffix(host), `${toUnicode(suggestedSuffix(host))} and its subdomains`);
-  add('DOMAIN', host, `only ${toUnicode(host)}`);
-  const scope = h('select', { 'aria-label': 'Rule scope' }, ...choices.map((c, i) => h('option', { value: String(i) }, c.label)));
+  if (matched?.type === 'DOMAIN-SUFFIX') add('DOMAIN-SUFFIX', matched.value, t('popup.scopeSuffix', { domain: toUnicode(matched.value) }));
+  add('DOMAIN-SUFFIX', suggestedSuffix(host), t('popup.scopeSuffix', { domain: toUnicode(suggestedSuffix(host)) }));
+  add('DOMAIN', host, t('popup.scopeExact', { host: toUnicode(host) }));
+  const scope = h('select', { 'aria-label': t('popup.appliesTo') }, ...choices.map((c, i) => h('option', { value: String(i) }, c.label)));
   const ownIndex = choices.findIndex((c) => settings.rules.some((r) => r.type === c.type && r.value === c.value));
   if (ownIndex >= 0) scope.value = String(ownIndex);
   const ownRule = ownIndex >= 0 ? settings.rules.find((r) => r.type === choices[ownIndex]!.type && r.value === choices[ownIndex]!.value) : undefined;
@@ -205,14 +203,14 @@ function renderSite(): void {
         if (existing) Object.assign(existing, patch);
         else s.rules.push({ id: newRuleId(), type, value, priority: 0, note: '', ...patch });
       });
-      msg.textContent = 'Saved. The next navigation in this tab uses it; reload to apply it to this page.';
+      msg.textContent = t('popup.saved');
     },
-  }, 'Save rule');
+  }, t('popup.saveRule'));
 
   card.append(
-    h('div', { class: 'section-title' }, 'Rule for this site'),
-    h('label', { class: 'field' }, h('span', {}, 'Applies to'), scope),
-    h('div', { class: 'field' }, h('span', {}, 'Report this locale'), picker.el),
+    h('div', { class: 'section-title' }, t('popup.ruleForSite')),
+    h('label', { class: 'field' }, h('span', {}, t('popup.appliesTo')), scope),
+    h('div', { class: 'field' }, h('span', {}, t('popup.reportLocale')), picker.el),
     h('div', { class: 'row wrap' },
       save,
       ownRule
@@ -221,7 +219,7 @@ function renderSite(): void {
             onclick: async () => {
               await updateSettings((s) => ({ ...s, rules: s.rules.filter((r) => r.id !== ownRule.id) }));
             },
-          }, 'Remove rule')
+          }, t('popup.removeRule'))
         : null,
     ),
     msg,
@@ -242,7 +240,7 @@ function renderDefault(): void {
         s.defaultAction = v === null ? { action: 'SYSTEM' } : { action: 'PROFILE', profile: s.defaultAction.action === 'PROFILE' && s.defaultAction.profile.locale === v ? s.defaultAction.profile : makeProfile(v) };
       });
     },
-  }, 'Apply');
+  }, t('common.apply'));
   const picker = localePicker(current, {
     allowSystem: true,
     onChange: () => {
@@ -250,16 +248,13 @@ function renderDefault(): void {
       apply.disabled = v === undefined || v === current;
     },
   });
-  card.append(
-    h('div', { class: 'section-title' }, 'All other websites'),
-    picker.el,
-    h('div', { class: 'row' }, apply),
-    h('p', { class: 'small muted' }, 'Used when no rule matches. “System locale” leaves unmatched sites untouched (no debugger attached).'),
-  );
+  card.append(h('div', { class: 'section-title' }, t('popup.otherSites')), picker.el, h('div', { class: 'row' }, apply), h('p', { class: 'small muted' }, t('popup.otherSitesHint')));
 }
 
 async function refresh(): Promise<void> {
   settings = await loadSettings();
+  setLanguage(settings.options.uiLanguage);
+  translateDocument();
   await refreshStatus();
   renderHeader();
   renderTab();

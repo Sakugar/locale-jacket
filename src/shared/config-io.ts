@@ -330,6 +330,10 @@ function parseOptions(raw: unknown, base: Options, errors: string[]): Options {
     if (raw.frameMode === 'inherit' || raw.frameMode === 'per-frame') out.frameMode = raw.frameMode;
     else errors.push('options.frameMode must be "inherit" or "per-frame".');
   }
+  if (raw.uiLanguage !== undefined) {
+    if (raw.uiLanguage === 'auto' || raw.uiLanguage === 'en' || raw.uiLanguage === 'zh-CN') out.uiLanguage = raw.uiLanguage;
+    else errors.push('options.uiLanguage must be "auto", "en" or "zh-CN".');
+  }
   for (const k of ['keepSessionOnSystem', 'reloadOnLate', 'dnrHeaders', 'overrideWorkers'] as const) {
     if (raw[k] === undefined) continue;
     if (typeof raw[k] === 'boolean') out[k] = raw[k];

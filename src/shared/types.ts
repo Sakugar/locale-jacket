@@ -68,6 +68,8 @@ export interface Options {
   dnrHeaders: boolean;
   /** Apply navigator.language(s) overrides to dedicated workers. */
   overrideWorkers: boolean;
+  /** Language of the extension's own interface. */
+  uiLanguage: 'auto' | 'en' | 'zh-CN';
 }
 
 export interface Settings {
