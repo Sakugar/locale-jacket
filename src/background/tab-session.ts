@@ -2,36 +2,33 @@
 //
 // One TabSession exists for every tab the extension has seen. While attached:
 //   * Fetch pauses every document request. For the main frame, the target URL's
-//     profile is applied *before* the request continues, and its Accept-Language
-//     header is corrected. Overrides persist across navigations, so this gate
-//     is what stops one site's profile leaking into the next document.
+//     profile is sent to the session *before* the request continues, and its
+//     Accept-Language header is corrected. Overrides persist across navigations,
+//     so this gate is what stops one site's profile leaking into the next document.
 //   * Target.setAutoAttach (waitForDebuggerOnStart) hands us every cross-site
 //     iframe (OOPIF) and dedicated worker before it runs, so they get overrides
 //     from their first script.
 //   * webNavigation events reconcile state for navigations the gate cannot see
-//     (service-worker-served documents, back/forward cache, prerender) and flag
-//     documents that started with the wrong state ("late").
-// All state-changing work is serialized per tab.
+//     (service-worker-served documents, back/forward cache, prerender). A probe
+//     recorded at document start (in an isolated world) tells whether page scripts
+//     saw the right values; if not, the document is flagged "late".
+//
+// Deadlock rule: the Fetch gate and child-target setup never wait for anything.
+// Chrome holds renderer-bound commands while a cross-process navigation is
+// pending, and that navigation cannot proceed until the gate continues it.
+// Attach/detach transitions and bookkeeping run in a per-tab serial queue.
 
 import {
   errorMessage,
+  withTimeout,
   isAlreadyAttachedError,
   isAttachableUrl,
   isDetachedError,
   isRestrictedError,
   type DebuggerPort,
 } from './cdp.js';
-import {
-  applyState,
-  CLEAN_STATE,
-  desiredFor,
-  fixAcceptLanguage,
-  stateMatches,
-  UNKNOWN_STATE,
-  type AppliedState,
-  type TargetKind,
-} from './overrides.js';
-import { PROBE_SOURCE, PROBE_WORLD, VERIFY_EXPRESSION } from './probe.js';
+import { applyState, CLEAN_STATE, desiredFor, fixAcceptLanguage, UNKNOWN_STATE, type AppliedState, type TargetKind } from './overrides.js';
+import { PROBE_WORLD, PROBE_SOURCE, VERIFY_EXPRESSION } from './probe.js';
 import { hostFromUrl } from '../shared/domain.js';
 import { profileKey } from '../shared/locale.js';
 import type { FrameVerification, LocaleSnapshot, LogEntry, SessionState, TabStatus, VerifyResult } from '../shared/messages.js';
@@ -49,6 +46,8 @@ export interface TabContext {
   changed(tabId: number): void;
   log(level: LogEntry['level'], tabId: number | null, msg: string): void;
   now(): number;
+  /** The browser's own locale values (what SYSTEM pages should report). */
+  native(): { locale: string; languages: string[] };
 }
 
 export interface CommitDetails {
@@ -78,7 +77,7 @@ export interface PausedRequest {
   requestId: string;
   frameId?: string;
   resourceType?: string;
-  request: { url: string; method?: string; headers: Record<string, string> };
+  request: { url: string; method?: string; headers: Record<string, string>; referrerPolicy?: string };
 }
 
 export const AUTO_ATTACH_PARAMS = {
@@ -96,6 +95,22 @@ const ATTACH_FAILURE_WINDOW_MS = 60_000;
 const MAX_ATTACH_FAILURES = 3;
 const AUTO_RELOAD_MAX_AGE_MS = 10_000;
 const AUTO_RELOAD_COOLDOWN_MS = 30_000;
+/** A re-issued navigation that still mismatches is let through instead of looping. */
+const REISSUE_GUARD_MS = 5_000;
+/** How long to wait for the profile commands before re-issuing anyway. */
+const REISSUE_APPLY_TIMEOUT_MS = 3_000;
+
+// Fetch reports the Fetch-spec spelling; Page.navigate wants the CDP enum.
+const REFERRER_POLICIES: Record<string, string> = {
+  'no-referrer': 'noReferrer',
+  'no-referrer-when-downgrade': 'noReferrerWhenDowngrade',
+  origin: 'origin',
+  'origin-when-cross-origin': 'originWhenCrossOrigin',
+  'same-origin': 'sameOrigin',
+  'strict-origin': 'strictOrigin',
+  'strict-origin-when-cross-origin': 'strictOriginWhenCrossOrigin',
+  'unsafe-url': 'unsafeUrl',
+};
 
 export class SerialQueue {
   private tail: Promise<unknown> = Promise.resolve();
@@ -109,15 +124,27 @@ export class SerialQueue {
   }
 }
 
+function stripHash(url: string): string {
+  const i = url.indexOf('#');
+  return i < 0 ? url : url.slice(0, i);
+}
+
+export function probeMatches(probe: LocaleSnapshot | null, profile: Pick<LocaleProfile, 'locale' | 'languages'>): boolean {
+  return !!probe && probe.dateLocale === profile.locale && probe.language === profile.languages[0];
+}
+
 export class TabSession {
   state: 'detached' | 'attaching' | 'attached' = 'detached';
   private mainFrameId: string | null = null;
+  /** Intended overrides on the main target (optimistic; failed commands reset fields to unknown). */
   private mainState: AppliedState = CLEAN_STATE;
   /** Profile last sent to the main target; frames inherit it. */
   private targetProfile: LocaleProfile | null = null;
   private appliedKey: string | null = null;
   private applyWarnings: string[] = [];
   private readonly children = new Map<string, Child>();
+  /** Subframe document URLs seen by the gate, keyed by frame id (= the OOPIF's target id). */
+  private readonly frameUrls = new Map<string, string>();
   private url: string | null = null;
   private resolution: Resolution;
   private sessionStatus: SessionState = 'none';
@@ -126,6 +153,8 @@ export class TabSession {
   private autoReloadedAt = 0;
   private error: string | null = null;
   private pendingGateUrl: string | null = null;
+  /** Navigation aborted and re-issued by the gate (suppresses the resulting error event). */
+  private reissue: { url: string; at: number } | null = null;
   private attachFailures: number[] = [];
   private closed = false;
   private readonly queue = new SerialQueue();
@@ -174,6 +203,7 @@ export class TabSession {
     this.appliedKey = null;
     this.applyWarnings = [];
     this.children.clear();
+    this.frameUrls.clear();
     this.pendingGateUrl = null;
   }
 
@@ -182,6 +212,7 @@ export class TabSession {
     this.log('warn', `Debugger session lost during ${where}.`);
     this.resetSessionState();
     this.sessionStatus = 'none';
+    this.ctx.changed(this.tabId);
   }
 
   // ---------------------------------------------------------------- attach
@@ -225,17 +256,12 @@ export class TabSession {
       }
     }
 
-    try {
-      await this.setup(adopted);
-    } catch (e) {
-      if (isDetachedError(e) || this.closed) {
-        this.resetSessionState();
-        this.sessionStatus = 'none';
-        return false;
-      }
-      // Setup is best effort: overrides still work without the gate or auto-attach.
-      this.log('warn', `Session setup incomplete: ${errorMessage(e)}`);
-    }
+    const t = { tabId: this.tabId };
+    const send = this.ctx.port.send.bind(this.ctx.port);
+    // The page target's id is its main frame id. getTargets and the Fetch/Target
+    // domains are handled by the browser, so they work even while a navigation is
+    // pending; the renderer-side Page commands below may wait for that commit.
+    this.mainFrameId = await this.ctx.port.targetIdForTab(this.tabId).catch(() => null);
     if (this.closed) {
       await this.ctx.port.detach(this.tabId).catch(() => undefined);
       this.resetSessionState();
@@ -245,25 +271,38 @@ export class TabSession {
     this.sessionStatus = 'attached';
     this.error = null;
     this.attachFailures = [];
-    this.log('info', adopted ? 'Adopted existing debugger session.' : 'Debugger attached.');
-    return true;
-  }
-
-  private async setup(adopted: boolean): Promise<void> {
-    const t = { tabId: this.tabId };
-    const send = this.ctx.port.send.bind(this.ctx.port);
     this.mainState = adopted ? { ...UNKNOWN_STATE } : { ...CLEAN_STATE };
     this.appliedKey = null;
-    await send(t, 'Page.enable');
-    await send(t, 'Page.addScriptToEvaluateOnNewDocument', { source: PROBE_SOURCE, worldName: PROBE_WORLD });
-    const tree = await send<{ frameTree: { frame: { id: string } } }>(t, 'Page.getFrameTree');
-    this.mainFrameId = tree.frameTree.frame.id;
-    await send(t, 'Fetch.enable', FETCH_PATTERNS);
-    if (adopted) {
-      // Re-announce existing children so we learn their session ids again.
-      await send(t, 'Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true });
+    try {
+      await send(t, 'Fetch.enable', FETCH_PATTERNS);
+      if (adopted) {
+        // Re-announce existing children so we learn their session ids again.
+        await send(t, 'Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false, flatten: true });
+      }
+      await send(t, 'Target.setAutoAttach', AUTO_ATTACH_PARAMS);
+    } catch (e) {
+      if (isDetachedError(e)) {
+        this.lostSession('setup');
+        return false;
+      }
+      // Overrides still work without the gate or auto-attach; report it.
+      this.log('warn', `Navigation gate / frame auto-attach unavailable: ${errorMessage(e)}`);
     }
-    await send(t, 'Target.setAutoAttach', AUTO_ATTACH_PARAMS);
+    if (!this.mainFrameId) {
+      void send<{ frameTree: { frame: { id: string } } }>(t, 'Page.getFrameTree')
+        .then((tree) => {
+          this.mainFrameId ??= tree.frameTree.frame.id;
+        })
+        .catch(() => undefined);
+    }
+    // Document-start probe (diagnostics only); not awaited for the same reason.
+    void send(t, 'Page.enable')
+      .then(() => send(t, 'Page.addScriptToEvaluateOnNewDocument', { source: PROBE_SOURCE, worldName: PROBE_WORLD }))
+      .catch((e) => {
+        if (!isDetachedError(e)) this.log('debug', `Probe unavailable: ${errorMessage(e)}`);
+      });
+    this.log('info', adopted ? 'Adopted existing debugger session.' : 'Debugger attached.');
+    return this.state === 'attached';
   }
 
   private async detachInternal(reason: string): Promise<void> {
@@ -278,21 +317,29 @@ export class TabSession {
 
   // ---------------------------------------------------------------- applying
 
-  private async applyMain(res: Resolution, withChildren: boolean): Promise<boolean> {
-    if (this.state !== 'attached') return false;
+  /** Send the profile to the main target now; the returned promise settles when Chrome answers. */
+  private applyMain(res: Resolution, withChildren: boolean): Promise<void> {
+    if (this.state !== 'attached') return Promise.resolve();
     const desired = desiredFor(res.profile, 'page');
     this.targetProfile = res.profile;
-    const out = await applyState(this.ctx.port, { tabId: this.tabId }, this.mainState, desired, 'page');
-    if (out.detached) {
-      this.lostSession('apply');
-      return false;
-    }
-    this.mainState = out.state;
-    this.applyWarnings = out.warnings;
-    this.appliedKey = stateMatches(this.mainState, desired) ? profileKey(res.profile) : null;
-    for (const w of out.warnings) this.log('warn', w);
-    if (withChildren) await this.applyChildren();
-    return this.appliedKey !== null;
+    const ticket = applyState(this.ctx.port, { tabId: this.tabId }, this.mainState, desired, 'page');
+    this.mainState = ticket.state;
+    this.appliedKey = profileKey(res.profile);
+    const childrenDone = withChildren ? this.applyChildren() : Promise.resolve();
+    if (!ticket.sent) return childrenDone;
+    const done = ticket.done.then((r) => {
+      if (r.detached) return this.lostSession('apply');
+      for (const f of r.failed) {
+        if (this.mainState[f.field] === f.value) {
+          this.mainState[f.field] = undefined; // unknown: resend next time
+          this.appliedKey = null;
+        }
+      }
+      this.applyWarnings = r.warnings;
+      for (const w of r.warnings) this.log('warn', w);
+      this.ctx.changed(this.tabId);
+    });
+    return Promise.all([done, childrenDone]).then(() => undefined);
   }
 
   private childProfile(child: Child, depth = 0): LocaleProfile | null {
@@ -307,20 +354,26 @@ export class TabSession {
     return this.targetProfile;
   }
 
-  private async applyChild(child: Child): Promise<void> {
+  private applyChild(child: Child): Promise<void> {
     const kind: TargetKind = child.type;
     const profile = kind === 'worker' && !this.settings().options.overrideWorkers ? null : this.childProfile(child);
-    const out = await applyState(this.ctx.port, { tabId: this.tabId, sessionId: child.sessionId }, child.state, desiredFor(profile, kind), kind);
-    if (out.detached) {
-      this.children.delete(child.sessionId);
-      return;
-    }
-    child.state = out.state;
-    child.warnings = out.warnings;
+    const ticket = applyState(this.ctx.port, { tabId: this.tabId, sessionId: child.sessionId }, child.state, desiredFor(profile, kind), kind);
+    child.state = ticket.state;
+    if (!ticket.sent) return Promise.resolve();
+    return ticket.done.then((r) => {
+      if (r.detached) {
+        this.children.delete(child.sessionId);
+        return;
+      }
+      for (const f of r.failed) if (child.state[f.field] === f.value) child.state[f.field] = undefined;
+      child.warnings = r.warnings;
+      for (const w of r.warnings) this.log('debug', `child ${child.type}: ${w}`);
+      for (const f of r.failed) this.log('debug', `child ${child.type}: ${f.field} failed`);
+    });
   }
 
-  private async applyChildren(): Promise<void> {
-    await Promise.all([...this.children.values()].map((c) => this.applyChild(c)));
+  private applyChildren(): Promise<void> {
+    return Promise.all([...this.children.values()].map((c) => this.applyChild(c))).then(() => undefined);
   }
 
   private markLate(reason: string | null, details: CommitDetails | null): void {
@@ -348,20 +401,40 @@ export class TabSession {
     this.ctx.reloadTab(this.tabId).catch((e) => this.log('warn', `Reload failed: ${errorMessage(e)}`));
   }
 
+  /** Values recorded by the isolated-world probe when the current main document started. */
+  private async readStartProbe(): Promise<LocaleSnapshot | null> {
+    if (!this.mainFrameId) return null;
+    const t = { tabId: this.tabId };
+    const world = await this.ctx.port.send<{ executionContextId: number }>(t, 'Page.createIsolatedWorld', {
+      frameId: this.mainFrameId,
+      worldName: PROBE_WORLD,
+    });
+    const r = await this.ctx.port.send<{ result?: { value?: LocaleSnapshot | null } }>(t, 'Runtime.evaluate', {
+      contextId: world.executionContextId,
+      expression: 'globalThis.__ljProbe || null',
+      returnByValue: true,
+    });
+    return r.result?.value ?? null;
+  }
+
   // ---------------------------------------------------------------- events
 
   /** chrome.tabs.onCreated / startup reconciliation: attach as early as possible. */
   onTabSeen(url: string | null, existingDocument: boolean): Promise<void> {
     return this.queue.run(async () => {
-      if (url && url !== this.url && existingDocument) {
+      if (url && existingDocument) {
         this.url = url;
         this.resolution = this.resolveUrl(url);
       }
       const res = existingDocument ? this.resolution : this.resolveUrl(url);
-      if (this.state !== 'attached' && this.needsSession(res) && (await this.ensureAttached(url))) {
-        await this.applyMain(res, true);
-        if (existingDocument) this.markLate(res.action === 'PROFILE' ? 'This page was already open when the profile was applied; reload it.' : null, null);
-      } else if (!this.needsSession(res) && this.state !== 'attached') {
+      if (this.state !== 'attached' && this.needsSession(res)) {
+        // For a tab that is still loading, attaching is enough: the gate applies the
+        // profile to its navigation. Applying now would race with that navigation.
+        if ((await this.ensureAttached(url)) && existingDocument) {
+          await this.applyMain(res, true);
+          if (res.action === 'PROFILE') this.markLate('This page was already open when the profile was applied; reload it.', null);
+        }
+      } else if (this.state !== 'attached') {
         this.sessionStatus = 'none';
       }
       this.ctx.changed(this.tabId);
@@ -370,79 +443,143 @@ export class TabSession {
 
   onBeforeNavigate(url: string): Promise<void> {
     return this.queue.run(async () => {
+      // Attach only. Sending overrides now would reach the renderer after the next
+      // document starts and would mark the profile as applied, defeating the gate.
       const res = this.resolveUrl(url);
-      if (this.state === 'attached') {
-        // Best effort for navigations the Fetch gate never sees (e.g. served by a
-        // service worker). Reverted by onNavigationError if the navigation fails.
-        await this.applyMain(res, false);
-      } else if (this.needsSession(res) && (await this.ensureAttached(url))) {
-        await this.applyMain(res, false);
-      } else if (this.needsSession(res) && this.sessionStatus === 'restricted') {
-        // Leaving a restricted page (e.g. the New Tab Page): attaching becomes possible at commit.
-      }
+      if (this.state !== 'attached' && this.needsSession(res)) await this.ensureAttached(url);
       this.ctx.changed(this.tabId);
     });
   }
 
-  onRequestPaused(p: PausedRequest): Promise<void> {
-    return this.queue.run(async () => {
-      let headers: { name: string; value: string }[] | null = null;
-      try {
-        const url = p.request.url;
-        if (p.frameId && p.frameId === this.mainFrameId) {
-          const res = this.resolveUrl(url);
-          this.pendingGateUrl = url;
-          await this.applyMain(res, false);
-          headers = fixAcceptLanguage(p.request.headers, res.profile);
-        } else {
-          const profile = this.settings().options.frameMode === 'per-frame' ? this.resolveUrl(url).profile : this.targetProfile;
-          headers = fixAcceptLanguage(p.request.headers, profile);
+  /**
+   * Fetch.requestPaused. Deliberately not queued and never awaits (see the deadlock rule).
+   *
+   * Same profile as the current document: continue (fixing Accept-Language if needed).
+   * Different profile: Chrome only delivers emulation commands to the next document
+   * after it has started (verified in research/gate-timing.mjs), so for GET requests
+   * the navigation is aborted before anything is sent to the server, the new profile
+   * is applied while no navigation is pending, and the navigation is re-issued.
+   */
+  onRequestPaused(p: PausedRequest): void {
+    let headers: { name: string; value: string }[] | null = null;
+    try {
+      const url = p.request.url;
+      if (this.state === 'attached' && p.frameId && p.frameId === this.mainFrameId) {
+        const res = this.resolveUrl(url);
+        this.pendingGateUrl = stripHash(url);
+        const changing = this.appliedKey !== profileKey(res.profile);
+        const method = (p.request.method ?? 'GET').toUpperCase();
+        const now = this.ctx.now();
+        const recentlyReissued = this.reissue !== null && this.reissue.url === url && now - this.reissue.at < REISSUE_GUARD_MS;
+        if (changing && method === 'GET' && !recentlyReissued) {
+          this.reissueNavigation(p, res);
+          return;
         }
-      } catch (e) {
-        this.log('warn', `Navigation gate error: ${errorMessage(e)}`);
-      } finally {
-        const params: Record<string, unknown> = { requestId: p.requestId };
-        if (headers) params.headers = headers;
-        await this.ctx.port.send({ tabId: this.tabId }, 'Fetch.continueRequest', params).catch((e) => {
-          if (!isDetachedError(e)) this.log('warn', `Fetch.continueRequest failed: ${errorMessage(e)}`);
-        });
+        if (changing) void this.applyMain(res, false); // POST, or a re-issue that still mismatches: best effort
+        headers = fixAcceptLanguage(p.request.headers, res.profile);
+        this.log('debug', `gate: ${res.host ?? url} → ${res.profile?.locale ?? 'SYSTEM'}${changing ? ' (late: could not re-issue)' : ''}`);
+      } else if (this.state === 'attached') {
+        if (p.frameId) {
+          // The OOPIF target for this frame attaches later with an empty URL; remember it.
+          this.frameUrls.set(p.frameId, url);
+          if (this.frameUrls.size > 200) this.frameUrls.delete(this.frameUrls.keys().next().value!);
+        }
+        const profile = this.settings().options.frameMode === 'per-frame' ? this.resolveUrl(url).profile : this.targetProfile;
+        headers = fixAcceptLanguage(p.request.headers, profile);
       }
+    } catch (e) {
+      this.log('warn', `Navigation gate error: ${errorMessage(e)}`);
+    }
+    const params: Record<string, unknown> = { requestId: p.requestId };
+    if (headers) params.headers = headers;
+    this.ctx.port.send({ tabId: this.tabId }, 'Fetch.continueRequest', params).catch((e) => {
+      if (!isDetachedError(e)) this.log('warn', `Fetch.continueRequest failed: ${errorMessage(e)}`);
     });
+  }
+
+  private reissueNavigation(p: PausedRequest, res: Resolution): void {
+    const url = p.request.url;
+    const t = { tabId: this.tabId };
+    this.reissue = { url, at: this.ctx.now() };
+    this.log('debug', `gate: ${res.host ?? url} → ${res.profile?.locale ?? 'SYSTEM'} (profile change: aborting and re-issuing)`);
+    const applied = this.applyMain(res, false);
+    const referrer = Object.entries(p.request.headers).find(([k]) => k.toLowerCase() === 'referer')?.[1];
+    const policy = p.request.referrerPolicy ? REFERRER_POLICIES[p.request.referrerPolicy] : undefined;
+    this.ctx.port
+      .send(t, 'Fetch.failRequest', { requestId: p.requestId, errorReason: 'Aborted' })
+      .then(async () => {
+        // With no navigation pending, the renderer applies the commands right away.
+        await withTimeout(applied, REISSUE_APPLY_TIMEOUT_MS, () => new Error('profile commands timed out')).catch((e) =>
+          this.log('warn', `Re-issuing without confirmation: ${errorMessage(e)}`),
+        );
+        await this.ctx.port.send(t, 'Page.navigate', {
+          url,
+          transitionType: 'link',
+          ...(referrer ? { referrer } : {}),
+          ...(policy ? { referrerPolicy: policy } : {}),
+        });
+      })
+      .catch((e) => {
+        if (!isDetachedError(e)) this.log('warn', `Could not re-issue the navigation: ${errorMessage(e)}`);
+      });
   }
 
   onCommitted(d: CommitDetails): Promise<void> {
-    return this.queue.run(async () => {
-      this.url = d.url;
-      const res = this.resolveUrl(d.url);
-      this.resolution = res;
-      this.pendingGateUrl = null;
-      if (this.state !== 'attached') {
-        if (this.needsSession(res) && (await this.ensureAttached(d.url))) {
-          await this.applyMain(res, true);
-          this.markLate(res.action === 'PROFILE' ? 'Chrome only allowed debugging after this page had started loading.' : null, d);
-        } else if (!this.needsSession(res)) {
-          this.sessionStatus = 'none';
-          this.markLate(null, null);
-        }
-      } else {
-        if (this.isApplied(res)) {
-          this.markLate(null, null);
-          await this.applyChildren();
-        } else {
-          const hadState = this.appliedKey;
-          await this.applyMain(res, true);
-          // A page that should be SYSTEM but started with a stale profile is a leak too.
-          this.markLate(hadState === profileKey(res.profile) ? null : 'The page started before its locale profile was applied.', d);
-        }
-        if (this.state === 'attached' && !this.keepSession(res)) await this.detachInternal('not needed on this site');
+    return this.queue.run(() => this.handleCommit(d));
+  }
+
+  private wasGated(url: string): boolean {
+    return this.pendingGateUrl !== null && this.pendingGateUrl === stripHash(url);
+  }
+
+  private async handleCommit(d: CommitDetails): Promise<void> {
+    const gated = this.wasGated(d.url);
+    this.url = d.url;
+    const res = this.resolveUrl(d.url);
+    this.resolution = res;
+    if (this.state !== 'attached') {
+      if (this.needsSession(res) && (await this.ensureAttached(d.url))) {
+        await this.applyMain(res, true);
+        this.markLate(res.action === 'PROFILE' ? 'Chrome only allowed debugging after this page had started loading.' : null, d);
+      } else if (!this.needsSession(res)) {
+        this.sessionStatus = 'none';
+        this.markLate(null, null);
       }
       this.ctx.changed(this.tabId);
-    });
+      return;
+    }
+
+    this.pendingGateUrl = null;
+    const wasApplied = this.isApplied(res);
+    await this.applyMain(res, true);
+    // Ask the document-start probe what page scripts actually saw. It is missing when
+    // the document predates the probe registration.
+    let probe: LocaleSnapshot | null = null;
+    try {
+      probe = await this.readStartProbe();
+    } catch (e) {
+      if (!isDetachedError(e)) this.log('debug', `Start probe unavailable: ${errorMessage(e)}`);
+    }
+    const expected = res.profile ?? this.ctx.native();
+    if (probe) {
+      this.markLate(probeMatches(probe, expected) ? null : `Page scripts started with ${probe.language} / ${probe.dateLocale} instead of ${expected.locale}.`, d);
+    } else if (gated || (wasApplied && !res.profile)) {
+      this.markLate(null, null); // the gate applied the profile before the request was sent
+    } else {
+      this.markLate(
+        res.profile ? 'This page started loading before its profile could be applied.' : 'The page started with the previous site’s locale profile.',
+        d,
+      );
+    }
+    if (this.state === 'attached' && !this.keepSession(res)) await this.detachInternal('not needed on this site');
+    this.ctx.changed(this.tabId);
   }
 
   onNavigationError(): Promise<void> {
     return this.queue.run(async () => {
       this.pendingGateUrl = null;
+      // Our own abort-and-reissue produces an error event for the aborted navigation.
+      if (this.reissue && this.ctx.now() - this.reissue.at < REISSUE_GUARD_MS) return;
       if (this.state !== 'attached' || !this.url) return;
       const res = this.resolveUrl(this.url);
       if (!this.isApplied(res)) await this.applyMain(res, true);
@@ -461,25 +598,9 @@ export class TabSession {
         const current = await this.ctx.getTabUrl(this.tabId);
         if (current !== url || this.url === url) return;
         this.log('debug', 'URL changed without a commit event; reconciling.');
-        await this.onCommittedInline({ url, transitionType: 'unknown' });
+        await this.handleCommit({ url, transitionType: 'unknown' });
       });
     }, 2000);
-  }
-
-  private async onCommittedInline(d: CommitDetails): Promise<void> {
-    this.url = d.url;
-    const res = this.resolveUrl(d.url);
-    this.resolution = res;
-    if (this.state !== 'attached') {
-      if (this.needsSession(res) && (await this.ensureAttached(d.url))) {
-        await this.applyMain(res, true);
-        this.markLate(res.action === 'PROFILE' ? 'The profile was applied after this page started.' : null, null);
-      }
-    } else if (!this.isApplied(res)) {
-      await this.applyMain(res, true);
-      this.markLate('The profile was applied after this page started.', null);
-    }
-    this.ctx.changed(this.tabId);
   }
 
   onSettingsChanged(): Promise<void> {
@@ -489,14 +610,11 @@ export class TabSession {
       if (this.state === 'attached') {
         if (!this.keepSession(res)) {
           await this.detachInternal(this.ctx.spoofingActive() ? 'not needed on this site' : 'spoofing turned off');
+        } else if (!this.isApplied(res)) {
+          await this.applyMain(res, true);
+          this.markLate('Settings changed after this page loaded; reload so page scripts see the new profile.', null);
         } else {
-          const before = this.isApplied(res);
-          if (!before) {
-            await this.applyMain(res, true);
-            this.markLate('Settings changed after this page loaded; reload so page scripts see the new profile.', null);
-          } else {
-            await this.applyChildren();
-          }
+          await this.applyChildren();
         }
       } else if (this.needsSession(res) && this.url && (await this.ensureAttached(this.url))) {
         await this.applyMain(res, true);
@@ -509,35 +627,39 @@ export class TabSession {
     });
   }
 
-  onAttachedToTarget(parentSessionId: string | null, params: { sessionId: string; targetInfo: TargetInfo; waitingForDebugger: boolean }): Promise<void> {
-    return this.queue.run(async () => {
-      const { sessionId, targetInfo, waitingForDebugger } = params;
-      const target = { tabId: this.tabId, sessionId };
-      const known = targetInfo.type === 'iframe' || targetInfo.type === 'worker';
-      try {
-        if (known && this.state === 'attached') {
-          const child: Child = {
-            sessionId,
-            targetId: targetInfo.targetId,
-            type: targetInfo.type as Child['type'],
-            url: targetInfo.url,
-            parentSessionId,
-            state: { ...CLEAN_STATE },
-            warnings: [],
-          };
-          this.children.set(sessionId, child);
-          await this.applyChild(child);
-          if (child.type === 'iframe') await this.ctx.port.send(target, 'Target.setAutoAttach', AUTO_ATTACH_PARAMS);
-        }
-      } catch (e) {
-        if (!isDetachedError(e)) this.log('warn', `Child target setup failed (${targetInfo.type}): ${errorMessage(e)}`);
-      } finally {
-        // Never leave a frame or worker paused, whatever happened above.
-        if (waitingForDebugger) await this.ctx.port.send(target, 'Runtime.runIfWaitingForDebugger').catch(() => undefined);
-        if (!known) await this.ctx.port.send({ tabId: this.tabId }, 'Target.detachFromTarget', { sessionId }).catch(() => undefined);
+  /** Target.attachedToTarget. Not queued and never awaits before resuming the target. */
+  onAttachedToTarget(parentSessionId: string | null, params: { sessionId: string; targetInfo: TargetInfo; waitingForDebugger: boolean }): void {
+    const { sessionId, targetInfo, waitingForDebugger } = params;
+    const target = { tabId: this.tabId, sessionId };
+    const known = targetInfo.type === 'iframe' || targetInfo.type === 'worker';
+    const send = (method: string, p?: object) =>
+      this.ctx.port.send(target, method, p).catch((e) => {
+        if (!isDetachedError(e)) this.log('debug', `${targetInfo.type} ${method} failed: ${errorMessage(e)}`);
+      });
+    let applied: Promise<void> = Promise.resolve();
+    try {
+      if (known && this.state === 'attached') {
+        const child: Child = {
+          sessionId,
+          targetId: targetInfo.targetId,
+          type: targetInfo.type as Child['type'],
+          url: targetInfo.url || this.frameUrls.get(targetInfo.targetId) || '',
+          parentSessionId,
+          state: { ...CLEAN_STATE },
+          warnings: [],
+        };
+        this.children.set(sessionId, child);
+        this.log('debug', `child ${child.type} attached (${targetInfo.url || 'url pending'}) → ${this.childProfile(child)?.locale ?? 'SYSTEM'}`);
+        applied = this.applyChild(child); // commands are sent synchronously, in order
+        if (child.type === 'iframe') void send('Target.setAutoAttach', AUTO_ATTACH_PARAMS);
       }
-      this.ctx.changed(this.tabId);
-    });
+    } catch (e) {
+      this.log('warn', `Child target setup failed (${targetInfo.type}): ${errorMessage(e)}`);
+    }
+    // Never leave a frame or worker paused, whatever happened above.
+    if (waitingForDebugger) void send('Runtime.runIfWaitingForDebugger');
+    if (!known) void this.ctx.port.send({ tabId: this.tabId }, 'Target.detachFromTarget', { sessionId }).catch(() => undefined);
+    void applied.then(() => this.ctx.changed(this.tabId));
   }
 
   onDetachedFromTarget(sessionId: string): void {
@@ -549,13 +671,11 @@ export class TabSession {
     const child = [...this.children.values()].find((c) => c.targetId === info.targetId);
     if (!child || child.url === info.url) return;
     child.url = info.url;
-    if (this.settings().options.frameMode === 'per-frame') {
-      void this.queue.run(async () => {
-        if (this.children.has(child.sessionId)) await this.applyChild(child);
-        for (const w of [...this.children.values()].filter((c) => c.parentSessionId === child.sessionId)) await this.applyChild(w);
-        this.ctx.changed(this.tabId);
-      });
-    }
+    this.log('debug', `child ${child.type} url → ${hostFromUrl(info.url) ?? info.url}`);
+    if (this.settings().options.frameMode !== 'per-frame') return;
+    const updates = [this.applyChild(child)];
+    for (const w of this.children.values()) if (w.parentSessionId === child.sessionId) updates.push(this.applyChild(w));
+    void Promise.all(updates).then(() => this.ctx.changed(this.tabId));
   }
 
   /** chrome.debugger.onDetach: Chrome ended the session. */
@@ -580,6 +700,11 @@ export class TabSession {
     this.resetSessionState();
   }
 
+  /** Wait until all queued work for this tab has finished (tests and diagnostics). */
+  idle(): Promise<void> {
+    return this.queue.run(async () => undefined);
+  }
+
   // ---------------------------------------------------------------- inspection
 
   async verify(): Promise<VerifyResult> {
@@ -592,7 +717,6 @@ export class TabSession {
       const world = await this.ctx.port.send<{ executionContextId: number }>(target, 'Page.createIsolatedWorld', {
         frameId,
         worldName: PROBE_WORLD,
-        grantUniveralAccess: false,
       });
       const r = await this.ctx.port.send<{ result: { value: { url: string; start: LocaleSnapshot | null; live: LocaleSnapshot } }; exceptionDetails?: { text: string } }>(
         target,
@@ -618,7 +742,7 @@ export class TabSession {
         frames.push({ kind: 'iframe', url: child.url, start: null, live: null, expectedLocale: expected, error: errorMessage(e) });
       }
     }
-    const ok = frames.every((f) => !f.error && (!f.expectedLocale || (f.live?.dateLocale === f.expectedLocale)));
+    const ok = frames.every((f) => !f.error && (!f.expectedLocale || f.live?.dateLocale === f.expectedLocale));
     return { ok, attached: true, frames, error: null };
   }
 

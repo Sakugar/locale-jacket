@@ -115,7 +115,7 @@ const ready: Promise<SessionManager> = (async () => {
   const settings = await loadSettings();
   const suspended = Boolean((await chrome.storage.session.get(SUSPENDED_KEY))[SUSPENDED_KEY]);
   manager = new SessionManager({
-    port: chromeDebuggerPort(),
+    port: chromeDebuggerPort((method, ms) => log({ t: Date.now(), level: 'warn', tabId: null, msg: `Slow CDP command ${method}: ${ms} ms` })),
     initialSettings: settings,
     suspended,
     reloadTab: (tabId) => chrome.tabs.reload(tabId),

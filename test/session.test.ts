@@ -4,7 +4,7 @@ import type { DebuggerPort, Target } from '../src/background/cdp.js';
 import { SessionManager } from '../src/background/manager.js';
 import { TabSession, type TabContext } from '../src/background/tab-session.js';
 import { makeProfile } from '../src/shared/locale.js';
-import type { LogEntry, TabStatus } from '../src/shared/messages.js';
+import type { LocaleSnapshot, LogEntry, TabStatus } from '../src/shared/messages.js';
 import { defaultSettings } from '../src/shared/presets.js';
 import type { Settings } from '../src/shared/types.js';
 
@@ -21,6 +21,8 @@ class FakePort implements DebuggerPort {
   attachError: string | null = null;
   failures = new Map<string, string>();
   detachCalls: number[] = [];
+  /** What the document-start probe reports (null = no probe in this document). */
+  probe: LocaleSnapshot | null = null;
 
   async attach(tabId: number): Promise<void> {
     this.attachCalls++;
@@ -32,13 +34,17 @@ class FakePort implements DebuggerPort {
     this.detachCalls.push(tabId);
     this.attached.delete(tabId);
   }
+  async targetIdForTab(): Promise<string> {
+    return 'MAIN';
+  }
   async send<T>(target: Target, method: string, params: object = {}): Promise<T> {
     this.calls.push({ target, method, params: params as Record<string, unknown> });
     const key = `${target.sessionId ?? 'main'}:${method}`;
     const fail = this.failures.get(key) ?? this.failures.get(method);
     if (fail) throw new Error(fail);
     if (!this.attached.has(target.tabId)) throw new Error(`Debugger is not attached to the tab with id: ${target.tabId}.`);
-    if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'MAIN' } } } as T;
+    if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 } as T;
+    if (method === 'Runtime.evaluate') return { result: { value: this.probe } } as T;
     return {} as T;
   }
   emulation(sessionId?: string): Call[] {
@@ -46,6 +52,9 @@ class FakePort implements DebuggerPort {
   }
   last(method: string): Call | undefined {
     return [...this.calls].reverse().find((c) => c.method === method);
+  }
+  methods(): string[] {
+    return this.calls.map((c) => c.method);
   }
   clear(): void {
     this.calls = [];
@@ -57,14 +66,30 @@ const EXAMPLE = 'https://example.com/';
 const APPLE = 'https://developer.apple.com/';
 const ACCOUNTS = 'https://accounts.google.com/signin';
 
-function makeCtx(port: FakePort, settings: Settings, opts: { active?: boolean } = {}) {
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+function snapshot(locale: string, language = locale): LocaleSnapshot {
+  return {
+    language,
+    languages: [language],
+    dateLocale: locale,
+    numberLocale: locale,
+    collatorLocale: locale,
+    pluralRulesLocale: locale,
+    relativeTimeLocale: locale,
+    listFormatLocale: locale,
+    timeZone: 'Asia/Shanghai',
+  };
+}
+
+function makeCtx(port: FakePort, settings: Settings, opts: { active?: () => boolean } = {}) {
   const reloads: number[] = [];
   const logs: LogEntry[] = [];
   let now = 1_000_000;
   const ctx: TabContext & { reloads: number[]; logs: LogEntry[]; advance(ms: number): void } = {
     port,
     settings: () => settings,
-    spoofingActive: () => opts.active ?? true,
+    spoofingActive: opts.active ?? (() => true),
     reloadTab: async (id) => {
       reloads.push(id);
     },
@@ -72,6 +97,7 @@ function makeCtx(port: FakePort, settings: Settings, opts: { active?: boolean } 
     changed: () => undefined,
     log: (level, tabId, msg) => logs.push({ t: now, level, tabId, msg }),
     now: () => now,
+    native: () => ({ locale: 'zh-CN', languages: ['zh-CN', 'zh'] }),
     reloads,
     logs,
     advance: (ms) => {
@@ -81,8 +107,18 @@ function makeCtx(port: FakePort, settings: Settings, opts: { active?: boolean } 
   return ctx;
 }
 
-function paused(url: string, frameId = 'MAIN', headers: Record<string, string> = {}) {
-  return { requestId: `req-${Math.random()}`, frameId, resourceType: 'Document', request: { url, headers } };
+function paused(url: string, frameId = 'MAIN', headers: Record<string, string> = {}, method = 'GET') {
+  return { requestId: `req-${Math.random()}`, frameId, resourceType: 'Document', request: { url, method, headers } };
+}
+
+/** A tab attached and settled on GOOGLE (en-US), with the call log cleared. */
+async function settledOnGoogle(port: FakePort, settings: Settings) {
+  const ctx = makeCtx(port, settings);
+  const t = new TabSession(1, ctx);
+  await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
+  ctx.reloads.length = 0;
+  port.clear();
+  return { t, ctx };
 }
 
 describe('TabSession lifecycle', () => {
@@ -97,8 +133,10 @@ describe('TabSession lifecycle', () => {
     const ctx = makeCtx(port, settings);
     const t = new TabSession(1, ctx);
     await t.onCommitted({ url: GOOGLE, transitionType: 'typed', timeStamp: ctx.now() });
-    const methods = port.calls.map((c) => c.method);
-    for (const m of ['Page.enable', 'Page.addScriptToEvaluateOnNewDocument', 'Fetch.enable', 'Target.setAutoAttach']) assert.ok(methods.includes(m), m);
+    await flush();
+    const methods = port.methods();
+    for (const m of ['Fetch.enable', 'Target.setAutoAttach', 'Page.enable', 'Page.addScriptToEvaluateOnNewDocument']) assert.ok(methods.includes(m), m);
+    assert.ok(methods.indexOf('Fetch.enable') < methods.indexOf('Page.enable'), 'browser-side gate first');
     assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'en-US' });
     assert.deepEqual(port.last('Emulation.setUserAgentOverride')?.params, { userAgent: '', acceptLanguage: 'en-US,en' });
     assert.ok(!methods.includes('Emulation.setTimezoneOverride'), 'timezone untouched by default');
@@ -117,63 +155,118 @@ describe('TabSession lifecycle', () => {
     assert.equal(t.status().session, 'none');
   });
 
-  it('gates navigations: applies the next profile before the request continues and fixes Accept-Language', async () => {
-    const t = new TabSession(1, makeCtx(port, settings));
-    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
-    port.clear();
-
-    // google (en-US) -> apple (ja-JP)
-    const req = paused(APPLE, 'MAIN', { 'Accept-Language': 'en-US,en;q=0.9', Accept: 'text/html' });
-    await t.onRequestPaused(req);
-    const order = port.calls.map((c) => c.method);
-    assert.ok(order.indexOf('Emulation.setLocaleOverride') < order.indexOf('Fetch.continueRequest'), 'override before continue');
+  it('a profile change aborts the navigation, applies the profile, then re-issues it', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    const req = paused(APPLE, 'MAIN', { 'Accept-Language': 'en-US,en;q=0.9', Referer: 'https://mail.google.com/' });
+    req.request = { ...req.request, referrerPolicy: 'strict-origin-when-cross-origin' } as typeof req.request;
+    t.onRequestPaused(req);
+    await flush();
+    const m = port.methods();
+    assert.ok(!m.includes('Fetch.continueRequest'), 'the stale request never reaches the server');
+    assert.deepEqual(port.last('Fetch.failRequest')?.params, { requestId: req.requestId, errorReason: 'Aborted' });
+    assert.ok(m.indexOf('Emulation.setLocaleOverride') < m.indexOf('Page.navigate'));
     assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'ja-JP' });
-    const cont = port.last('Fetch.continueRequest')!.params;
-    assert.equal(cont.requestId, req.requestId);
-    assert.deepEqual(cont.headers, [{ name: 'Accept', value: 'text/html' }, { name: 'Accept-Language', value: 'ja-JP,ja;q=0.9' }]);
+    assert.deepEqual(port.last('Page.navigate')?.params, {
+      url: APPLE,
+      transitionType: 'link',
+      referrer: 'https://mail.google.com/',
+      referrerPolicy: 'strictOriginWhenCrossOrigin',
+    });
+
+    // The re-issued request now matches the applied profile: header fixed, request continued.
+    port.clear();
+    const again = paused(APPLE, 'MAIN', { 'Accept-Language': 'en-US,en;q=0.9', Accept: 'text/html' });
+    t.onRequestPaused(again);
+    assert.deepEqual(port.emulation(), []);
+    assert.deepEqual(port.last('Fetch.continueRequest')?.params, {
+      requestId: again.requestId,
+      headers: [{ name: 'Accept', value: 'text/html' }, { name: 'Accept-Language', value: 'ja-JP,ja;q=0.9' }],
+    });
+    await t.onNavigationError(); // the aborted original navigation reports an error
+    assert.deepEqual(port.emulation(), [], 'the abort error does not revert the new profile');
+    port.probe = snapshot('ja-JP');
     await t.onCommitted({ url: APPLE, transitionType: 'link' });
     assert.equal(t.status().late, false);
+    assert.equal(t.status().applied?.locale, 'ja-JP');
+  });
 
-    // apple (ja-JP) -> accounts.google.com (SYSTEM exception): overrides cleared, header removed
-    port.clear();
-    await t.onRequestPaused(paused(ACCOUNTS, 'MAIN', { 'Accept-Language': 'ja-JP,ja;q=0.9', Accept: 'text/html' }));
+  it('restores SYSTEM before a SYSTEM-exception site loads (no leak)', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    t.onRequestPaused(paused(ACCOUNTS, 'MAIN', { 'Accept-Language': 'en-US,en;q=0.9' }));
+    await flush();
     assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, {});
     assert.deepEqual(port.last('Emulation.setUserAgentOverride')?.params, { userAgent: '' });
-    assert.deepEqual(port.last('Fetch.continueRequest')!.params.headers, [{ name: 'Accept', value: 'text/html' }]);
+    assert.ok(port.last('Page.navigate'));
+    port.clear();
+    const again = paused(ACCOUNTS, 'MAIN', { 'Accept-Language': 'en-US,en;q=0.9', Accept: 'text/html' });
+    t.onRequestPaused(again);
+    assert.deepEqual(port.last('Fetch.continueRequest')?.params.headers, [{ name: 'Accept', value: 'text/html' }], 'native header restored');
+    port.probe = snapshot('zh-CN');
     await t.onCommitted({ url: ACCOUNTS, transitionType: 'link' });
     assert.equal(t.status().applied, null);
     assert.equal(t.status().late, false);
     assert.equal(t.status().session, 'attached', 'kept for the next navigation (keepSessionOnSystem)');
   });
 
-  it('sends nothing when consecutive navigations share a profile', async () => {
-    const t = new TabSession(1, makeCtx(port, settings));
-    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
-    port.clear();
-    await t.onRequestPaused(paused('https://www.google.com/search?q=x', 'MAIN', { 'Accept-Language': 'en-US,en;q=0.9' }));
+  it('passes same-profile navigations straight through', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    const req = paused('https://www.google.com/search?q=x', 'MAIN', { 'Accept-Language': 'en-US,en;q=0.9' });
+    t.onRequestPaused(req);
     assert.deepEqual(port.emulation(), []);
-    assert.equal(port.last('Fetch.continueRequest')!.params.headers, undefined, 'header untouched when already right');
+    assert.deepEqual(port.last('Fetch.continueRequest')?.params, { requestId: req.requestId }, 'header untouched when already right');
   });
 
-  it('always continues a paused request, even when applying fails', async () => {
-    const t = new TabSession(1, makeCtx(port, settings));
-    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
+  it('POST navigations are continued (cannot be re-issued) and flagged late', async () => {
+    const { t, ctx } = await settledOnGoogle(port, settings);
+    t.onRequestPaused(paused(APPLE, 'MAIN', {}, 'POST'));
+    await flush();
+    assert.ok(!port.methods().includes('Fetch.failRequest'));
+    assert.ok(port.last('Fetch.continueRequest'));
+    port.probe = snapshot('en-US');
+    await t.onCommitted({ url: APPLE, transitionType: 'form_submit', timeStamp: ctx.now() });
+    assert.equal(t.status().late, true);
+    assert.deepEqual(ctx.reloads, [], 'form submissions are never reloaded');
+  });
+
+  it('never loops: a re-issued request that still mismatches is let through', async () => {
+    const { t } = await settledOnGoogle(port, settings);
     port.failures.set('Emulation.setLocaleOverride', 'boom');
-    await t.onRequestPaused(paused(APPLE));
+    t.onRequestPaused(paused(APPLE));
+    await flush();
+    assert.equal(port.calls.filter((c) => c.method === 'Page.navigate').length, 1);
+    t.onRequestPaused(paused(APPLE));
+    await flush();
+    assert.equal(port.calls.filter((c) => c.method === 'Page.navigate').length, 1);
     assert.ok(port.last('Fetch.continueRequest'));
   });
 
-  it('detects late documents (stale profile at commit) and reverts it', async () => {
-    const ctx = makeCtx(port, settings);
-    const t = new TabSession(1, ctx);
-    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
-    ctx.reloads.length = 0;
-    port.clear();
-    // A navigation the gate never saw (e.g. served by a service worker) lands on a SYSTEM site.
+  it('subframe documents are continued with the tab profile header', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    t.onRequestPaused(paused('https://ads.example.net/frame', 'F9', { Accept: '*/*' }));
+    assert.deepEqual(port.last('Fetch.continueRequest')?.params.headers, [
+      { name: 'Accept', value: '*/*' },
+      { name: 'Accept-Language', value: 'en-US,en;q=0.9' },
+    ]);
+    assert.deepEqual(port.emulation(), []);
+  });
+
+  it('flags ungated documents that started with the wrong profile, using the start probe', async () => {
+    const { t, ctx } = await settledOnGoogle(port, settings);
+    // e.g. a navigation served by a service worker never passes the gate
+    port.probe = snapshot('en-US');
     await t.onCommitted({ url: EXAMPLE, transitionType: 'link', timeStamp: ctx.now() });
     assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, {});
     assert.equal(t.status().late, true);
+    assert.match(t.status().lateReason ?? '', /instead of zh-CN/);
     assert.deepEqual(ctx.reloads, [1]);
+  });
+
+  it('a probe that matches clears the late flag (e.g. back/forward cache restore)', async () => {
+    const { t, ctx } = await settledOnGoogle(port, settings);
+    port.probe = snapshot('ja-JP');
+    await t.onCommitted({ url: APPLE, transitionType: 'link', transitionQualifiers: ['forward_back'], timeStamp: ctx.now() });
+    assert.equal(t.status().late, false);
+    assert.deepEqual(ctx.reloads, []);
   });
 
   it('never auto-reloads form submissions, reloads, back/forward or stale commits, and only once per 30 s', async () => {
@@ -201,6 +294,15 @@ describe('TabSession lifecycle', () => {
     t.onDebuggerDetached('target_closed');
     await t.onCommitted({ url: GOOGLE, transitionType: 'typed' });
     assert.deepEqual(ctx.reloads, [1], 'option disables it');
+  });
+
+  it('onBeforeNavigate only attaches; it never sends overrides', async () => {
+    const t = new TabSession(1, makeCtx(port, settings));
+    await t.onBeforeNavigate(GOOGLE);
+    assert.equal(t.status().session, 'attached');
+    assert.deepEqual(port.emulation(), []);
+    await t.onBeforeNavigate(APPLE);
+    assert.deepEqual(port.emulation(), []);
   });
 
   it('treats restricted pages as restricted without counting failures', async () => {
@@ -245,11 +347,23 @@ describe('TabSession lifecycle', () => {
     assert.deepEqual(aa, [false, true], 're-announces children');
     assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'en-US' });
     assert.equal(t.status().session, 'attached');
+    assert.equal(t.status().late, true, 'an already-open page is flagged, not reloaded');
+  });
+
+  it('a tab that is still loading is attached but not overridden (the gate does it)', async () => {
+    const t = new TabSession(1, makeCtx(port, settings));
+    await t.onTabSeen(GOOGLE, false);
+    assert.equal(t.status().session, 'attached');
+    assert.deepEqual(port.emulation(), []);
+    t.onRequestPaused(paused(GOOGLE));
+    await flush();
+    assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'en-US' });
+    assert.ok(port.last('Page.navigate'));
   });
 
   it('detaches when spoofing is turned off and when settings make the tab SYSTEM without keepSessionOnSystem', async () => {
     let active = true;
-    const ctx = { ...makeCtx(port, settings), spoofingActive: () => active };
+    const ctx = makeCtx(port, settings, { active: () => active });
     const t = new TabSession(1, ctx);
     await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
     active = false;
@@ -261,14 +375,14 @@ describe('TabSession lifecycle', () => {
     settings.options.keepSessionOnSystem = false;
     await t.onSettingsChanged();
     assert.equal(t.status().session, 'attached');
-    await t.onRequestPaused(paused(EXAMPLE));
+    t.onRequestPaused(paused(EXAMPLE));
+    await flush();
     await t.onCommitted({ url: EXAMPLE, transitionType: 'link' });
     assert.deepEqual(port.detachCalls, [1, 1], 'detached after landing on a SYSTEM site');
   });
 
   it('reapplies live when a rule changes and flags the page for reload', async () => {
-    const t = new TabSession(1, makeCtx(port, settings));
-    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
+    const { t } = await settledOnGoogle(port, settings);
     settings.rules[0]!.profile = makeProfile('en-GB');
     await t.onSettingsChanged();
     assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'en-GB' });
@@ -281,7 +395,8 @@ describe('TabSession lifecycle', () => {
     await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
     assert.deepEqual(port.last('Emulation.setTimezoneOverride')?.params, { timezoneId: 'America/New_York' });
     assert.deepEqual(port.last('Emulation.setGeolocationOverride')?.params, { latitude: 40.7, longitude: -74, accuracy: 50 });
-    await t.onRequestPaused(paused(EXAMPLE));
+    t.onRequestPaused(paused(EXAMPLE));
+    await flush();
     assert.deepEqual(port.last('Emulation.setTimezoneOverride')?.params, { timezoneId: '' });
     assert.ok(port.last('Emulation.clearGeolocationOverride'));
   });
@@ -296,10 +411,10 @@ describe('TabSession lifecycle', () => {
     assert.deepEqual(ctx.reloads, [], 'a reload would not fix it');
   });
 
-  it('reverts an early-applied profile when the navigation fails', async () => {
-    const t = new TabSession(1, makeCtx(port, settings));
-    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
-    await t.onBeforeNavigate(APPLE);
+  it('a failed navigation reverts to the committed page’s profile', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    t.onRequestPaused(paused(APPLE, 'MAIN', {}, 'POST')); // applied best-effort, then the POST fails
+    await flush();
     assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'ja-JP' });
     await t.onNavigationError();
     assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'en-US' });
@@ -313,27 +428,26 @@ describe('child targets (OOPIFs and workers)', () => {
   beforeEach(async () => {
     port = new FakePort();
     settings = defaultSettings();
-    t = new TabSession(1, makeCtx(port, settings));
-    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
-    port.clear();
+    ({ t } = await settledOnGoogle(port, settings));
   });
 
   const iframe = (sessionId: string, url = '') => ({ sessionId, targetInfo: { targetId: `T-${sessionId}`, type: 'iframe', url }, waitingForDebugger: true });
 
-  it('applies the inherited profile, auto-attaches recursively and resumes the frame', async () => {
-    await t.onAttachedToTarget(null, iframe('F1'));
+  it('sends the inherited profile, auto-attaches recursively, then resumes — in that order', async () => {
+    t.onAttachedToTarget(null, iframe('F1'));
     const calls = port.calls.filter((c) => c.target.sessionId === 'F1').map((c) => c.method);
-    assert.deepEqual(calls.slice(-2), ['Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger']);
+    assert.deepEqual(calls, ['Emulation.setLocaleOverride', 'Emulation.setUserAgentOverride', 'Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger']);
     assert.deepEqual(port.emulation('F1').map((c) => c.params), [{ locale: 'en-US' }, { userAgent: '', acceptLanguage: 'en-US,en' }]);
+    await flush();
     assert.equal(t.status().frames, 1);
   });
 
   it('gives workers only the navigator.language override', async () => {
-    await t.onAttachedToTarget('F1', { sessionId: 'W1', targetInfo: { targetId: 'TW', type: 'worker', url: 'https://mail.google.com/w.js' }, waitingForDebugger: true });
+    t.onAttachedToTarget('F1', { sessionId: 'W1', targetInfo: { targetId: 'TW', type: 'worker', url: 'https://mail.google.com/w.js' }, waitingForDebugger: true });
     assert.deepEqual(port.emulation('W1').map((c) => c.method), ['Emulation.setUserAgentOverride']);
     assert.equal(port.last('Runtime.runIfWaitingForDebugger')?.target.sessionId, 'W1');
     settings.options.overrideWorkers = false;
-    await t.onAttachedToTarget(null, { sessionId: 'W2', targetInfo: { targetId: 'TW2', type: 'worker', url: '' }, waitingForDebugger: true });
+    t.onAttachedToTarget(null, { sessionId: 'W2', targetInfo: { targetId: 'TW2', type: 'worker', url: '' }, waitingForDebugger: true });
     assert.deepEqual(port.emulation('W2'), []);
   });
 
@@ -341,35 +455,43 @@ describe('child targets (OOPIFs and workers)', () => {
     port.failures.set('F2:Emulation.setLocaleOverride', 'x');
     port.failures.set('F2:Emulation.setUserAgentOverride', 'x');
     port.failures.set('F2:Target.setAutoAttach', 'x');
-    await t.onAttachedToTarget(null, iframe('F2'));
+    t.onAttachedToTarget(null, iframe('F2'));
+    await flush();
     assert.equal(port.last('Runtime.runIfWaitingForDebugger')?.target.sessionId, 'F2');
   });
 
-  it('treats a shared-process locale on a sibling frame as applied', async () => {
+  it('reports a locale held by another frame in the same process', async () => {
     port.failures.set('F3:Emulation.setLocaleOverride', JSON.stringify({ message: 'Another locale override is already in effect' }));
-    await t.onAttachedToTarget(null, iframe('F3'));
-    assert.ok(t.status().warnings.some((w) => /shared with another frame/.test(w)));
+    t.onAttachedToTarget(null, iframe('F3'));
+    await flush();
+    assert.ok(t.status().warnings.some((w) => /shares its renderer process/.test(w)));
   });
 
-  it('per-frame mode resolves the frame URL once it is known', async () => {
+  it('per-frame mode uses the URL the gate saw for that frame before it attached', async () => {
     settings.options.frameMode = 'per-frame';
-    await t.onAttachedToTarget(null, iframe('F4'));
-    assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'en-US' }, 'inherits until the URL is known');
-    t.onTargetInfoChanged({ targetId: 'T-F4', type: 'iframe', url: 'https://www.apple.com/embed' });
-    await t.onNavigationError(); // flush the queue
-    assert.deepEqual(port.emulation('F4').at(-2)?.params, { locale: 'ja-JP' });
+    t.onRequestPaused(paused('https://www.apple.com/embed', 'T-F4'));
+    t.onAttachedToTarget(null, iframe('F4'));
+    assert.deepEqual(port.emulation('F4')[0]?.params, { locale: 'ja-JP' }, 'own rule from the first script');
+  });
+
+  it('per-frame mode re-resolves when the frame URL changes', async () => {
+    settings.options.frameMode = 'per-frame';
+    t.onAttachedToTarget(null, iframe('F5'));
+    assert.deepEqual(port.emulation('F5')[0]?.params, { locale: 'en-US' }, 'inherits while the URL is unknown');
+    t.onTargetInfoChanged({ targetId: 'T-F5', type: 'iframe', url: 'https://www.apple.com/embed' });
+    assert.deepEqual(port.emulation('F5').at(-2)?.params, { locale: 'ja-JP' });
   });
 
   it('detaches non-frame/worker targets after resuming them', async () => {
-    await t.onAttachedToTarget(null, { sessionId: 'S1', targetInfo: { targetId: 'X', type: 'service_worker', url: '' }, waitingForDebugger: true });
+    t.onAttachedToTarget(null, { sessionId: 'S1', targetInfo: { targetId: 'X', type: 'service_worker', url: '' }, waitingForDebugger: true });
     assert.ok(port.calls.some((c) => c.method === 'Target.detachFromTarget' && c.params.sessionId === 'S1'));
     assert.ok(port.calls.some((c) => c.method === 'Runtime.runIfWaitingForDebugger' && c.target.sessionId === 'S1'));
   });
 
-  it('drops children when they detach', async () => {
-    await t.onAttachedToTarget(null, iframe('F5'));
-    await t.onAttachedToTarget('F5', { sessionId: 'W5', targetInfo: { targetId: 'TW5', type: 'worker', url: '' }, waitingForDebugger: false });
-    t.onDetachedFromTarget('F5');
+  it('drops children (and their workers) when they detach', async () => {
+    t.onAttachedToTarget(null, iframe('F6'));
+    t.onAttachedToTarget('F6', { sessionId: 'W6', targetInfo: { targetId: 'TW6', type: 'worker', url: '' }, waitingForDebugger: false });
+    t.onDetachedFromTarget('F6');
     assert.equal(t.status().frames, 0);
     assert.equal(t.status().workers, 0);
   });
@@ -392,10 +514,11 @@ describe('SessionManager', () => {
       onStatus: (s) => statuses.push(s),
       onTabGone: () => undefined,
       log: () => undefined,
+      native: () => ({ locale: 'zh-CN', languages: ['zh-CN', 'zh'] }),
     });
     return { m, port, statuses };
   }
-  const flush = () => new Promise((r) => setTimeout(r, 10));
+  const settle = () => new Promise((r) => setTimeout(r, 10));
 
   it('reconciles existing tabs on startup without reloading them', async () => {
     const { m, port } = makeManager(defaultSettings());
@@ -424,7 +547,7 @@ describe('SessionManager', () => {
     port.attached.clear();
     await m.suspend();
     m.onCommitted(1, 0, { url: GOOGLE, transitionType: 'typed' });
-    await flush();
+    await settle();
     assert.equal(port.attached.size, 0);
     await m.resume();
     assert.deepEqual([...port.attached], [1]);
@@ -436,7 +559,7 @@ describe('SessionManager', () => {
     const { m } = makeManager(defaultSettings(), port);
     m.onDebuggerEvent({ tabId: 9 }, 'Fetch.requestPaused', paused(GOOGLE));
     m.onDebuggerEvent({ tabId: 9 }, 'Target.attachedToTarget', { sessionId: 'Z', waitingForDebugger: true, targetInfo: { type: 'iframe', targetId: 'z', url: '' } });
-    await flush();
+    await settle();
     assert.ok(port.last('Fetch.continueRequest'));
     assert.equal(port.last('Runtime.runIfWaitingForDebugger')?.target.sessionId, 'Z');
   });
@@ -444,10 +567,10 @@ describe('SessionManager', () => {
   it('ignores subframe navigation events and cleans up closed tabs', async () => {
     const { m, port } = makeManager(defaultSettings());
     m.onCommitted(5, 3, { url: GOOGLE });
-    await flush();
+    await settle();
     assert.equal(port.attachCalls, 0);
     m.onCommitted(5, 0, { url: GOOGLE });
-    await flush();
+    await settle();
     assert.equal(m.attachedCount(), 1);
     m.onTabRemoved(5);
     assert.equal(m.status(5), null);

@@ -10,16 +10,50 @@ export interface DebuggerPort {
   attach(tabId: number): Promise<void>;
   detach(tabId: number): Promise<void>;
   send<T = unknown>(target: Target, method: string, params?: object): Promise<T>;
+  /** CDP target id of the tab's page target (equals its main frame id). Browser-side, never blocked by navigations. */
+  targetIdForTab(tabId: number): Promise<string | null>;
 }
 
 export const PROTOCOL_VERSION = '1.3';
 
-export function chromeDebuggerPort(): DebuggerPort {
+/** No CDP call may block a tab's queue forever (e.g. a command sent into a renderer that is going away). */
+export const COMMAND_TIMEOUT_MS = 10_000;
+
+export class CommandTimeoutError extends Error {
+  constructor(readonly method: string) {
+    super(`CDP command timed out: ${method}`);
+    this.name = 'CommandTimeoutError';
+  }
+}
+
+export function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(onTimeout()), ms);
+    }),
+  ]);
+}
+
+export function chromeDebuggerPort(onSlow?: (method: string, ms: number) => void): DebuggerPort {
   return {
-    attach: (tabId) => chrome.debugger.attach({ tabId }, PROTOCOL_VERSION),
-    detach: (tabId) => chrome.debugger.detach({ tabId }),
-    send: async <T>(target: Target, method: string, params?: object) =>
-      (await chrome.debugger.sendCommand(target as chrome.debugger.Debuggee, method, params as Record<string, unknown> | undefined)) as T,
+    attach: (tabId) => withTimeout(chrome.debugger.attach({ tabId }, PROTOCOL_VERSION), COMMAND_TIMEOUT_MS, () => new CommandTimeoutError('attach')),
+    detach: (tabId) => withTimeout(chrome.debugger.detach({ tabId }), COMMAND_TIMEOUT_MS, () => new CommandTimeoutError('detach')),
+    targetIdForTab: async (tabId) => (await chrome.debugger.getTargets()).find((t) => t.tabId === tabId && t.type === 'page')?.id ?? null,
+    send: async <T>(target: Target, method: string, params?: object) => {
+      const t0 = Date.now();
+      try {
+        return (await withTimeout(
+          chrome.debugger.sendCommand(target as chrome.debugger.Debuggee, method, params as Record<string, unknown> | undefined),
+          COMMAND_TIMEOUT_MS,
+          () => new CommandTimeoutError(method),
+        )) as T;
+      } finally {
+        const ms = Date.now() - t0;
+        if (ms > 1000) onSlow?.(method, ms);
+      }
+    },
   };
 }
 

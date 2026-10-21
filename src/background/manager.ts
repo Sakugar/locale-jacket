@@ -17,6 +17,8 @@ export interface ManagerDeps {
   onTabGone(tabId: number): void;
   log(entry: LogEntry): void;
   now?: () => number;
+  /** The browser's own locale (the service worker itself is never overridden). */
+  native?: () => { locale: string; languages: string[] };
 }
 
 export function spoofingPossible(s: Settings): boolean {
@@ -46,6 +48,7 @@ export class SessionManager {
       },
       log: (level, tabId, msg) => deps.log({ t: this.now(), level, tabId, msg }),
       now: this.now,
+      native: deps.native ?? (() => ({ locale: Intl.DateTimeFormat().resolvedOptions().locale, languages: [...navigator.languages] })),
     };
   }
 
@@ -158,10 +161,10 @@ export class SessionManager {
     }
     switch (method) {
       case 'Fetch.requestPaused':
-        void t.onRequestPaused(params as PausedRequest);
+        t.onRequestPaused(params as PausedRequest);
         break;
       case 'Target.attachedToTarget':
-        void t.onAttachedToTarget(source.sessionId ?? null, params as { sessionId: string; targetInfo: TargetInfo; waitingForDebugger: boolean });
+        t.onAttachedToTarget(source.sessionId ?? null, params as { sessionId: string; targetInfo: TargetInfo; waitingForDebugger: boolean });
         break;
       case 'Target.detachedFromTarget':
         t.onDetachedFromTarget((params as { sessionId: string }).sessionId);

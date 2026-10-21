@@ -6,14 +6,20 @@
 //    with userAgent "" so the UA string and UA client hints stay untouched.
 //  * Emulation.setTimezoneOverride    → optional, process-wide.
 //  * Emulation.setGeolocationOverride → optional.
-// Each field is only sent when it changes, so steady-state navigations cost nothing.
+//
+// Commands are *sent* synchronously and *not awaited* by callers on the critical
+// path: while a cross-process navigation is pending, Chrome holds renderer-bound
+// commands until the navigation commits, so awaiting them from inside the Fetch
+// gate would deadlock (the navigation waits for the gate, the gate waits for the
+// commit). chrome.debugger delivers commands to a session in order, so sending
+// them before Fetch.continueRequest is what guarantees they apply first.
 
 import { isDetachedError, isProcessLockError, isUnsupportedError, protocolMessage, type DebuggerPort, type Target } from './cdp.js';
 import type { LocaleProfile } from '../shared/types.js';
 
 export type TargetKind = 'page' | 'iframe' | 'worker';
 
-/** What has been applied on a session. `undefined` fields are unknown (e.g. adopted session). */
+/** Intended overrides on a session. `undefined` = unknown (adopted session or a failed command). */
 export interface AppliedState {
   locale: string | null | undefined;
   languages: string | null | undefined;
@@ -31,6 +37,8 @@ export interface DesiredState {
   geolocation: string | null;
 }
 
+export type Field = keyof DesiredState;
+
 export function desiredFor(profile: LocaleProfile | null, kind: TargetKind): DesiredState {
   if (!profile) return { locale: null, languages: null, timezone: null, geolocation: null };
   if (kind === 'worker') {
@@ -46,14 +54,21 @@ export function desiredFor(profile: LocaleProfile | null, kind: TargetKind): Des
   };
 }
 
-export interface ApplyOutcome {
-  state: AppliedState;
+export interface ApplyResult {
+  /** Fields whose command failed; the caller should treat them as unknown. */
+  failed: { field: Field; value: string | null }[];
   warnings: string[];
   /** The session disappeared while applying. */
   detached: boolean;
 }
 
-type Field = keyof DesiredState;
+export interface ApplyTicket {
+  /** State to record immediately (optimistic: every sent command succeeds). */
+  state: AppliedState;
+  /** True if at least one command was sent. */
+  sent: boolean;
+  done: Promise<ApplyResult>;
+}
 
 function commandFor(field: Field, value: string | null): [string, object] {
   switch (field) {
@@ -78,60 +93,55 @@ const FIELD_LABEL: Record<Field, string> = {
   geolocation: 'geolocation',
 };
 
-export async function applyState(
-  port: DebuggerPort,
-  target: Target,
-  current: AppliedState,
-  desired: DesiredState,
-  kind: TargetKind,
-): Promise<ApplyOutcome> {
-  const next: AppliedState = { ...current };
-  const warnings: string[] = [];
-  let detached = false;
+/** Send the commands needed to move `current` to `desired`. Never awaits. */
+export function applyState(port: DebuggerPort, target: Target, current: AppliedState, desired: DesiredState, kind: TargetKind): ApplyTicket {
+  const state: AppliedState = { ...current };
   const fields = (Object.keys(desired) as Field[]).filter((f) => current[f] !== desired[f]);
+  const pending: Promise<{ field: Field; value: string | null; error?: unknown }>[] = [];
 
-  await Promise.all(
-    fields.map(async (field) => {
-      const value = desired[field];
-      // Workers never get locale/timezone/geolocation commands; just record the desired value.
-      if (kind === 'worker' && field !== 'languages') {
-        next[field] = value;
-        return;
+  for (const field of fields) {
+    const value = desired[field];
+    state[field] = value;
+    // Workers never get locale/timezone/geolocation commands; recording the value is enough.
+    if (kind === 'worker' && field !== 'languages') continue;
+    const [method, params] = commandFor(field, value);
+    pending.push(
+      port.send(target, method, params).then(
+        () => ({ field, value }),
+        (error: unknown) => ({ field, value, error }),
+      ),
+    );
+  }
+
+  const done = Promise.all(pending).then((outcomes) => {
+    const result: ApplyResult = { failed: [], warnings: [], detached: false };
+    for (const { field, value, error } of outcomes) {
+      if (error === undefined) continue;
+      const [method] = commandFor(field, value);
+      if (isDetachedError(error)) {
+        result.detached = true;
+      } else if (isProcessLockError(error)) {
+        // Another session in the same renderer process (another tab, DevTools, or a
+        // sibling frame) owns this process-wide override.
+        if (value === null) continue; // nothing of ours to clear
+        if (kind !== 'page') {
+          // Frames of one site share a renderer process; usually that is the same tab and
+          // profile, but another tab embedding the same site can hold a different locale.
+          result.warnings.push(`A cross-site frame shares its renderer process with another frame that already set the ${FIELD_LABEL[field]}; it may report that frame's value.`);
+          continue;
+        }
+        result.failed.push({ field, value });
+        result.warnings.push(`${FIELD_LABEL[field]} could not be set: another tab or DevTools already overrides it in this renderer process.`);
+      } else if (isUnsupportedError(error)) {
+        if (kind === 'page') result.warnings.push(`${method} is not supported by this browser (${protocolMessage(error)}).`);
+      } else {
+        result.failed.push({ field, value });
+        result.warnings.push(`${method} failed: ${protocolMessage(error)}`);
       }
-      const [method, params] = commandFor(field, value);
-      try {
-        await port.send(target, method, params);
-        next[field] = value;
-      } catch (e) {
-        if (isDetachedError(e)) {
-          detached = true;
-          return;
-        }
-        if (isProcessLockError(e)) {
-          // Another session in the same renderer process (another tab, DevTools, or a
-          // sibling frame) owns this process-wide override.
-          if (value === null) {
-            next[field] = null; // nothing of ours to clear
-          } else if (kind !== 'page') {
-            next[field] = value; // sibling frames of one site share the process and the profile
-            warnings.push(`${FIELD_LABEL[field]} is shared with another frame in the same renderer process.`);
-          } else {
-            warnings.push(
-              `${FIELD_LABEL[field]} could not be set: another tab or DevTools already overrides it in this renderer process.`,
-            );
-          }
-          return;
-        }
-        if (isUnsupportedError(e)) {
-          next[field] = value;
-          if (kind === 'page') warnings.push(`${method} is not supported by this browser (${protocolMessage(e)}).`);
-          return;
-        }
-        warnings.push(`${method} failed: ${protocolMessage(e)}`);
-      }
-    }),
-  );
-  return { state: next, warnings, detached };
+    }
+    return result;
+  });
+  return { state, sent: pending.length > 0, done };
 }
 
 export function stateMatches(state: AppliedState, desired: DesiredState): boolean {
