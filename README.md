@@ -52,8 +52,36 @@ Pin the extension so its badge (for example `EN` or `JA`) shows which profile th
   | default | `SYSTEM` |
 
   Edit or delete these rules freely.
-- While any tab is being spoofed, Chrome shows **"Locale Jacket started debugging this browser"**. This is Chrome's security notice for the `chrome.debugger` API. The extension does not hide it. Clicking **Cancel** on it pauses Locale Jacket until you press **Resume** in the popup.
+- While any tab is being spoofed, Chrome shows **"Locale Jacket started debugging this browser"**. This is Chrome's security notice for the `chrome.debugger` API. The extension does not hide it. Clicking **Cancel** on it pauses Locale Jacket until you press **Resume** in the popup. If you accept the trade-off, you can hide it yourself; see [Hiding the debugging banner (optional)](#hiding-the-debugging-banner-optional).
 - The browser UI language, Chrome's language settings and other extensions are never changed.
+
+### Hiding the debugging banner (optional)
+
+> **Security trade-off.** Chrome shows that banner for *every* extension that uses the `debugger` permission. Hiding it hides it for all of them, not just Locale Jacket. Do this only if you trust every installed extension.
+
+Chrome has no setting, policy or `chrome://flags` entry for this; checked against all 666 flags in Chrome 155 and 213 in Edge 155. The only option is the launch switch `--silent-debugger-extension-api`. Chrome reads it only when its **first** process starts, so every way Chrome can be launched needs it. The extension never sets it.
+
+[`tools/chrome-banner-flag.ps1`](tools/chrome-banner-flag.ps1) (Windows, PowerShell 5.1 or 7) does this for you:
+
+```powershell
+pwsh -File tools\chrome-banner-flag.ps1                   # status only: shortcuts, link handler, running browser
+pwsh -File tools\chrome-banner-flag.ps1 -Apply            # add the switch (Chrome)
+pwsh -File tools\chrome-banner-flag.ps1 -Apply -Browser Both   # Chrome and Edge
+pwsh -File tools\chrome-banner-flag.ps1 -Revert           # undo, from the backup
+```
+
+**What `-Apply` changes:**
+- Adds the switch to every Chrome (or Edge) shortcut on the taskbar, Start menu, desktop and Quick Launch. Existing arguments such as `--profile-directory` are kept.
+- Adds it to the per-user http/https link handler (`HKCU\Software\Classes\ChromeHTML\shell\open\command`, or `MSEdgeHTM` for Edge), so links opened from other apps also start the browser with it.
+- Saves the original values to `%LOCALAPPDATA%\LocaleJacket\banner-flag-backup.json`, which is what `-Revert` restores.
+- Shortcuts for all users (under `%ProgramData%` or the Public desktop) need an elevated PowerShell. Without one they are skipped with a warning.
+
+**After applying:**
+1. Quit Chrome completely: close every window and the tray icon, and turn off *Settings ▸ System ▸ Continue running background apps*. Otherwise a Chrome already running without the switch is reused.
+2. Start Chrome from a shortcut.
+3. Check `chrome://version` ▸ **Command Line**, or run the script again without arguments; it should say `started WITH the flag`.
+
+Chrome updates and "make default browser" can rewrite the shortcuts or the link handler, so re-check after updating. To do it by hand instead, add ` --silent-debugger-extension-api` after `chrome.exe` in each shortcut's **Target**, and in the link handler before `--single-argument %1`.
 
 ## Using it
 

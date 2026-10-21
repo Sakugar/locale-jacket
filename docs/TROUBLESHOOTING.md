@@ -4,7 +4,7 @@ Start with the popup's status chip and **Check what the page sees**. Next, look 
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| Chrome shows "Locale Jacket started debugging this browser" | Expected. Chrome shows this for every `chrome.debugger` session. | Leave it open. It disappears when no tab needs spoofing (or turn *Keep the debugger attached after leaving a spoofed site* off, so sessions end sooner). |
+| Chrome shows "Locale Jacket started debugging this browser" | Expected. Chrome shows this for every `chrome.debugger` session. | Leave it open. It disappears when no tab needs spoofing (or turn *Keep the debugger attached after leaving a spoofed site* off, so sessions end sooner). To hide it for good, launch Chrome with `--silent-debugger-extension-api`, but that hides it for **all** debugger-using extensions. See the README section *Hiding the debugging banner* and `tools/chrome-banner-flag.ps1`. |
 | Popup says **Paused** / badge shows `\|\|` | You clicked *Cancel* on that banner. Chrome detached every session. | Press **Resume** in the popup (or under *Options ▸ Sessions & log*). |
 | Badge shows `EN!` / chip says **Reload needed** | The page started before the profile could be applied: an already-open tab, a rule changed, a POST navigation, or a page restored from cache. | Reload the tab (the popup has a button). |
 | The first page opened from a new tab reloads once | Chrome refuses to attach while the tab shows the New Tab Page, so the extension reloads the page so its scripts see the profile. | Expected. Turn off *Reload once if the profile arrived late* to disable it. The HTTP header is right either way. |
