@@ -41,8 +41,9 @@ Hence, for every main-frame document request:
 ```text
 requestPaused(url)
  ├─ profile(url) == applied profile → continueRequest(fix Accept-Language if needed)
- ├─ profile differs and method is GET → failRequest(Aborted) → apply → Page.navigate(url, referrer)
- │                                      (the re-issued request then matches and continues)
+ ├─ profile differs and method is GET → failRequest(Aborted) → apply → re-issue the same way it started:
+ │      back/forward → Page.navigateToHistoryEntry, reload → Page.reload, otherwise Page.navigate(url, referrer)
+ │      (the kind comes from Page.frameStartedNavigating; the re-issued request then matches and continues)
  └─ profile differs and method is POST → apply (best effort) + continueRequest → flagged "late"
 ```
 

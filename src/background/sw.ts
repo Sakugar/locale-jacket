@@ -79,7 +79,7 @@ function syncDnr(settings: Settings, suspended: boolean): Promise<void> {
 const BADGE_COLORS = { ok: '#1a7f37', warn: '#b54708', off: '#6b6b75' };
 
 function badgeFor(s: TabStatus, suspended: boolean, enabled: boolean): { text: string; color: string; title: string } {
-  if (!enabled) return { text: '', color: BADGE_COLORS.off, title: 'Locale Jacket: off' };
+  if (!enabled) return { text: 'OFF', color: BADGE_COLORS.off, title: 'Locale Jacket: off' };
   if (suspended) return { text: '||', color: BADGE_COLORS.off, title: 'Locale Jacket: paused (debugging was canceled)' };
   const p = s.resolution.profile;
   if (!p) return { text: '', color: BADGE_COLORS.off, title: `Locale Jacket: system locale${s.host ? ` on ${s.host}` : ''}` };

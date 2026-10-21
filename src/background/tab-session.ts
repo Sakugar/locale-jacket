@@ -155,6 +155,8 @@ export class TabSession {
   private pendingGateUrl: string | null = null;
   /** Navigation aborted and re-issued by the gate (suppresses the resulting error event). */
   private reissue: { url: string; at: number } | null = null;
+  /** Last main-frame navigation start reported by Page.frameStartedNavigating (tells history traversals apart). */
+  private lastStart: { url: string; type: string } | null = null;
   private attachFailures: number[] = [];
   private closed = false;
   private readonly queue = new SerialQueue();
@@ -507,6 +509,7 @@ export class TabSession {
     const applied = this.applyMain(res, false);
     const referrer = Object.entries(p.request.headers).find(([k]) => k.toLowerCase() === 'referer')?.[1];
     const policy = p.request.referrerPolicy ? REFERRER_POLICIES[p.request.referrerPolicy] : undefined;
+    const kind = this.lastStart && this.lastStart.url === stripHash(url) ? this.lastStart.type : 'differentDocument';
     this.ctx.port
       .send(t, 'Fetch.failRequest', { requestId: p.requestId, errorReason: 'Aborted' })
       .then(async () => {
@@ -514,6 +517,18 @@ export class TabSession {
         await withTimeout(applied, REISSUE_APPLY_TIMEOUT_MS, () => new Error('profile commands timed out')).catch((e) =>
           this.log('warn', `Re-issuing without confirmation: ${errorMessage(e)}`),
         );
+        // Re-issue in the same way it started, so session history stays intact.
+        if (kind === 'reload') {
+          await this.ctx.port.send(t, 'Page.reload', {});
+          return;
+        }
+        if (kind === 'historyDifferentDocument') {
+          const entryId = await this.historyEntryFor(url);
+          if (entryId !== null) {
+            await this.ctx.port.send(t, 'Page.navigateToHistoryEntry', { entryId });
+            return;
+          }
+        }
         await this.ctx.port.send(t, 'Page.navigate', {
           url,
           transitionType: 'link',
@@ -524,6 +539,23 @@ export class TabSession {
       .catch((e) => {
         if (!isDetachedError(e)) this.log('warn', `Could not re-issue the navigation: ${errorMessage(e)}`);
       });
+  }
+
+  /** The history entry a back/forward traversal was heading to (nearest entry with that URL). */
+  private async historyEntryFor(url: string): Promise<number | null> {
+    const h = await this.ctx.port.send<{ currentIndex: number; entries: { id: number; url: string }[] }>({ tabId: this.tabId }, 'Page.getNavigationHistory');
+    let best: { id: number; distance: number } | null = null;
+    h.entries.forEach((e, i) => {
+      if (i === h.currentIndex || stripHash(e.url) !== stripHash(url)) return;
+      const distance = Math.abs(i - h.currentIndex);
+      if (!best || distance < best.distance) best = { id: e.id, distance };
+    });
+    return best ? (best as { id: number }).id : null;
+  }
+
+  /** Page.frameStartedNavigating for any frame of this target. */
+  onNavigationStarted(p: { frameId: string; url: string; navigationType: string }): void {
+    if (p.frameId === this.mainFrameId) this.lastStart = { url: stripHash(p.url), type: p.navigationType };
   }
 
   onCommitted(d: CommitDetails): Promise<void> {

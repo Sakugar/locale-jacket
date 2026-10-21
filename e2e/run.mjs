@@ -282,7 +282,18 @@ try {
     await sleep(800);
     const r = await report(tab);
     if (r.host !== 'google.localhost') throw new Error(`back landed on ${r.host}`);
-    if (r.live.language !== 'en-US' || r.live.dateLocale !== 'en-US') throw new Error(`after back: ${r.live.language}/${r.live.dateLocale}`);
+    expectLocale(r, 'en-US', 'after back');
+    // A traversal that changes profile must be re-issued as a traversal, not as a new entry.
+    const hist = await cdp.send('Page.getNavigationHistory', {}, tab.s);
+    const fwd = hist.entries[hist.currentIndex + 1];
+    if (!fwd?.url.includes('apple.localhost')) throw new Error(`forward entry lost: ${JSON.stringify(hist.entries.map((e) => e.url))} @${hist.currentIndex}`);
+    await cdp.send('Runtime.evaluate', { expression: 'history.forward()' }, tab.s);
+    await sleep(800);
+    const f = await report(tab);
+    if (f.host !== 'apple.localhost') throw new Error(`forward landed on ${f.host}`);
+    expectLocale(f, 'ja-JP', 'after forward');
+    const hist2 = await cdp.send('Page.getNavigationHistory', {}, tab.s);
+    if (hist2.entries.length !== hist.entries.length) throw new Error(`history grew ${hist.entries.length} → ${hist2.entries.length}`);
   });
   await closeTab(tab);
 

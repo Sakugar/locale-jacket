@@ -23,6 +23,7 @@ class FakePort implements DebuggerPort {
   detachCalls: number[] = [];
   /** What the document-start probe reports (null = no probe in this document). */
   probe: LocaleSnapshot | null = null;
+  history = { currentIndex: 1, entries: [{ id: 10, url: APPLE }, { id: 11, url: GOOGLE }, { id: 12, url: APPLE }] };
 
   async attach(tabId: number): Promise<void> {
     this.attachCalls++;
@@ -45,6 +46,7 @@ class FakePort implements DebuggerPort {
     if (!this.attached.has(target.tabId)) throw new Error(`Debugger is not attached to the tab with id: ${target.tabId}.`);
     if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 } as T;
     if (method === 'Runtime.evaluate') return { result: { value: this.probe } } as T;
+    if (method === 'Page.getNavigationHistory') return this.history as T;
     return {} as T;
   }
   emulation(sessionId?: string): Call[] {
@@ -188,6 +190,22 @@ describe('TabSession lifecycle', () => {
     await t.onCommitted({ url: APPLE, transitionType: 'link' });
     assert.equal(t.status().late, false);
     assert.equal(t.status().applied?.locale, 'ja-JP');
+  });
+
+  it('re-issues back/forward as a history traversal and reloads as a reload', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    t.onNavigationStarted({ frameId: 'MAIN', url: APPLE, navigationType: 'historyDifferentDocument' });
+    t.onRequestPaused(paused(APPLE));
+    await flush();
+    assert.deepEqual(port.last('Page.navigateToHistoryEntry')?.params, { entryId: 10 }, 'nearest entry with that URL');
+    assert.ok(!port.methods().includes('Page.navigate'), 'no new history entry');
+    // A settings change on the same page, then F5: re-issued as a reload.
+    port.clear();
+    t.onNavigationStarted({ frameId: 'MAIN', url: GOOGLE, navigationType: 'reload' });
+    t.onRequestPaused(paused(GOOGLE));
+    await flush();
+    assert.ok(port.last('Page.reload'));
+    assert.ok(!port.methods().includes('Page.navigate'));
   });
 
   it('restores SYSTEM before a SYSTEM-exception site loads (no leak)', async () => {

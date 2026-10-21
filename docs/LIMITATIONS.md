@@ -25,7 +25,7 @@ Everything below was observed in Chrome 155 / Edge 155 on Windows 11 (see `resea
   - back/forward cache restores
   - prerender activations
 - **Live changes.** Changing a rule or the default re-applies immediately to open tabs, but scripts that already ran keep what they read. After *clearing* an override on a live page, `navigator.languages` may keep the old list until the next load. Reload to be exact.
-- **Re-issued navigations** behave like a link click: the original Referer and referrer policy are kept, and history gains one entry. A `location.replace()` that changes profile becomes a normal navigation (a new history entry). Navigation API listeners on the old page see the aborted navigation.
+- **Re-issued navigations.** Back/forward is re-issued as the same history traversal, and reloads as a reload. Other navigations keep their Referer and referrer policy and add exactly one history entry (verified). A `location.replace()` that changes profile cannot be told apart from a link and becomes a normal navigation, adding a history entry instead of replacing one. Navigation API listeners on the old page see the aborted navigation.
 
 ## Process model
 
