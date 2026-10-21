@@ -68,7 +68,7 @@ button.danger { color: var(--bad); }
 button.link { border: 0; background: none; padding: 0; color: var(--accent); }
 button.icon { padding: 3px 7px; }
 
-input[type=text], input[type=number], input[type=search], select, textarea {
+input[type=text], input[type=url], input[type=number], input[type=search], select, textarea {
   font: inherit; color: var(--fg); background: var(--surface);
   border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; min-width: 0;
 }

@@ -22,6 +22,9 @@
 | `src/shared/rules.ts` | Rule matching and deterministic precedence, match traces, conflict/duplicate/redundancy analysis |
 | `src/shared/locale.ts` | BCP 47 canonicalization and ICU support check, profile completion, Chrome's Accept-Language q-value format |
 | `src/shared/config-io.ts`, `yaml.ts` | JSON/YAML import (full and Clash-compact forms) and export, validation of stored settings |
+| `src/shared/ip.ts`, `mmdb.ts`, `geosite.ts` | IP/CIDR parsing and LAN ranges, MaxMind DB reader, v2ray geosite.dat reader (all dependency-free) |
+| `src/shared/dataset-store.ts` | Optional data sets in IndexedDB (downloaded or imported by the user) |
+| `src/background/datasets.ts`, `ip-cache.ts` | Loads only the data that rules reference; remembers server addresses seen by `webRequest` |
 | `src/shared/dnr.ts` | Compiles rules into `declarativeNetRequest` rules whose priorities reproduce the engine's precedence |
 | `src/background/sw.ts` | MV3 entry point: listeners, settings and DNR sync, badge, messaging |
 | `src/background/manager.ts` | Routes tab, navigation and debugger events to `TabSession`s; global enable/suspend |

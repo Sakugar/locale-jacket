@@ -33,6 +33,16 @@ Everything below was observed in Chrome 155 / Edge 155 on Windows 11 (see `resea
 - **DevTools ▸ Sensors ▸ Locale** competes for the same process-wide override. While a tab is spoofed, DevTools cannot set a locale there, and vice versa. Other DevTools features coexist with the extension.
 - **Same-site frames** always share the page's locale, even in per-frame mode.
 
+## IP and GEO rules
+
+- **No DNS lookups.** IP rules (`IP-CIDR`, `IP-CIDR6`, `IP-ASN`, `GEOIP`) use the address Chrome connected to, learned from `webRequest` per hostname and kept in memory for the session.
+  - The first visit to a host is decided without it. If an IP rule then applies, the page is flagged and reloaded once (if that option is on); later visits are gated correctly.
+  - Hosts behind CDNs or DNS load balancing can change address between visits, so a decision can change too.
+  - The address cache is cleared when the browser or the service worker restarts.
+- **Data sets are snapshots.** `GEOSITE`, `GEOIP` country and `IP-ASN` rules only match with an installed data set, and only as current as the file. Update them from *Options ▸ Data sets*.
+  - GeoSite regex entries use RE2 syntax; the few that JavaScript cannot compile are skipped and counted.
+- **First-request header.** `GEOSITE` lists larger than 20,000 domains, regex rules and IP rules are not mirrored into declarativeNetRequest; they apply through the debugger session. When IP rules exist, a spoofing default action is not mirrored either, because an IP rule might override it.
+
 ## Coverage gaps
 
 - **Service workers and shared workers** are not overridden. Their `Intl` follows whichever process hosts them, and their `navigator.language` and requests use the real locale.

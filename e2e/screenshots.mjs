@@ -68,6 +68,7 @@ rules:
     height: 1000,
   });
   await shot(`${base}/options/options.html#io`, 'options-io', { before: `[...document.querySelectorAll('#io button')].find(b => b.textContent === 'Show as YAML').click()` });
+  await shot(`${base}/options/options.html#data`, 'options-data', { height: 1000 });
   await shot(`${base}/options/options.html#settings`, 'options-settings');
   await shot(`${base}/options/options.html#sessions`, 'options-sessions');
 } finally {
