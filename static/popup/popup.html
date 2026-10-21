@@ -1,2 +1,28 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Locale Jacket</title></head><body><script type="module" src="popup.js"></script></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Locale Jacket</title>
+<link rel="stylesheet" href="../ui/base.css">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header class="row">
+  <img src="../icons/icon-32.png" width="20" height="20" alt="">
+  <h1>Locale Jacket</h1>
+  <span class="spacer"></span>
+  <span id="globalToggle"></span>
+</header>
+<main class="stack">
+  <div id="banner" hidden></div>
+  <section class="card stack" id="tabCard" aria-live="polite"></section>
+  <section class="card stack" id="siteCard"></section>
+  <section class="card stack" id="defaultCard"></section>
+</main>
+<footer class="stack">
+  <div class="row"><button id="openOptions" class="link">Manage rules, import/export &amp; settings →</button></div>
+  <p class="muted small">While spoofing is active Chrome shows “Locale Jacket started debugging this browser”. That banner is expected; closing it pauses the extension.</p>
+</footer>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

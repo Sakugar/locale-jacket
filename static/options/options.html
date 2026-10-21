@@ -1,2 +1,34 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Locale Jacket</title></head><body><script type="module" src="options.js"></script></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Locale Jacket settings</title>
+<link rel="stylesheet" href="../ui/base.css">
+<link rel="stylesheet" href="options.css">
+</head>
+<body>
+<div class="layout">
+  <nav aria-label="Sections">
+    <div class="brand row"><img src="../icons/icon-32.png" width="22" height="22" alt=""><strong>Locale Jacket</strong></div>
+    <a href="#rules">Rules</a>
+    <a href="#test">Test &amp; verify</a>
+    <a href="#io">Import / export</a>
+    <a href="#settings">Settings</a>
+    <a href="#sessions">Sessions &amp; log</a>
+    <a href="#about">Limitations &amp; privacy</a>
+    <div class="nav-foot" id="navStatus"></div>
+  </nav>
+  <main>
+    <section id="rules" class="page"></section>
+    <section id="test" class="page" hidden></section>
+    <section id="io" class="page" hidden></section>
+    <section id="settings" class="page" hidden></section>
+    <section id="sessions" class="page" hidden></section>
+    <section id="about" class="page" hidden></section>
+  </main>
+</div>
+<dialog id="ruleDialog"></dialog>
+<script type="module" src="options.js"></script>
+</body>
+</html>

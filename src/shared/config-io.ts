@@ -312,8 +312,8 @@ function profileToObject(p: LocaleProfile, rule: Record<string, YamlValue>): voi
   rule.locale = p.locale;
   rule.languages = p.languages;
   rule.acceptLanguage = p.acceptLanguage;
-  rule.timezone = p.timezone;
-  rule.geolocation = p.geolocation ? { latitude: p.geolocation.latitude, longitude: p.geolocation.longitude, accuracy: p.geolocation.accuracy } : null;
+  if (p.timezone) rule.timezone = p.timezone;
+  if (p.geolocation) rule.geolocation = { latitude: p.geolocation.latitude, longitude: p.geolocation.longitude, accuracy: p.geolocation.accuracy };
 }
 
 export function settingsToConfigObject(s: Settings): { [k: string]: YamlValue } {

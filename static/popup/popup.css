@@ -1,0 +1,15 @@
+body { width: 360px; overflow-x: hidden; }
+.kv dd { word-break: normal; overflow-wrap: anywhere; }
+header { padding: 12px 14px 8px; }
+header h1 { font-size: 15px; }
+main { padding: 0 12px; }
+footer { padding: 10px 14px 12px; }
+.card h2 { font-size: 13px; }
+.host { font-weight: 600; font-size: 14px; word-break: break-all; }
+#siteCard select, #defaultCard select { width: 100%; }
+#defaultCard button { flex: none; }
+.section-title { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.verify table { font-size: 12px; }
+.verify th, .verify td { padding: 4px 6px; }
+.verify td.ok { color: var(--ok); }
+.verify td.bad { color: var(--bad); font-weight: 600; }
