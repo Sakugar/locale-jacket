@@ -11,7 +11,7 @@ import { normalizeProfile } from './locale.js';
 import { DEFAULT_OPTIONS } from './presets.js';
 import { newRuleId, normalizeRuleValue } from './rules.js';
 import type { DefaultAction, LocaleProfile, Options, Rule, RuleType, Settings } from './types.js';
-import { RULE_TYPES } from './types.js';
+import { isIpRuleType, RULE_TYPES } from './types.js';
 import { parseYaml, stringifyYaml, YamlError, type YamlValue } from './yaml.js';
 
 export interface ImportResult {
@@ -179,13 +179,22 @@ function parseRuleObject(r: Record<string, unknown>, where: string): { rule: Rul
   const warnings: string[] = [];
   const type = parseType(r.type);
   if (!type) {
-    errors.push(`${where}: unknown rule type ${JSON.stringify(r.type)} (expected DOMAIN, DOMAIN-SUFFIX or DOMAIN-KEYWORD).`);
+    errors.push(`${where}: unknown rule type ${JSON.stringify(r.type)} (expected one of ${RULE_TYPES.join(', ')}).`);
     return { rule: null, errors, warnings };
   }
-  const rawValue = type === 'DOMAIN-KEYWORD' ? (r.keyword ?? r.value ?? r.domain) : (r.domain ?? r.value);
+  const keys = VALUE_KEYS[type];
+  const found = keys.map((k) => r[k]).find((x) => x !== undefined && x !== null);
+  const rawValue = typeof found === 'number' ? String(found) : found;
   if (typeof rawValue !== 'string') {
-    errors.push(`${where}: ${type === 'DOMAIN-KEYWORD' ? '"keyword"' : '"domain"'} is required.`);
+    errors.push(`${where}: "${keys[0]}" is required for ${type} rules.`);
     return { rule: null, errors, warnings };
+  }
+  let noResolve = false;
+  const nr = r.noResolve ?? r['no-resolve'];
+  if (nr !== undefined) {
+    if (typeof nr !== 'boolean') errors.push(`${where}: noResolve must be true or false.`);
+    else if (!isIpRuleType(type)) warnings.push(`${where}: noResolve only applies to IP rules; ignored.`);
+    else noResolve = nr;
   }
   const v = normalizeRuleValue(type, rawValue);
   if (!v.value) {
@@ -232,16 +241,35 @@ function parseRuleObject(r: Record<string, unknown>, where: string): { rule: Rul
       enabled,
       priority,
       note: typeof r.note === 'string' ? r.note : '',
+      ...(noResolve ? { noResolve: true } : {}),
     },
     errors,
     warnings,
   };
 }
 
-/** Parse "TYPE,value,LOCALE|SYSTEM" and "MATCH,LOCALE|SYSTEM". */
+/** Field names accepted for each rule type's value (the first one is used on export). */
+const VALUE_KEYS: Record<RuleType, string[]> = {
+  DOMAIN: ['domain', 'value'],
+  'DOMAIN-SUFFIX': ['domain', 'value'],
+  'DOMAIN-KEYWORD': ['keyword', 'value', 'domain'],
+  'DOMAIN-REGEX': ['regex', 'value', 'pattern'],
+  GEOSITE: ['geosite', 'value', 'category'],
+  'IP-CIDR': ['cidr', 'value', 'ip'],
+  'IP-CIDR6': ['cidr', 'value', 'ip'],
+  'IP-ASN': ['asn', 'value'],
+  GEOIP: ['geoip', 'value', 'country', 'code'],
+};
+
+/** Parse "TYPE,value,LOCALE|SYSTEM[,no-resolve]" and "MATCH,LOCALE|SYSTEM". */
 function parseCompactRule(s: string, where: string): { rule?: Rule; defaultAction?: DefaultAction; error?: string; warnings: string[] } {
   const warnings: string[] = [];
   const parts = s.split(',').map((p) => p.trim());
+  let noResolve = false;
+  if (parts.length > 3 && parts.at(-1)!.toLowerCase() === 'no-resolve') {
+    parts.pop();
+    noResolve = true;
+  }
   const head = (parts[0] ?? '').toUpperCase();
   if (head === 'MATCH' || head === 'FINAL') {
     const target = parts[1];
@@ -254,18 +282,23 @@ function parseCompactRule(s: string, where: string): { rule?: Rule; defaultActio
   const type = parseType(parts[0]);
   if (!type) return { error: `${where}: unknown rule type in "${s}".`, warnings };
   if (parts.length < 3) return { error: `${where}: expected "${type},<value>,<locale|SYSTEM>".`, warnings };
-  const v = normalizeRuleValue(type, parts[1] ?? '');
+  // The target is the last field; everything between type and target is the value
+  // (a DOMAIN-REGEX may itself contain commas).
+  const target = parts.at(-1)!;
+  const rawValue = type === 'DOMAIN-REGEX' ? parts.slice(1, -1).join(',') : parts[1]!;
+  if (type !== 'DOMAIN-REGEX' && parts.length > 3) warnings.push(`${where}: extra fields before "${target}" ignored.`);
+  const v = normalizeRuleValue(type, rawValue);
   if (!v.value) return { error: `${where}: ${v.error}`, warnings };
   warnings.push(...v.notes.map((n) => `${where}: ${n}`));
-  const target = parts[2]!;
-  if (parts.length > 3) warnings.push(`${where}: extra fields after "${target}" ignored.`);
+  if (noResolve && !isIpRuleType(type)) warnings.push(`${where}: no-resolve only applies to IP rules; ignored.`);
+  const extra = noResolve && isIpRuleType(type) ? { noResolve: true } : {};
   if (SYSTEM_WORDS.has(target.toUpperCase())) {
-    return { rule: { id: newRuleId(), type, value: v.value, action: 'SYSTEM', profile: null, enabled: true, priority: 0, note: '' }, warnings };
+    return { rule: { id: newRuleId(), type, value: v.value, action: 'SYSTEM', profile: null, enabled: true, priority: 0, note: '', ...extra }, warnings };
   }
   const p = normalizeProfile({ locale: target });
   if (!p.profile) return { error: `${where}: ${p.errors.join(' ')}`, warnings };
   warnings.push(...p.warnings.map((w) => `${where}: ${w}`));
-  return { rule: { id: newRuleId(), type, value: v.value, action: 'PROFILE', profile: p.profile, enabled: true, priority: 0, note: '' }, warnings };
+  return { rule: { id: newRuleId(), type, value: v.value, action: 'PROFILE', profile: p.profile, enabled: true, priority: 0, note: '', ...extra }, warnings };
 }
 
 function parseDefault(raw: unknown): { value: DefaultAction | null; errors: string[]; warnings: string[] } {
@@ -319,8 +352,9 @@ function profileToObject(p: LocaleProfile, rule: Record<string, YamlValue>): voi
 export function settingsToConfigObject(s: Settings): { [k: string]: YamlValue } {
   const rules: YamlValue[] = s.rules.map((r) => {
     const o: { [k: string]: YamlValue } = { type: r.type };
-    if (r.type === 'DOMAIN-KEYWORD') o.keyword = r.value;
-    else o.domain = r.value;
+    const key = VALUE_KEYS[r.type][0]!;
+    o[key] = r.type === 'IP-ASN' ? Number(r.value) : r.value;
+    if (r.noResolve) o.noResolve = true;
     if (r.action === 'SYSTEM') o.action = 'SYSTEM';
     else if (r.profile) profileToObject(r.profile, o);
     if (!r.enabled) o.enabled = false;
@@ -347,7 +381,7 @@ export function exportConfig(s: Settings, format: 'json' | 'yaml'): string {
 
 /** Merge imported rules into existing settings, skipping exact duplicates (same type, value, action, profile). */
 export function mergeRules(current: Settings, incoming: Settings): { settings: Settings; added: number; skipped: number } {
-  const key = (r: Rule) => JSON.stringify([r.type, r.value, r.action, r.profile]);
+  const key = (r: Rule) => JSON.stringify([r.type, r.value, Boolean(r.noResolve), r.action, r.profile]);
   const existing = new Set(current.rules.map(key));
   const ids = new Set(current.rules.map((r) => r.id));
   let added = 0;
@@ -377,7 +411,8 @@ export function sanitizeStoredSettings(raw: unknown, fallback: Settings): { sett
       ? {
           id: r.id,
           type: r.type,
-          [r.type === 'DOMAIN-KEYWORD' ? 'keyword' : 'domain']: r.value,
+          value: r.value,
+          noResolve: r.noResolve,
           action: r.action,
           ...(isRecord(r.profile) ? { profile: r.profile } : {}),
           enabled: r.enabled,

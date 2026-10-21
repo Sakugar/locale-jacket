@@ -11,11 +11,14 @@
 // highest-priority matching rule decides; an `allow` rule (used for SYSTEM)
 // cancels all lower-priority modifyHeaders rules.
 
+import type { GeositeList } from './geosite.js';
 import { isAsciiKeyword, rulesInPrecedenceOrder } from './rules.js';
+import { isIpRuleType } from './types.js';
 import type { Rule, Settings } from './types.js';
 
 export const DNR_MAX_UNSAFE_RULES = 5000;
 export const DNR_MAX_REGEX_RULES = 1000;
+export const DNR_MAX_GEOSITE_DOMAINS = 20000;
 
 export interface DnrRule {
   id: number;
@@ -43,7 +46,12 @@ function escapeRegex(s: string): string {
 // so the host is lowercase ASCII and the path starts with "/".
 const PREFIX = '^https?://(?:[^/?#@]*@)?';
 
-export function compileDnrRules(settings: Pick<Settings, 'rules' | 'defaultAction'>): DnrCompileResult {
+export interface DnrCompileOptions {
+  /** Geosite category lookup; GEOSITE rules are skipped when absent. */
+  geosite?: (category: string) => GeositeList | null | undefined;
+}
+
+export function compileDnrRules(settings: Pick<Settings, 'rules' | 'defaultAction'>, opts: DnrCompileOptions = {}): DnrCompileResult {
   const ordered = rulesInPrecedenceOrder(settings.rules).filter((r) => r.action === 'SYSTEM' || r.profile);
   const skipped: DnrCompileResult['skipped'] = [];
   const out: DnrRule[] = [];
@@ -57,6 +65,29 @@ export function compileDnrRules(settings: Pick<Settings, 'rules' | 'defaultActio
       condition = { resourceTypes: ['main_frame'], requestDomains: [rule.value] };
     } else if (rule.type === 'DOMAIN') {
       condition = { resourceTypes: ['main_frame'], regexFilter: `${PREFIX}${escapeRegex(rule.value)}\\.?(?::[0-9]+)?/` };
+    } else if (rule.type === 'GEOSITE') {
+      const list = opts.geosite?.(rule.value);
+      if (!list) {
+        skipped.push({ rule, reason: 'GeoSite data is not loaded.' });
+        return;
+      }
+      // Full-match entries are mirrored as suffixes: a slight over-match that only affects the
+      // first request's header; the debugger session applies the exact rule.
+      const domains = [...new Set([...list.suffix, ...list.full])].filter((d) => /^[a-z0-9.-]+$/.test(d));
+      if (!domains.length || domains.length > DNR_MAX_GEOSITE_DOMAINS) {
+        skipped.push({ rule, reason: domains.length ? `${domains.length} domains exceed the ${DNR_MAX_GEOSITE_DOMAINS}-domain mirroring limit.` : 'Category has no plain domains to mirror.' });
+        return;
+      }
+      if (list.keywords.length || list.regexes.length) {
+        skipped.push({ rule, reason: `Mirrored partially: ${list.keywords.length + list.regexes.length} keyword/regex entries are applied by the debugger session only.` });
+      }
+      condition = { resourceTypes: ['main_frame'], requestDomains: domains };
+    } else if (rule.type !== 'DOMAIN-KEYWORD') {
+      skipped.push({
+        rule,
+        reason: rule.type === 'DOMAIN-REGEX' ? 'Regex rules are applied by the debugger session only.' : 'IP rules need the server address, which is only known after connecting.',
+      });
+      return;
     } else {
       if (!isAsciiKeyword(rule.value)) {
         skipped.push({ rule, reason: 'Non-ASCII keywords cannot be expressed in DNR (URLs use punycode).' });
@@ -86,7 +117,12 @@ export function compileDnrRules(settings: Pick<Settings, 'rules' | 'defaultActio
     });
   });
 
-  if (settings.defaultAction.action === 'PROFILE') {
+  // An IP rule could override the default for hosts no hostname rule matches; DNR cannot
+  // see addresses, so a catch-all would set the wrong header for those hosts.
+  const ipRules = ordered.filter((r) => isIpRuleType(r.type));
+  if (settings.defaultAction.action === 'PROFILE' && ipRules.length) {
+    skipped.push({ rule: ipRules[0]!, reason: 'The default profile is not mirrored for the first request because IP rules may override it.' });
+  } else if (settings.defaultAction.action === 'PROFILE') {
     out.push({
       id: out.length + 1,
       priority: 1,

@@ -247,7 +247,18 @@ function why(r: Rule): string {
     case 'DOMAIN-SUFFIX':
       return `Suffix with ${r.value.split('.').length} labels (more labels win)${r.priority ? `, priority ${r.priority}` : ''}`;
     case 'DOMAIN-KEYWORD':
-      return `Keyword (lowest precedence)${r.priority ? `, priority ${r.priority}` : ''}`;
+      return `Keyword (after exact and suffix rules)${r.priority ? `, priority ${r.priority}` : ''}`;
+    case 'DOMAIN-REGEX':
+      return `Regex (after keyword rules)${r.priority ? `, priority ${r.priority}` : ''}`;
+    case 'GEOSITE':
+      return `GeoSite category (last of the hostname rules)${r.priority ? `, priority ${r.priority}` : ''}`;
+    case 'IP-CIDR':
+    case 'IP-CIDR6':
+      return `IP range /${r.value.split('/')[1]} (longer prefixes win; after all hostname rules)`;
+    case 'IP-ASN':
+      return 'Autonomous system (after IP ranges)';
+    case 'GEOIP':
+      return 'IP country (lowest precedence)';
   }
 }
 

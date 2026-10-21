@@ -158,7 +158,13 @@ export function editRule(dialog: HTMLDialogElement, rule: Rule | null, prefill: 
   const TYPE_HINTS: Record<RuleType, string> = {
     'DOMAIN-SUFFIX': 'Matches the domain and every subdomain on label boundaries: google.com matches mail.google.com but not fakegoogle.com.',
     DOMAIN: 'Matches this exact hostname only. Exact rules beat every suffix and keyword rule.',
-    'DOMAIN-KEYWORD': 'Matches any hostname containing the text. Lowest precedence.',
+    'DOMAIN-KEYWORD': 'Matches any hostname containing the text. After exact and suffix rules.',
+    'DOMAIN-REGEX': 'JavaScript regular expression tested against the hostname (case-insensitive), e.g. ^(.+\\.)?example\\.(com|org)$.',
+    GEOSITE: 'A category from the GeoSite data set (Options ▸ Data sets), e.g. google, cn, apple@cn, geolocation-!cn. Matches nothing until the data set is downloaded or imported.',
+    'IP-CIDR': 'Matches when the site’s server address is in this IPv4 range, e.g. 17.0.0.0/8. Hostname rules always win over IP rules.',
+    'IP-CIDR6': 'Matches when the site’s server address is in this IPv6 range, e.g. 2001:db8::/32.',
+    'IP-ASN': 'Matches the server’s autonomous system number, e.g. 13335 (Cloudflare). Needs the ASN data set.',
+    GEOIP: 'Matches the server’s country (US, CN, JP …) or LAN (private addresses, no data needed). Country codes need the GeoIP data set.',
   };
   const syncType = () => {
     typeHint.textContent = TYPE_HINTS[type.value as RuleType];

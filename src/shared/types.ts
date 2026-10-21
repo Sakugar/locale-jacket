@@ -1,7 +1,15 @@
 // Core data model shared by the background service worker and the UI pages.
 
-export type RuleType = 'DOMAIN' | 'DOMAIN-SUFFIX' | 'DOMAIN-KEYWORD';
-export const RULE_TYPES: readonly RuleType[] = ['DOMAIN-SUFFIX', 'DOMAIN', 'DOMAIN-KEYWORD'];
+export type HostRuleType = 'DOMAIN' | 'DOMAIN-SUFFIX' | 'DOMAIN-KEYWORD' | 'DOMAIN-REGEX' | 'GEOSITE';
+/** Rules that need the server's IP address (known from connections Chrome made). */
+export type IpRuleType = 'IP-CIDR' | 'IP-CIDR6' | 'IP-ASN' | 'GEOIP';
+export type RuleType = HostRuleType | IpRuleType;
+export const RULE_TYPES: readonly RuleType[] = ['DOMAIN-SUFFIX', 'DOMAIN', 'DOMAIN-KEYWORD', 'DOMAIN-REGEX', 'GEOSITE', 'IP-CIDR', 'IP-CIDR6', 'IP-ASN', 'GEOIP'];
+export const IP_RULE_TYPES: readonly RuleType[] = ['IP-CIDR', 'IP-CIDR6', 'IP-ASN', 'GEOIP'];
+
+export function isIpRuleType(t: RuleType): t is IpRuleType {
+  return (IP_RULE_TYPES as readonly string[]).includes(t);
+}
 
 /** PROFILE = spoof with the rule's locale profile; SYSTEM = keep the browser's own locale. */
 export type RuleAction = 'PROFILE' | 'SYSTEM';
@@ -28,7 +36,11 @@ export interface LocaleProfile {
 export interface Rule {
   id: string;
   type: RuleType;
-  /** Normalized ASCII hostname for DOMAIN / DOMAIN-SUFFIX, lowercase keyword for DOMAIN-KEYWORD. */
+  /**
+   * Normalized value: ASCII hostname (DOMAIN, DOMAIN-SUFFIX), lowercase keyword, regex source,
+   * geosite category ("google", "apple@cn"), CIDR ("1.2.3.0/24"), AS number ("13335") or
+   * country/special code ("US", "LAN").
+   */
   value: string;
   action: RuleAction;
   /** Required when action is PROFILE. */
@@ -37,6 +49,8 @@ export interface Rule {
   /** Tie-breaker between rules of equal specificity; higher wins. */
   priority: number;
   note: string;
+  /** IP rules only: match IP-literal hosts only, never a looked-up server address (Clash no-resolve). */
+  noResolve?: boolean;
 }
 
 export type DefaultAction = { action: 'SYSTEM' } | { action: 'PROFILE'; profile: LocaleProfile };
@@ -74,4 +88,6 @@ export interface Resolution {
   /** Every enabled rule that matched, best first. */
   matches: Rule[];
   host: string | null;
+  /** Server address used for IP rules (formatted), if one was known. */
+  ip: string | null;
 }
