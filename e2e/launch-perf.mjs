@@ -3,7 +3,7 @@
 // browser opens at startup, while Locale Jacket's service worker is starting
 // too? And what does the extension cost in page-load time?
 //
-//   node e2e/launch-perf.mjs [--runs 5] [--browser <path>] [--headful] [--only <substring>]
+//   node e2e/launch-perf.mjs [--runs 5] [--slow 300] [--browser <path>] [--headful] [--only <substring>]
 //
 // Each "cold" run starts the browser with verify/public/launch.html as its
 // startup page (or restores it from the last session), so the extension and
@@ -34,6 +34,8 @@ const arg = (name, fallback = null) => {
   return i > 0 ? process.argv[i + 1] : fallback;
 };
 const RUNS = Math.max(1, Number(arg('--runs', 5)));
+// Server response time for the "slow site" scenarios; real sites take 100–500 ms.
+const SLOW_MS = Math.max(0, Number(arg('--slow', 300)));
 const WARM_RUNS = RUNS * 2;
 const headless = !process.argv.includes('--headful');
 const only = arg('--only');
@@ -81,6 +83,8 @@ const EXT_ARGS = [`--load-extension=${dist}`, `--disable-extensions-except=${dis
 let srv;
 let PORT;
 const u = (host, query = '') => `http://${host}:${PORT}/launch.html${query}`;
+/** The run's query string, plus the server delay for slow-site scenarios. */
+const qs = (base, delay) => (delay ? `${base}&delay=${delay}` : base);
 
 async function serviceWorker(cdp) {
   const sw = await until(async () => {
@@ -227,7 +231,7 @@ async function coldRun(scenario, profile, { host, expected, extension = true, re
 }
 
 /** Warm: a browser that is already running opens a new tab. */
-async function warmRuns(scenario, profile, { host, expected, extension = true, count }) {
+async function warmRuns(scenario, profile, { host, expected, extension = true, count, delay = 0 }) {
   forgetSession(profile);
   const b = await launch({ executable, headless, userDataDir: profile, keepProfile: true, extraArgs: [...BASE_ARGS, ...(extension ? EXT_ARGS : ['--disable-extensions'])] });
   try {
@@ -235,7 +239,7 @@ async function warmRuns(scenario, profile, { host, expected, extension = true, c
     await sleep(500);
     for (let i = 0; i < count; i++) {
       const since = Date.now();
-      const query = `?warm=${i}`;
+      const query = qs(`?warm=${i}`, delay);
       const { targetId } = await b.cdp.send('Target.createTarget', { url: u(host, query) });
       const beacon = await finalBeacon(host, since, query, { quietMs: 800 });
       const ext = extension ? await extensionView(b.cdp) : null;
@@ -254,7 +258,7 @@ async function warmRuns(scenario, profile, { host, expected, extension = true, c
  * --load-extension launches, the worker's event listeners and header rules are
  * already registered, as they are for an installed extension at browser start.
  */
-async function workerColdRuns(scenario, profile, { host, expected, count }) {
+async function workerColdRuns(scenario, profile, { host, expected, count, delay = 0 }) {
   forgetSession(profile);
   const b = await launch({ executable, headless, userDataDir: profile, keepProfile: true, extraArgs: [...BASE_ARGS, ...EXT_ARGS] });
   try {
@@ -267,7 +271,7 @@ async function workerColdRuns(scenario, profile, { host, expected, count }) {
       await until(async () => !(await b.cdp.send('Target.getTargets')).targetInfos.some((x) => x.type === 'service_worker' && x.url.endsWith('/background/sw.js')), { message: 'worker stopped' });
       await sleep(300);
       const since = Date.now();
-      const query = `?worker-cold=${i}`;
+      const query = qs(`?worker-cold=${i}`, delay);
       const { targetId } = await b.cdp.send('Target.createTarget', { url: u(host, query) });
       const beacon = await finalBeacon(host, since, query);
       const ext = await extensionView(b.cdp);
@@ -289,6 +293,13 @@ const SCENARIOS = [
   { name: 'warm: new tab, spoofed site (en-US)', kind: 'warm', host: 'google.localhost', expected: 'en-US' },
   { name: 'warm: new tab, unmatched site (native)', kind: 'warm', host: 'example.localhost', expected: NATIVE },
   { name: 'warm: new tab, no extension (baseline)', kind: 'warm', host: 'google.localhost', expected: NATIVE, extension: false },
+  // The same with a server that takes SLOW_MS to answer, like a real site.
+  { name: 'slow site: startup URL, spoofed (en-US)', kind: 'cold', host: 'google.localhost', expected: 'en-US', delay: SLOW_MS },
+  { name: 'slow site: startup URL, no extension (baseline)', kind: 'cold', host: 'google.localhost', expected: NATIVE, extension: false, delay: SLOW_MS },
+  { name: 'slow site: session restore, spoofed (ja-JP)', kind: 'restore', host: 'apple.localhost', expected: 'ja-JP', delay: SLOW_MS },
+  { name: 'slow site: new tab wakes the stopped worker (en-US)', kind: 'worker-cold', host: 'google.localhost', expected: 'en-US', delay: SLOW_MS },
+  { name: 'slow site: warm new tab, spoofed (en-US)', kind: 'warm', host: 'google.localhost', expected: 'en-US', delay: SLOW_MS },
+  { name: 'slow site: warm new tab, no extension (baseline)', kind: 'warm', host: 'google.localhost', expected: NATIVE, extension: false, delay: SLOW_MS },
 ];
 
 // --------------------------------------------------------------------- run
@@ -305,7 +316,7 @@ try {
     product = (await b.cdp.send('Browser.getVersion')).product;
     await b.close();
   }
-  console.log(`Locale Jacket launch test — ${product}${headless ? ' (headless)' : ''}, ${RUNS} cold / ${WARM_RUNS} warm runs per scenario, server :${PORT}\n`);
+  console.log(`Locale Jacket launch test — ${product}${headless ? ' (headless)' : ''}, ${RUNS} cold / ${WARM_RUNS} warm runs per scenario, slow site ${SLOW_MS} ms, server :${PORT}\n`);
   await prepareProfile(profile);
 
   for (const sc of SCENARIOS) {
@@ -315,17 +326,18 @@ try {
     try {
       if (sc.kind === 'cold') {
         for (let i = 0; i < RUNS; i++) {
-          await coldRun(sc.name, profile, { ...sc, query: `?run=${i}` });
+          await coldRun(sc.name, profile, { ...sc, query: qs(`?run=${i}`, sc.delay) });
           process.stdout.write('.');
         }
       } else if (sc.kind === 'restore') {
         // Leave the page open at shutdown with "Continue where you left off" on,
         // so every following start restores it.
         editPreferences(profile, (p) => { p.session = { ...(p.session ?? {}), restore_on_startup: 1 }; });
-        await coldRun('(restore setup)', profile, { ...sc, query: '?restore=1' });
+        const query = qs('?restore=1', sc.delay);
+        await coldRun('(restore setup)', profile, { ...sc, query });
         runs.pop();
         for (let i = 0; i < RUNS; i++) {
-          await coldRun(sc.name, profile, { ...sc, restore: true, query: '?restore=1' });
+          await coldRun(sc.name, profile, { ...sc, restore: true, query });
           process.stdout.write('.');
         }
         editPreferences(profile, (p) => { p.session = { ...(p.session ?? {}), restore_on_startup: 5 }; });
@@ -378,6 +390,7 @@ for (const sc of SCENARIOS) {
     '1st request header ok': `${headerOk}/${rs.length}`,
     '1st page scripts ok': `${scriptsOk}/${rs.length}`,
     reloaded: `${reloaded}/${rs.length}`,
+    'server requests': range(rs.map((r) => r.documentRequests)),
     'to 1st request ms': range(rs.map((r) => r.toFirstRequest)),
     'to loaded ms': range(rs.map((r) => r.toLoaded)),
     'fetch→request ms': range(rs.map((r) => r.fetchToRequest)),
@@ -389,7 +402,8 @@ console.log('');
 console.table(table);
 console.log(`Times are median (min–max). "to …" counts from browser start (cold) or tab creation (warm);
 "fetch→request" is fetchStart→requestStart of the final document: connection setup plus any time the extension holds the request;
-"load" is that document's loadEventEnd.`);
+"load" is that document's loadEventEnd. "reloaded": the page's scripts ran more than once (a visible second load);
+"server requests" can be 2 without a reload when a load in flight was restarted before it rendered.`);
 
 for (const r of runs.filter((x) => x.error || x.finalOk === false)) {
   console.log(`\n  ${r.scenario}: ${r.error ?? `first request ${r.firstRequestHeader}, first JS ${r.firstLoadLanguage}; final ${r.finalLanguage}/${r.finalIntl}, header ${r.finalHeader}, ${r.documentRequests} document request(s)`}`);
@@ -400,6 +414,6 @@ for (const r of runs.filter((x) => x.error || x.finalOk === false)) {
 const outDir = path.join(root, 'e2e', 'artifacts');
 fs.mkdirSync(outDir, { recursive: true });
 const out = path.join(outDir, 'launch-perf.json');
-fs.writeFileSync(out, JSON.stringify({ product, headless, runsPerScenario: RUNS, warmRunsPerScenario: WARM_RUNS, at: new Date().toISOString(), summary: table, runs }, null, 2));
+fs.writeFileSync(out, JSON.stringify({ product, headless, runsPerScenario: RUNS, warmRunsPerScenario: WARM_RUNS, slowMs: SLOW_MS, at: new Date().toISOString(), summary: table, runs }, null, 2));
 console.log(`\nRaw results: ${path.relative(root, out)}`);
 process.exit(failures ? 1 : 0);

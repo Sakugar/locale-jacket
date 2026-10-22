@@ -330,6 +330,42 @@ try {
     await closeTab(ntpTab);
   });
 
+  await test('slow site in a new tab: the load in flight is restarted, so the page renders once with en-US', async () => {
+    srv.clearLog();
+    const tab = await openTab(u('google.localhost', '/launch.html?slow-tab=1&delay=400'));
+    const r = await report(tab, { settle: 1200 });
+    expectLocale(r, 'en-US', 'slow new tab');
+    if (r.loads.length !== 1) throw new Error(`page scripts ran ${r.loads.length} times: ${JSON.stringify(r.loads)}`);
+    const docs = srv.log.filter((l) => l.search.includes('slow-tab=1'));
+    if (docs.some((l) => l.acceptLanguage !== HEADER['en-US'])) throw new Error(`document requests: ${JSON.stringify(docs.map((l) => l.acceptLanguage))}`);
+    console.log(`      (document requests: ${docs.length})`);
+  });
+
+  await test('a form POST into a new tab is never restarted or sent twice', async () => {
+    const opener = await openTab(u('google.localhost', '/plain.html?post-opener=1'));
+    await report(opener);
+    srv.clearLog();
+    const action = u('apple.localhost', '/plain.html?post-target=1&delay=400');
+    await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const f = Object.assign(document.createElement('form'), { method: 'POST', action: ${JSON.stringify(action)}, target: '_blank' });
+        f.appendChild(Object.assign(document.createElement('input'), { name: 'q', value: '1' }));
+        document.body.appendChild(f);
+        f.submit();
+      })()`,
+      userGesture: true,
+    }, opener.s);
+    try {
+      await until(() => srv.log.some((l) => l.search.includes('post-target=1')), { message: 'POST request' });
+      await sleep(2500);
+      const hits = srv.log.filter((l) => l.search.includes('post-target=1'));
+      if (hits.length !== 1 || hits[0].method !== 'POST') throw new Error(`requests: ${JSON.stringify(hits.map((h) => h.method))}`);
+    } finally {
+      const { targetInfos } = await cdp.send('Target.getTargets');
+      for (const t of targetInfos.filter((x) => x.url.includes('post-target=1'))) await cdp.send('Target.closeTarget', { targetId: t.targetId }).catch(() => undefined);
+    }
+  });
+
   await test('per-frame mode: a cross-site iframe gets its own rule (fr-FR) inside an en-US page', async () => {
     const s = settingsFrom(CONFIG.replace('default:', '  - DOMAIN-SUFFIX,xsite-frame.localhost,fr-FR\ndefault:'), { options: { frameMode: 'per-frame' } });
     await setSettings(s);
