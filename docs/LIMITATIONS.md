@@ -18,10 +18,22 @@ Everything below was observed in Chrome 155 / Edge 155 on Windows 11 (see `resea
 - **First navigation from the New Tab Page** (or any restricted page). Chrome allows attaching only once the new page has committed, so its first scripts see the real locale.
   - The document's `Accept-Language` is still correct, through declarativeNetRequest.
   - With *Reload once if the profile arrived late* on (the default), the page is reloaded once.
-  - Tabs opened directly with a URL (Ctrl+click, `window.open`) can hit the same race and are handled the same way.
-- **Browser startup and session restore.** The startup page and the restored active tab begin loading while the extension's service worker is still starting, so the first document goes out before a debugger can attach.
-  - With *Reload once if the profile arrived late* on, a spoofed page whose document began less than 10 seconds before the extension attached is reloaded once. Pages opened earlier are only flagged *Reload needed*.
-  - Measured with `npm run e2e:launch` (Chromium 153, headless, local server): the extension attached about 200 ms after the first request. The corrected document followed about 220 ms after the first one, in 5 of 5 runs for both startup pages and restored tabs.
+- **Loads that start before the debugger can attach.** These pages start loading before the extension can attach (at browser start, before its service worker is even running):
+  - new tabs opened with a URL (Ctrl+click, `window.open`, `target="_blank"` links)
+  - the browser's startup page
+  - the restored active tab
+
+  How the extension catches up depends on whether the page is still loading:
+  - **Still loading when it attaches** (the usual case for real sites): it stops the load, applies the profile, and loads the page again through the gate. The page renders once, already spoofed; the server sees the request twice. This is done only for loads known to be GET (seen by `webRequest`), or, with the method unknown, the browser's own loads within 10 s of it or the extension starting. A form POST is never restarted.
+  - **Already loaded** (very fast servers): its first scripts saw the real locale. A page that began less than 10 seconds before the extension attached is reloaded once; older pages are only flagged *Reload needed*.
+  - Both belong to *Reload once if the profile arrived late* (on by default) and happen at most once per URL.
+  - Measured with `npm run e2e:launch` (Chromium 153, headless, local server answering in 300 ms), the page rendered once, already spoofed, in:
+    - 10 of 10 new tabs in a running browser (about 70 ms slower than with no extension)
+    - 5 of 5 tabs that had to wake the stopped service worker
+    - 5 of 5 restored tabs
+    - 4 of 5 startup pages; the fifth was reloaded once (about 450 ms slower than with no extension, because the server is asked twice)
+
+    With the server answering in about 2 ms, the page has usually loaded before the extension attaches and is reloaded once instead. Every final page was correct in every run.
   - The test can only load the extension with `--load-extension`, which installs it afresh on every start. An installed extension also has its header rules and event listeners already registered at startup, so the first request's `Accept-Language` is expected to be right there; this was not measured.
 - **POST navigations** (form submissions) that change the profile cannot be aborted and re-issued without losing the body. They continue and are flagged *Reload needed*; they are never auto-reloaded.
 - **Navigations the gate cannot see.** The extension re-aligns these when they are shown and flags them if their scripts started with other values:

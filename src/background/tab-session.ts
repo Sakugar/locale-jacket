@@ -23,6 +23,7 @@ import {
   withTimeout,
   isAlreadyAttachedError,
   isAttachableUrl,
+  isCommandCutOff,
   isDetachedError,
   isRestrictedError,
   type DebuggerPort,
@@ -51,6 +52,13 @@ export interface TabContext {
   native(): { locale: string; languages: string[] };
   /** Resolve a hostname with the current rules, datasets and known server address. */
   resolve(host: string | null): Resolution;
+  /**
+   * The tab's top-level navigation that has not committed yet, if any, with its HTTP
+   * method when that request was observed (undefined = unknown).
+   */
+  pendingNavigation?(tabId: number): Promise<{ url: string; method?: string } | null>;
+  /** The browser or the extension started moments ago (startup pages, restored tabs). */
+  justStarted?(): boolean;
 }
 
 export interface CommitDetails {
@@ -414,6 +422,72 @@ export class TabSession {
   }
 
   /**
+   * The debugger attached while the tab's navigation was already in flight: its request
+   * went out before the gate existed, and overrides sent now would reach the renderer
+   * only after the new document's scripts start. Stop it, apply the profile while no
+   * navigation is pending, and load the page again through the gate, so it renders once,
+   * already spoofed, instead of loading and then reloading.
+   *
+   * Only for loads that can safely be repeated: a GET seen by webRequest, or (method
+   * unknown) the browser's own loads right after it or the extension started. Once per
+   * URL, like the automatic reload, and under the same option. Returns whether it did.
+   */
+  private async restartPendingNavigation(): Promise<boolean> {
+    if (this.state !== 'attached' || !this.settings().options.reloadOnLate || !this.ctx.pendingNavigation) return false;
+    const pending = await this.ctx.pendingNavigation(this.tabId).catch(() => null);
+    if (!pending || this.state !== 'attached') return false;
+    const url = pending.url;
+    // The gate already holds this request and re-issues it itself.
+    if (this.pendingGateUrl === stripHash(url)) return false;
+    const res = this.resolveUrl(url);
+    if (res.action !== 'PROFILE') return false;
+    const repeatable = pending.method ? pending.method.toUpperCase() === 'GET' : this.ctx.justStarted?.() === true;
+    if (!repeatable) return false;
+    const now = this.ctx.now();
+    this.autoReloads = this.autoReloads.filter((r) => now - r.at < AUTO_RELOAD_COOLDOWN_MS);
+    if (this.autoReloads.some((r) => r.url === url) || this.autoReloads.length >= AUTO_RELOAD_MAX_PER_WINDOW) return false;
+    this.autoReloads.push({ url, at: now });
+    this.reissue = { url, at: now }; // the stopped navigation reports an error; ignore it
+    this.url = url;
+    this.resolution = res;
+    const t = { tabId: this.tabId };
+    this.log('info', 'Page load began before the debugger attached; restarting it with the locale profile.');
+    // If this does not work out, the commit handles the page like any late one (reload
+    // once), so it must not count as this URL's one automatic reload.
+    const giveBack = () => {
+      this.autoReloads = this.autoReloads.filter((r) => r.url !== url);
+      this.reissue = null;
+    };
+    try {
+      // Both are handled by the browser, so they work while the navigation is pending.
+      await this.ctx.port.send(t, 'Page.stopLoading');
+    } catch (e) {
+      giveBack();
+      if (isDetachedError(e) && !isCommandCutOff(e)) {
+        this.log('debug', `Page.stopLoading: ${errorMessage(e)}`);
+        this.lostSession('restart');
+      } else {
+        this.log('warn', `Could not restart the page load: ${errorMessage(e)}`);
+      }
+      return false;
+    }
+    // The old load may have been committing into another renderer process already; the
+    // profile commands then fail or reset the session state. Load the page anyway (it
+    // was stopped), and let the commit reload it if it still started unspoofed.
+    await withTimeout(this.applyMain(res, true), REISSUE_APPLY_TIMEOUT_MS, () => new Error('profile commands timed out')).catch((e) =>
+      this.log('warn', `Restarting without confirmation: ${errorMessage(e)}`),
+    );
+    if (this.state !== 'attached' || this.appliedKey !== profileKey(res.profile)) giveBack();
+    // If the old load committed in the meantime, Chrome turns a navigation to the same
+    // URL into a replacement, so no extra history entry is added either way.
+    await this.ctx.port.send(t, 'Page.navigate', { url, transitionType: 'link' }).catch((e) => {
+      giveBack();
+      this.log('warn', `Could not restart the page load: ${errorMessage(e)}`);
+    });
+    return true;
+  }
+
+  /**
    * An already-open page that started loading moments ago (the browser's startup page,
    * the restored active tab) began before this worker could attach, so its scripts saw
    * the real locale. Treat it like a late fresh navigation: reload once. Pages opened
@@ -461,8 +535,11 @@ export class TabSession {
       const res = existingDocument ? this.resolution : this.resolveUrl(url);
       if (this.state !== 'attached' && this.needsSession(res)) {
         // For a tab that is still loading, attaching is enough: the gate applies the
-        // profile to its navigation. Applying now would race with that navigation.
-        if ((await this.ensureAttached(url)) && existingDocument) {
+        // profile to its navigation (or, if its request already went out, the load is
+        // restarted through the gate). Applying now would race with that navigation.
+        const attached = await this.ensureAttached(url);
+        const restarted = attached && (await this.restartPendingNavigation());
+        if (attached && !restarted && existingDocument) {
           await this.applyMain(res, true);
           if (res.action === 'PROFILE') {
             this.markLate(t('bg.late.alreadyOpen'), null);
@@ -481,7 +558,7 @@ export class TabSession {
       // Attach only. Sending overrides now would reach the renderer after the next
       // document starts and would mark the profile as applied, defeating the gate.
       const res = this.resolveUrl(url);
-      if (this.state !== 'attached' && this.needsSession(res)) await this.ensureAttached(url);
+      if (this.state !== 'attached' && this.needsSession(res) && (await this.ensureAttached(url))) await this.restartPendingNavigation();
       this.ctx.changed(this.tabId);
     });
   }

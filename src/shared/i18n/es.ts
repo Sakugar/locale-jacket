@@ -331,7 +331,7 @@ export const es: Record<MessageKey, string> = {
   'opt.about.privacyTitle': 'Privacidad',
   'opt.about.p1': 'Todo se ejecuta localmente. No hay servidor, cuenta, telemetría ni analíticas. La extensión no hace solicitudes de red propias, salvo las descargas de conjuntos de datos que inicies en Conjuntos de datos y las actualizaciones automáticas que puedes activar allí, desde la URL que se muestra.',
   'opt.about.p2': 'Las reglas, los ajustes y los conjuntos de datos se guardan en el almacenamiento de extensiones de este navegador. El registro de actividad y las direcciones de servidor solo están en memoria.',
-  'opt.about.p3': 'Permisos: debugger (la propia emulación), webNavigation y acceso a sitios (para saber en qué sitio está una pestaña), declarativeNetRequestWithHostAccess (Accept-Language de la primera solicitud), webRequest (direcciones de servidor para reglas IP, solo observación), alarms (comprobación programada de actualizaciones de conjuntos de datos, solo si está activada), storage.',
+  'opt.about.p3': 'Permisos: debugger (la propia emulación), webNavigation y acceso a sitios (para saber en qué sitio está una pestaña), declarativeNetRequestWithHostAccess (Accept-Language de la primera solicitud), webRequest (direcciones de servidor para reglas IP y si una carga de página puede reiniciarse sin riesgo; solo observación), alarms (comprobación programada de actualizaciones de conjuntos de datos, solo si está activada), storage.',
   // background and checks
   'bg.late.alreadyOpen': 'Esta página ya estaba abierta cuando se aplicó el perfil; recárgala.',
   'bg.late.attachedLate': 'Chrome solo permitió depurar después de que esta página empezara a cargarse.',

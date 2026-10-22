@@ -331,7 +331,7 @@ export const ko: Record<MessageKey, string> = {
   'opt.about.privacyTitle': '개인정보',
   'opt.about.p1': '모든 작업은 로컬에서 실행됩니다. 서버, 계정, 원격 분석, 통계가 없습니다. 데이터 세트 페이지에서 직접 시작한 다운로드와 그곳에서 켤 수 있는 자동 업데이트(모두 표시된 URL에서)를 제외하면 확장 프로그램은 자체적으로 네트워크 요청을 보내지 않습니다.',
   'opt.about.p2': '규칙, 설정, 데이터 세트는 이 브라우저의 확장 프로그램 저장소에 보관됩니다. 활동 로그와 서버 주소는 메모리에만 있습니다.',
-  'opt.about.p3': '권한: debugger(에뮬레이션 자체), webNavigation 및 호스트 액세스(탭이 어느 사이트에 있는지 확인), declarativeNetRequestWithHostAccess(첫 요청의 Accept-Language), webRequest(IP 규칙용 서버 주소, 관찰만), alarms(데이터 세트 업데이트 정기 확인, 켠 경우에만), storage.',
+  'opt.about.p3': '권한: debugger(에뮬레이션 자체), webNavigation 및 호스트 액세스(탭이 어느 사이트에 있는지 확인), declarativeNetRequestWithHostAccess(첫 요청의 Accept-Language), webRequest(IP 규칙용 서버 주소와 페이지 로드를 안전하게 다시 시작할 수 있는지 여부, 관찰만), alarms(데이터 세트 업데이트 정기 확인, 켠 경우에만), storage.',
   // background and checks
   'bg.late.alreadyOpen': '프로필을 적용할 때 이 페이지가 이미 열려 있었습니다. 새로고침하세요.',
   'bg.late.attachedLate': 'Chrome은 이 페이지가 로드를 시작한 후에만 디버깅을 허용했습니다.',

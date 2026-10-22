@@ -66,6 +66,22 @@ The gate and child-target setup are synchronous and never await (fact 2). Attach
 
 At each main-frame commit the extension reads `globalThis.__ljProbe` from an isolated world. It is written by `Page.addScriptToEvaluateOnNewDocument` at document start and is invisible to the page. If it is missing (the document predates the session) or disagrees with the expected profile (or with the browser's native values for SYSTEM sites), the tab is flagged *late*. Fresh, deliberate navigations (typed, link or bookmark, younger than 10 s, at most once per 30 s, never POST or back/forward) are reloaded once. The reload passes through the gate.
 
+## Loads already in flight when the debugger attaches
+
+A tab can start loading before the session exists: new tabs opened with a URL, and at browser start the startup page and the restored tab, which load before the service worker runs. The gate cannot pause a request that is already on the network. If, right after attaching, `chrome.tabs` still reports a `pendingUrl` (nothing committed yet), the session restarts the load instead of waiting to reload it:
+
+1. `Page.stopLoading`
+2. apply the profile, with no navigation pending
+3. `Page.navigate` to the same URL, through the gate
+
+`Page.stopLoading` and `Page.navigate` are handled in the browser, so they work while a navigation is pending. If the old load commits in between, Chrome turns the same-URL navigation into a replacement, so history is unchanged either way.
+
+Only repeatable loads are restarted:
+- a GET seen by a `webRequest.onBeforeRequest` observer (top-level requests only; tab id, URL and method, kept in memory);
+- or, when the method is unknown, the browser's own loads within 10 s of `runtime.onStartup` / `onInstalled`.
+
+At start-up the worker reconciles tabs as soon as the settings are loaded, before syncing DNR rules, the badge and alarms, so the attach happens as early as possible.
+
 ## Lifecycle and failure handling
 
 | Event | Behaviour |

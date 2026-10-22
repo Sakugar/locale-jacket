@@ -113,7 +113,7 @@ IP 규칙은 Chrome이 실제로 연결한 서버 주소를 사용하며, 확장
 
 모든 작업은 로컬에서 실행됩니다. "데이터 세트"에서 직접 시작한 다운로드와 사용자가 켠 자동 업데이트(모두 표시된 URL에서)를 제외하면 확장 프로그램은 네트워크 요청을 보내지 않습니다. 규칙은 `chrome.storage.local`에 저장되고, 활동 로그는 메모리에만 있으며 호스트 이름만 포함합니다.
 
-권한: `debugger`(에뮬레이션 자체), `webNavigation` 및 호스트 액세스, `declarativeNetRequestWithHostAccess`(첫 요청의 Accept-Language), `webRequest`(IP 규칙용 서버 주소, 관찰만), `alarms`(데이터 세트 업데이트 정기 확인, 켠 경우에만), `storage`.
+권한: `debugger`(에뮬레이션 자체), `webNavigation` 및 호스트 액세스, `declarativeNetRequestWithHostAccess`(첫 요청의 Accept-Language), `webRequest`(IP 규칙용 서버 주소와 페이지 로드를 안전하게 다시 시작할 수 있는지 여부, 관찰만), `alarms`(데이터 세트 업데이트 정기 확인, 켠 경우에만), `storage`.
 
 ## 제한 사항
 

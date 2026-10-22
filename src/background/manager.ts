@@ -22,6 +22,9 @@ export interface ManagerDeps {
   native?: () => { locale: string; languages: string[] };
   /** Datasets and server address for a host (IP/GEO rules); omitted in tests. */
   matchContext?: (host: string) => MatchContext;
+  /** See TabContext.pendingNavigation / justStarted. */
+  pendingNavigation?: TabContext['pendingNavigation'];
+  justStarted?: TabContext['justStarted'];
 }
 
 export function spoofingPossible(s: Settings): boolean {
@@ -53,6 +56,8 @@ export class SessionManager {
       now: this.now,
       resolve: (host) => resolveHost(host, this.settings, host && deps.matchContext ? deps.matchContext(host) : {}),
       native: deps.native ?? (() => ({ locale: Intl.DateTimeFormat().resolvedOptions().locale, languages: [...navigator.languages] })),
+      pendingNavigation: deps.pendingNavigation,
+      justStarted: deps.justStarted,
     };
   }
 

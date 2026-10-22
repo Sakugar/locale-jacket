@@ -113,7 +113,7 @@ IP ルールは Chrome が実際に接続したサーバーのアドレスを使
 
 すべてローカルで動作します。「データセット」で自分で開始したダウンロードと、オンにした自動更新（いずれも表示された URL から）を除き、拡張機能がネットワークリクエストを行うことはありません。ルールは `chrome.storage.local` に保存され、アクティビティログはメモリ内のみでホスト名だけを含みます。
 
-権限: `debugger`（エミュレーション本体）、`webNavigation` とホストへのアクセス、`declarativeNetRequestWithHostAccess`（最初のリクエストの Accept-Language）、`webRequest`（IP ルール用のサーバーアドレス、監視のみ）、`alarms`（データセット更新の定期確認、オンにした場合のみ）、`storage`。
+権限: `debugger`（エミュレーション本体）、`webNavigation` とホストへのアクセス、`declarativeNetRequestWithHostAccess`（最初のリクエストの Accept-Language）、`webRequest`（IP ルール用のサーバーアドレスと、ページ読み込みを安全にやり直せるかの判定、監視のみ）、`alarms`（データセット更新の定期確認、オンにした場合のみ）、`storage`。
 
 ## 制限事項
 

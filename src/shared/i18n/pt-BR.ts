@@ -331,7 +331,7 @@ export const ptBR: Record<MessageKey, string> = {
   'opt.about.privacyTitle': 'Privacidade',
   'opt.about.p1': 'Tudo roda localmente. Não há servidor, conta, telemetria nem análises. A extensão não faz solicitações de rede próprias, exceto os downloads de conjuntos de dados que você inicia em Conjuntos de dados e as atualizações automáticas que você pode ativar lá, a partir da URL mostrada.',
   'opt.about.p2': 'Regras, configurações e conjuntos de dados ficam no armazenamento de extensões deste navegador. O registro de atividades e os endereços de servidor ficam apenas na memória.',
-  'opt.about.p3': 'Permissões: debugger (a própria emulação), webNavigation e acesso a sites (para saber em qual site uma guia está), declarativeNetRequestWithHostAccess (Accept-Language da primeira solicitação), webRequest (endereços de servidor para regras de IP, apenas observação), alarms (verificação programada de atualizações dos conjuntos de dados, apenas se ativada), storage.',
+  'opt.about.p3': 'Permissões: debugger (a própria emulação), webNavigation e acesso a sites (para saber em qual site uma guia está), declarativeNetRequestWithHostAccess (Accept-Language da primeira solicitação), webRequest (endereços de servidor para regras de IP e se um carregamento de página pode ser reiniciado com segurança; apenas observação), alarms (verificação programada de atualizações dos conjuntos de dados, apenas se ativada), storage.',
   // background and checks
   'bg.late.alreadyOpen': 'Esta página já estava aberta quando o perfil foi aplicado; recarregue-a.',
   'bg.late.attachedLate': 'O Chrome só permitiu a depuração depois que esta página começou a carregar.',

@@ -331,7 +331,7 @@ export const zhTW: Record<MessageKey, string> = {
   'opt.about.privacyTitle': '隱私',
   'opt.about.p1': '一切都在本機執行：沒有伺服器、帳戶、遙測或分析。除了你在「資料集」頁面主動發起的下載，以及你在那裡開啟的自動更新（皆從所示網址取得）外，擴充功能不會自行發出任何網路請求。',
   'opt.about.p2': '規則、設定與資料集儲存在此瀏覽器的擴充功能儲存空間中；活動記錄與伺服器位址僅保存在記憶體中。',
-  'opt.about.p3': '權限：debugger（模擬功能本身）、webNavigation 與網站存取權（用於得知分頁所在的網站）、declarativeNetRequestWithHostAccess（第一個請求的 Accept-Language）、webRequest（IP 規則所需的伺服器位址，僅觀察）、alarms（定期檢查資料集更新，僅在開啟時）、storage。',
+  'opt.about.p3': '權限：debugger（模擬功能本身）、webNavigation 與網站存取權（用於得知分頁所在的網站）、declarativeNetRequestWithHostAccess（第一個請求的 Accept-Language）、webRequest（IP 規則所需的伺服器位址，以及判斷頁面載入能否安全重新開始，僅觀察）、alarms（定期檢查資料集更新，僅在開啟時）、storage。',
   // background and checks
   'bg.late.alreadyOpen': '套用語言設定檔時此頁面已開啟，請重新載入。',
   'bg.late.attachedLate': 'Chrome 只允許在此頁面開始載入後才進行偵錯。',

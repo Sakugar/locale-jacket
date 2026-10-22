@@ -231,7 +231,7 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 These are documented in the extension (*Options ▸ Limitations & privacy*) and in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 - **Restricted pages** are never spoofed: `chrome://`, `edge://`, the New Tab Page, the Chrome Web Store / Edge Add-ons, and anything blocked by policy.
-- **Pages that start before debugging is possible.** The first page opened from the New Tab Page starts loading before Chrome allows debugging. Its HTTP header is still correct (DNR), and the page is reloaded once so its scripts see the profile. The browser's startup page and a restored tab start before the extension does, and are reloaded once the same way.
+- **Pages that start before debugging is possible.** The first page opened from the New Tab Page starts loading before Chrome allows debugging. Its HTTP header is still correct (DNR), and the page is reloaded once so its scripts see the profile. New tabs opened with a URL, the browser's startup page and a restored tab can also start loading before the extension attaches. If they are still loading, the load is restarted with the profile so the page renders once; if they already loaded, they are reloaded once. Form submissions are never repeated.
 - **POST navigations** that change profile cannot be re-issued; they are flagged *Reload needed*.
 - **The `Intl` locale is per renderer process.** Two tabs of one site, or one cross-site iframe embedded in two tabs with different profiles, can share a process, and then only one locale can win. Such conflicts are reported as *Partial*, never hidden. While a tab is spoofed, DevTools ▸ Sensors ▸ Locale cannot override it, and vice versa.
 - **Service workers and shared workers** are not overridden.
@@ -248,7 +248,7 @@ Everything runs locally. There is no server, account, telemetry or analytics. Th
 | `declarativeNetRequestWithHostAccess` + `http://*/*`, `https://*/*` | Correct `Accept-Language` on the first document request; host access also lets the popup see the current tab's hostname |
 | `storage` | Save your rules |
 | `alarms` | Hourly check whether a scheduled data-set update is due (only while a regular interval is chosen) |
-| `webRequest` | Read the server address of page loads, for IP rules (observe only; registered only while IP rules exist) |
+| `webRequest` | Observe only, kept in memory. The server address of page loads, for IP rules (registered only while IP rules exist). The method of top-level page loads (GET or not), so a load that started before the debugger attached is restarted only if repeating it is safe. |
 
 ## Development
 

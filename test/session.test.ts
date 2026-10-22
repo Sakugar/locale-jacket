@@ -156,6 +156,67 @@ describe('TabSession lifecycle', () => {
     assert.deepEqual(ctx.reloads, [1], 'fresh typed navigation is reloaded once');
   });
 
+  it('restarts a GET load that was already in flight when the debugger attached, instead of reloading after it', async () => {
+    const ctx = makeCtx(port, settings);
+    ctx.pendingNavigation = async () => ({ url: GOOGLE, method: 'GET' });
+    const t = new TabSession(1, ctx);
+    await t.onBeforeNavigate(GOOGLE);
+    const m = port.methods();
+    assert.ok(m.indexOf('Fetch.enable') < m.indexOf('Page.stopLoading'), 'gate first');
+    assert.ok(m.indexOf('Page.stopLoading') < m.indexOf('Emulation.setLocaleOverride'), 'nothing pending when the profile is sent');
+    assert.ok(m.indexOf('Emulation.setLocaleOverride') < m.indexOf('Page.navigate'));
+    assert.deepEqual(port.last('Page.navigate')?.params, { url: GOOGLE, transitionType: 'link' });
+
+    // The new request passes the gate unchanged; the stopped load's error is ignored.
+    port.clear();
+    const again = paused(GOOGLE, 'MAIN', { 'Accept-Language': 'zh-CN,zh;q=0.9' });
+    t.onRequestPaused(again);
+    assert.deepEqual(port.last('Fetch.continueRequest')?.params, { requestId: again.requestId, headers: [{ name: 'Accept-Language', value: 'en-US,en;q=0.9' }] });
+    await t.onNavigationError();
+    port.probe = snapshot('en-US');
+    await t.onCommitted({ url: GOOGLE, transitionType: 'link', timeStamp: ctx.now() });
+    assert.deepEqual(port.emulation(), []);
+    assert.ok(!port.methods().includes('Page.navigate'));
+    assert.equal(t.status().late, false);
+    assert.deepEqual(ctx.reloads, []);
+  });
+
+  it('if the old load was already committing (profile commands cut off), the commit still reloads it once', async () => {
+    const ctx = makeCtx(port, settings);
+    ctx.pendingNavigation = async () => ({ url: GOOGLE, method: 'GET' });
+    port.failures.set('Emulation.setLocaleOverride', 'Detached while handling command.');
+    const t = new TabSession(1, ctx);
+    await t.onBeforeNavigate(GOOGLE);
+    await flush();
+    assert.ok(port.methods().includes('Page.navigate'), 'the stopped page is loaded anyway');
+    port.failures.clear();
+    await t.onCommitted({ url: GOOGLE, transitionType: 'link', timeStamp: ctx.now() });
+    await flush();
+    assert.equal(t.status().session, 'attached');
+    assert.deepEqual(ctx.reloads, [1], 'falls back to the one automatic reload');
+  });
+
+  it('never restarts a POST or a load of unknown method, except the browser’s own loads at startup', async () => {
+    for (const [method, justStarted, expected] of [['POST', true, false], [undefined, false, false], [undefined, true, true]] as const) {
+      const p = new FakePort();
+      const ctx = makeCtx(p, settings);
+      ctx.pendingNavigation = async () => ({ url: GOOGLE, method });
+      ctx.justStarted = () => justStarted;
+      await new TabSession(1, ctx).onTabSeen(GOOGLE, true);
+      assert.equal(p.methods().includes('Page.stopLoading'), expected, `${method} / justStarted=${justStarted}`);
+    }
+  });
+
+  it('does not restart SYSTEM loads, or anything with automatic reloads turned off', async () => {
+    const off = makeCtx(port, { ...settings, options: { ...settings.options, reloadOnLate: false } });
+    off.pendingNavigation = async () => ({ url: GOOGLE, method: 'GET' });
+    await new TabSession(1, off).onBeforeNavigate(GOOGLE);
+    const system = makeCtx(port, settings);
+    system.pendingNavigation = async () => ({ url: ACCOUNTS, method: 'GET' });
+    await new TabSession(2, system).onTabSeen(GOOGLE, false);
+    assert.ok(!port.methods().includes('Page.stopLoading'));
+  });
+
   it('does not attach for SYSTEM sites', async () => {
     const t = new TabSession(1, makeCtx(port, settings));
     await t.onCommitted({ url: EXAMPLE });

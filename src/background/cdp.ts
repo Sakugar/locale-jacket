@@ -86,6 +86,11 @@ export function isDetachedError(e: unknown): boolean {
   );
 }
 
+/** A command cut off by a renderer swap; the session itself is still attached. */
+export function isCommandCutOff(e: unknown): boolean {
+  return /Detached while handling command/i.test(errorMessage(e));
+}
+
 export function isAlreadyAttachedError(e: unknown): boolean {
   return /Another debugger is already attached/i.test(errorMessage(e));
 }

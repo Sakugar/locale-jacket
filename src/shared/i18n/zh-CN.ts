@@ -331,7 +331,7 @@ export const zhCN: Record<MessageKey, string> = {
   'opt.about.privacyTitle': '隐私',
   'opt.about.p1': '所有处理都在本地完成：没有服务器、账号、遥测或统计。除了你在“数据集”页面主动发起的下载以及你在那里开启的自动更新（均从所示地址获取）外，扩展不会自行发起任何网络请求。',
   'opt.about.p2': '规则、设置和数据集保存在本浏览器的扩展存储中；活动日志和服务器地址仅保存在内存中。',
-  'opt.about.p3': '权限：debugger（模拟功能本身）、webNavigation 与网站访问权限（用于识别标签页所在的网站）、declarativeNetRequestWithHostAccess（首个请求的 Accept-Language）、webRequest（IP 规则所需的服务器地址，仅观察）、alarms（定时检查数据集更新，仅在开启时）、storage。',
+  'opt.about.p3': '权限：debugger（模拟功能本身）、webNavigation 与网站访问权限（用于识别标签页所在的网站）、declarativeNetRequestWithHostAccess（首个请求的 Accept-Language）、webRequest（IP 规则所需的服务器地址，以及判断页面加载能否安全重新开始，仅观察）、alarms（定时检查数据集更新，仅在开启时）、storage。',
   // background and checks
   'bg.late.alreadyOpen': '应用语言配置时此页面已经打开，请重新加载。',
   'bg.late.attachedLate': 'Chrome 只允许在此页面开始加载后才进行调试。',

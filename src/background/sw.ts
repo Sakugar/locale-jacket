@@ -176,6 +176,28 @@ function syncIpWatcher(settings: Settings): void {
   watchingIps = want;
 }
 
+// ------------------------------------------------------ pending navigations
+
+/**
+ * Method of each tab's latest top-level request (memory only), so a load that was
+ * already in flight when the debugger attached is restarted only if repeating it is
+ * safe. Top-level navigations wake the worker through webNavigation anyway, so this
+ * listener adds no wake-ups.
+ */
+const topLevelRequests = new Map<number, { url: string; method: string }>();
+chrome.webRequest.onBeforeRequest.addListener(
+  (d) => {
+    if (d.tabId < 0) return;
+    topLevelRequests.set(d.tabId, { url: d.url, method: d.method });
+    if (topLevelRequests.size > 500) topLevelRequests.delete(topLevelRequests.keys().next().value!);
+  },
+  { urls: ['http://*/*', 'https://*/*'], types: ['main_frame'] },
+);
+
+/** When the browser or this extension last started; loads in flight right after are the browser's own. */
+const JUST_STARTED_MS = 10_000;
+let startedAt: number | null = null;
+
 /** Re-read the data sets after they were downloaded, replaced or deleted. */
 async function reloadDatasets(m: SessionManager): Promise<void> {
   datasets.reset();
@@ -235,25 +257,41 @@ const ready: Promise<SessionManager> = (async () => {
         return null;
       }
     },
-    listTabs: async () => (await chrome.tabs.query({})).filter((t) => t.id !== undefined).map((t) => ({ id: t.id!, url: t.url ?? t.pendingUrl ?? null })),
+    // A tab still navigating reports where it is going in pendingUrl.
+    listTabs: async () => (await chrome.tabs.query({})).filter((t) => t.id !== undefined).map((t) => ({ id: t.id!, url: t.pendingUrl || t.url || null })),
+    pendingNavigation: async (tabId) => {
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (!tab?.pendingUrl) return null;
+      const seen = topLevelRequests.get(tabId);
+      return { url: tab.pendingUrl, method: seen && seen.url === tab.pendingUrl ? seen.method : undefined };
+    },
+    justStarted: () => startedAt !== null && Date.now() - startedAt < JUST_STARTED_MS,
     onStatus: updateBadge,
-    onTabGone: () => undefined,
+    onTabGone: (tabId) => topLevelRequests.delete(tabId),
     log,
   });
-  await syncDnr(settings, suspended);
-  await refreshGlobalBadge();
-  await syncUpdateAlarm(settings).catch((e) => log({ t: Date.now(), level: 'warn', tabId: null, msg: `Update alarm: ${errorMessage(e)}` }));
+  // Tabs first: at browser start the startup page is already loading, and every
+  // millisecond before the debugger attaches is one its scripts may run unspoofed.
   void manager.reconcileAll();
-  info(`Service worker ready (${settings.rules.length} rules, ${settings.enabled ? 'enabled' : 'disabled'}${suspended ? ', paused' : ''}).`);
   return manager;
 })();
 
-ready.catch((e) => log({ t: Date.now(), level: 'error', tabId: null, msg: `Initialization failed: ${errorMessage(e)}` }));
+/** The rest of start-up; event handlers do not wait for it. */
+const initialized: Promise<SessionManager> = ready.then(async (m) => {
+  const settings = m.currentSettings;
+  await syncDnr(settings, m.isSuspended);
+  await refreshGlobalBadge();
+  await syncUpdateAlarm(settings).catch((e) => log({ t: Date.now(), level: 'warn', tabId: null, msg: `Update alarm: ${errorMessage(e)}` }));
+  info(`Service worker ready (${settings.rules.length} rules, ${settings.enabled ? 'enabled' : 'disabled'}${m.isSuspended ? ', paused' : ''}).`);
+  return m;
+});
+
+initialized.catch((e) => log({ t: Date.now(), level: 'error', tabId: null, msg: `Initialization failed: ${errorMessage(e)}` }));
 
 // Diagnostics handle, reachable only from this worker's own DevTools console
 // (chrome://extensions → "service worker"). Used by the e2e suite.
 (globalThis as unknown as { localeJacket: unknown }).localeJacket = {
-  ready: () => ready.then(() => true),
+  ready: () => initialized.then(() => true),
   status: (tabId: number) => manager?.status(tabId) ?? null,
   statuses: () => manager?.statuses() ?? [],
   global: () => (manager ? globalStatus(manager) : null),
@@ -333,8 +371,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   });
 });
 
-chrome.runtime.onInstalled.addListener((d) => info(`Installed (${d.reason}${d.previousVersion ? ` from ${d.previousVersion}` : ''}).`));
+chrome.runtime.onInstalled.addListener((d) => {
+  startedAt = Date.now();
+  info(`Installed (${d.reason}${d.previousVersion ? ` from ${d.previousVersion}` : ''}).`);
+});
 chrome.runtime.onStartup.addListener(() => {
+  startedAt = Date.now();
   info('Browser started.');
   withManager((m) => (autoUpdatesEnabled(m.currentSettings.options.datasetUpdates) ? updater.run('startup') : undefined));
 });
@@ -378,7 +420,7 @@ function testHost(m: SessionManager, input: string, ipInput?: string): HostTest 
 chrome.runtime.onMessage.addListener((msg: Request, sender, sendResponse) => {
   // Only our own extension pages may talk to the worker.
   if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) return false;
-  ready
+  initialized
     .then(async (m) => {
       switch (msg.type) {
         case 'getStatus':

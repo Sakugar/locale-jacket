@@ -331,7 +331,7 @@ export const de: Record<MessageKey, string> = {
   'opt.about.privacyTitle': 'Datenschutz',
   'opt.about.p1': 'Alles läuft lokal. Es gibt keinen Server, kein Konto, keine Telemetrie und keine Analyse. Die Erweiterung stellt keine eigenen Netzwerkanfragen, außer Datensatz-Downloads, die Sie unter „Datensätze“ selbst starten, und den automatischen Updates, die Sie dort aktivieren können – jeweils von der dort angezeigten URL.',
   'opt.about.p2': 'Regeln, Einstellungen und Datensätze liegen im Erweiterungsspeicher dieses Browsers. Das Aktivitätsprotokoll und die Serveradressen befinden sich nur im Arbeitsspeicher.',
-  'opt.about.p3': 'Berechtigungen: debugger (die Emulation selbst), webNavigation und Hostzugriff (um zu wissen, auf welcher Website ein Tab ist), declarativeNetRequestWithHostAccess (Accept-Language der ersten Anfrage), webRequest (Serveradressen für IP-Regeln, nur beobachtend), alarms (geplante Prüfung auf Datensatz-Updates, nur wenn aktiviert), storage.',
+  'opt.about.p3': 'Berechtigungen: debugger (die Emulation selbst), webNavigation und Hostzugriff (um zu wissen, auf welcher Website ein Tab ist), declarativeNetRequestWithHostAccess (Accept-Language der ersten Anfrage), webRequest (Serveradressen für IP-Regeln und ob ein Seitenaufruf gefahrlos neu gestartet werden kann; nur beobachtend), alarms (geplante Prüfung auf Datensatz-Updates, nur wenn aktiviert), storage.',
   // background and checks
   'bg.late.alreadyOpen': 'Diese Seite war bereits geöffnet, als das Profil angewendet wurde; laden Sie sie neu.',
   'bg.late.attachedLate': 'Chrome hat das Debugging erst erlaubt, nachdem diese Seite zu laden begonnen hatte.',

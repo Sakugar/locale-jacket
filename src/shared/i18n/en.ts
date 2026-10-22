@@ -329,7 +329,7 @@ export const en = {
   'opt.about.privacyTitle': 'Privacy',
   'opt.about.p1': 'Everything runs locally. There is no server, account, telemetry or analytics. The extension makes no network requests of its own, except data-set downloads you start in Data sets and the automatic updates you can turn on there, from the URL shown there.',
   'opt.about.p2': 'Rules, settings and data sets live in this browser’s extension storage. The activity log and server addresses are in memory only.',
-  'opt.about.p3': 'Permissions: debugger (the emulation itself), webNavigation and host access (to know which site a tab is on), declarativeNetRequestWithHostAccess (first-request Accept-Language), webRequest (server addresses for IP rules, observed only), alarms (scheduled data-set update checks, only when turned on), storage.',
+  'opt.about.p3': 'Permissions: debugger (the emulation itself), webNavigation and host access (to know which site a tab is on), declarativeNetRequestWithHostAccess (first-request Accept-Language), webRequest (server addresses for IP rules, and whether a page load can be safely restarted; observed only), alarms (scheduled data-set update checks, only when turned on), storage.',
   // background and checks
   'bg.late.alreadyOpen': 'This page was already open when the profile was applied; reload it.',
   'bg.late.attachedLate': 'Chrome only allowed debugging after this page had started loading.',

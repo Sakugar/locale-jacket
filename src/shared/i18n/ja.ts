@@ -331,7 +331,7 @@ export const ja: Record<MessageKey, string> = {
   'opt.about.privacyTitle': 'プライバシー',
   'opt.about.p1': 'すべてローカルで動作します。サーバー、アカウント、テレメトリ、アナリティクスはありません。「データセット」で自分で開始したダウンロードと、そこでオンにできる自動更新（いずれも表示された URL から）を除き、拡張機能が独自にネットワークリクエストを行うことはありません。',
   'opt.about.p2': 'ルール、設定、データセットはこのブラウザの拡張機能ストレージに保存されます。アクティビティログとサーバーアドレスはメモリ内にのみ保持されます。',
-  'opt.about.p3': '権限: debugger（エミュレーション本体）、webNavigation とホストへのアクセス（タブがどのサイトにあるかを知るため）、declarativeNetRequestWithHostAccess（最初のリクエストの Accept-Language）、webRequest（IP ルール用のサーバーアドレス、監視のみ）、alarms（データセット更新の定期確認、オンにした場合のみ）、storage。',
+  'opt.about.p3': '権限: debugger（エミュレーション本体）、webNavigation とホストへのアクセス（タブがどのサイトにあるかを知るため）、declarativeNetRequestWithHostAccess（最初のリクエストの Accept-Language）、webRequest（IP ルール用のサーバーアドレスと、ページ読み込みを安全にやり直せるかの判定、監視のみ）、alarms（データセット更新の定期確認、オンにした場合のみ）、storage。',
   // background and checks
   'bg.late.alreadyOpen': 'プロファイルの適用時にこのページは既に開いていました。再読み込みしてください。',
   'bg.late.attachedLate': 'Chrome はこのページの読み込み開始後にしかデバッグを許可しませんでした。',

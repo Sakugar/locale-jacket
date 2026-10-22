@@ -113,7 +113,7 @@ La fenêtre contextuelle et la page d’options existent en English, 简体中�
 
 Tout s’exécute localement. En dehors des téléchargements de jeux de données que vous lancez et des mises à jour automatiques que vous activez (toujours depuis l’URL affichée), l’extension n’effectue aucune requête réseau. Les règles sont stockées dans `chrome.storage.local` ; le journal d’activité reste en mémoire et ne contient que des noms d’hôte.
 
-Autorisations : `debugger` (l’émulation elle-même), `webNavigation` et accès aux sites, `declarativeNetRequestWithHostAccess` (Accept-Language de la première requête), `webRequest` (adresses de serveur pour les règles IP, en observation seulement), `alarms` (vérification planifiée des mises à jour, seulement si activée), `storage`.
+Autorisations : `debugger` (l’émulation elle-même), `webNavigation` et accès aux sites, `declarativeNetRequestWithHostAccess` (Accept-Language de la première requête), `webRequest` (adresses de serveur pour les règles IP et possibilité de relancer sans risque un chargement de page ; en observation seulement), `alarms` (vérification planifiée des mises à jour, seulement si activée), `storage`.
 
 ## Limites
 

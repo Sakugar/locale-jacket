@@ -113,7 +113,7 @@ O pop-up e a página de opções estão em English, 简体中文, 繁體中文, 
 
 Tudo roda localmente. Além dos downloads de conjuntos de dados que você inicia e das atualizações automáticas que você ativa (sempre a partir da URL mostrada), a extensão não faz solicitações de rede. As regras ficam em `chrome.storage.local`; o registro de atividades existe só na memória e contém apenas nomes de host.
 
-Permissões: `debugger` (a própria emulação), `webNavigation` e acesso a sites, `declarativeNetRequestWithHostAccess` (Accept-Language da primeira solicitação), `webRequest` (endereços de servidor para regras de IP, apenas observação), `alarms` (verificação programada de atualizações, apenas se ativada), `storage`.
+Permissões: `debugger` (a própria emulação), `webNavigation` e acesso a sites, `declarativeNetRequestWithHostAccess` (Accept-Language da primeira solicitação), `webRequest` (endereços de servidor para regras de IP e se um carregamento de página pode ser reiniciado com segurança; apenas observação), `alarms` (verificação programada de atualizações, apenas se ativada), `storage`.
 
 ## Limitações
 
