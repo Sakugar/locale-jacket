@@ -112,10 +112,10 @@ export class CDP extends EventEmitter {
 }
 
 /**
- * Launch a browser with a pipe-based CDP connection.
+ * Launch a browser with a pipe-based CDP connection, opening `urls` as startup pages.
  * Returns { cdp, proc, userDataDir, close() }.
  */
-export async function launch({ executable, userDataDir, headless = true, extraArgs = [], keepProfile = false } = {}) {
+export async function launch({ executable, userDataDir, headless = true, extraArgs = [], keepProfile = false, urls = ['about:blank'] } = {}) {
   if (!executable) throw new Error('No browser executable found. Set BROWSER_PATH.');
   const profile = userDataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'lj-e2e-'));
   const args = [
@@ -132,7 +132,7 @@ export async function launch({ executable, userDataDir, headless = true, extraAr
     '--password-store=basic',
     ...(headless ? ['--headless=new'] : []),
     ...extraArgs,
-    'about:blank',
+    ...urls,
   ];
   const proc = spawn(executable, args, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
   let stderr = '';

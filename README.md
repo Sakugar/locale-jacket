@@ -257,6 +257,7 @@ npm test            # build + unit tests (rule engine, YAML, import/export, DNR,
 npm run e2e         # build + end-to-end tests in real Chrome (headless), using the verify server
 npm run e2e:edge    # the same in Microsoft Edge
 node e2e/run.mjs --headful            # watch it run
+npm run e2e:launch  # startup test and page-load timing (needs Chromium, see e2e/launch-perf.mjs; add -- --runs 10)
 npm run screenshots # UI screenshots into e2e/artifacts/ (add -- --ui=ja etc. for another language)
 npm run typecheck
 ```

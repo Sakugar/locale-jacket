@@ -14,6 +14,7 @@
     "icons": "node scripts/gen-icons.mjs",
     "package": "node scripts/build.mjs && node scripts/package.mjs",
     "e2e:edge": "node scripts/build.mjs && node e2e/run.mjs --edge",
+    "e2e:launch": "node scripts/build.mjs && node e2e/launch-perf.mjs",
     "screenshots": "node scripts/build.mjs && node e2e/screenshots.mjs",
     "crx": "node scripts/build.mjs && node scripts/pack-crx.mjs",
     "diff-pack": "node scripts/build.mjs && node scripts/diff-pack.mjs"
