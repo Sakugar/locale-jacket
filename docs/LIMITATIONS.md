@@ -19,6 +19,10 @@ Everything below was observed in Chrome 155 / Edge 155 on Windows 11 (see `resea
   - The document's `Accept-Language` is still correct, through declarativeNetRequest.
   - With *Reload once if the profile arrived late* on (the default), the page is reloaded once.
   - Tabs opened directly with a URL (Ctrl+click, `window.open`) can hit the same race and are handled the same way.
+- **Browser startup and session restore.** The startup page and the restored active tab begin loading while the extension's service worker is still starting, so the first document goes out before a debugger can attach.
+  - With *Reload once if the profile arrived late* on, a spoofed page whose document began less than 10 seconds before the extension attached is reloaded once. Pages opened earlier are only flagged *Reload needed*.
+  - Measured with `npm run e2e:launch` (Chromium 153, headless, local server): the extension attached about 200 ms after the first request. The corrected document followed about 220 ms after the first one, in 5 of 5 runs for both startup pages and restored tabs.
+  - The test can only load the extension with `--load-extension`, which installs it afresh on every start. An installed extension also has its header rules and event listeners already registered at startup, so the first request's `Accept-Language` is expected to be right there; this was not measured.
 - **POST navigations** (form submissions) that change the profile cannot be aborted and re-issued without losing the body. They continue and are flagged *Reload needed*; they are never auto-reloaded.
 - **Navigations the gate cannot see.** The extension re-aligns these when they are shown and flags them if their scripts started with other values:
   - documents served by a service worker without a network request

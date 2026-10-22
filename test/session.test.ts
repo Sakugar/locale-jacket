@@ -25,6 +25,8 @@ class FakePort implements DebuggerPort {
   detachCalls: number[] = [];
   /** What the document-start probe reports (null = no probe in this document). */
   probe: LocaleSnapshot | null = null;
+  /** performance.timeOrigin of the open document (null = cannot be read). */
+  timeOrigin: number | null = null;
   history = { currentIndex: 1, entries: [{ id: 10, url: APPLE }, { id: 11, url: GOOGLE }, { id: 12, url: APPLE }] };
 
   async attach(tabId: number): Promise<void> {
@@ -47,6 +49,7 @@ class FakePort implements DebuggerPort {
     if (fail) throw new Error(fail);
     if (!this.attached.has(target.tabId)) throw new Error(`Debugger is not attached to the tab with id: ${target.tabId}.`);
     if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 } as T;
+    if (method === 'Runtime.evaluate' && (params as { expression?: string }).expression === 'performance.timeOrigin') return { result: { value: this.timeOrigin } } as T;
     if (method === 'Runtime.evaluate') return { result: { value: this.probe } } as T;
     if (method === 'Page.getNavigationHistory') return this.history as T;
     return {} as T;
@@ -373,6 +376,31 @@ describe('TabSession lifecycle', () => {
     assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'en-US' });
     assert.equal(t.status().session, 'attached');
     assert.equal(t.status().late, true, 'an already-open page is flagged, not reloaded');
+  });
+
+  it('reloads a page that started just before the worker could attach (browser startup), once', async () => {
+    const ctx = makeCtx(port, settings);
+    port.timeOrigin = ctx.now() - 2_000;
+    const t = new TabSession(1, ctx);
+    await t.onTabSeen(GOOGLE, true);
+    await flush();
+    assert.deepEqual(ctx.reloads, [1], 'startup page is reloaded');
+    await t.onSettingsChanged();
+    await t.onTabSeen(GOOGLE, true);
+    await flush();
+    assert.deepEqual(ctx.reloads, [1], 'never twice for the same URL');
+  });
+
+  it('leaves older already-open pages, unmatched pages and the opt-out alone', async () => {
+    const ctx = makeCtx(port, settings);
+    port.timeOrigin = ctx.now() - 60_000;
+    await new TabSession(1, ctx).onTabSeen(GOOGLE, true);
+    port.timeOrigin = ctx.now() - 1_000;
+    await new TabSession(2, ctx).onTabSeen(EXAMPLE, true);
+    const off = makeCtx(port, { ...settings, options: { ...settings.options, reloadOnLate: false } });
+    await new TabSession(3, off).onTabSeen(GOOGLE, true);
+    await flush();
+    assert.deepEqual([...ctx.reloads, ...off.reloads], []);
   });
 
   it('a tab that is still loading is attached but not overridden (the gate does it)', async () => {

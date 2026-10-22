@@ -413,6 +413,26 @@ export class TabSession {
     this.ctx.reloadTab(this.tabId).catch((e) => this.log('warn', `Reload failed: ${errorMessage(e)}`));
   }
 
+  /**
+   * An already-open page that started loading moments ago (the browser's startup page,
+   * the restored active tab) began before this worker could attach, so its scripts saw
+   * the real locale. Treat it like a late fresh navigation: reload once. Pages opened
+   * earlier keep the "reload it" hint only. Not awaited: Runtime.evaluate waits while a
+   * navigation is pending, and that navigation's commit is handled on its own.
+   */
+  private reloadIfJustOpened(): void {
+    if (!this.settings().options.reloadOnLate) return;
+    const url = this.url;
+    void this.ctx.port
+      .send<{ result?: { value?: unknown } }>({ tabId: this.tabId }, 'Runtime.evaluate', { expression: 'performance.timeOrigin', returnByValue: true })
+      .then((r) => {
+        const started = r.result?.value;
+        if (typeof started !== 'number' || this.url !== url || !this.late) return;
+        this.maybeAutoReload({ url: url ?? '', transitionType: 'start_page', timeStamp: started });
+      })
+      .catch(() => undefined);
+  }
+
   /** Values recorded by the isolated-world probe when the current main document started. */
   private async readStartProbe(): Promise<LocaleSnapshot | null> {
     if (!this.mainFrameId) return null;
@@ -444,7 +464,10 @@ export class TabSession {
         // profile to its navigation. Applying now would race with that navigation.
         if ((await this.ensureAttached(url)) && existingDocument) {
           await this.applyMain(res, true);
-          if (res.action === 'PROFILE') this.markLate(t('bg.late.alreadyOpen'), null);
+          if (res.action === 'PROFILE') {
+            this.markLate(t('bg.late.alreadyOpen'), null);
+            this.reloadIfJustOpened();
+          }
         }
       } else if (this.state !== 'attached') {
         this.sessionStatus = 'none';
