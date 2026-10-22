@@ -223,6 +223,7 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
   - a same-site iframe and a cross-site iframe
 
   Add `?expect=en-US` to highlight mismatches. To try your own rules there, add rules for `google.localhost` and the like.
+- **Browser startup:** `http://google.localhost:8787/launch.html?expect=en-US` is meant to be the page Chrome opens at startup (set it as a startup page, or leave it open and restart with *Continue where you left off*). It lists every load of the page in that tab with what its first script saw and the header the server received, so an automatic reload shows as a second row. It also shows the navigation timing.
 - **Any real website:** paste [verify/snippet.js](verify/snippet.js) into the DevTools console. It prints the `console.table` from the specification and more.
 
 ## Limitations (summary)

@@ -26,11 +26,13 @@ function escapeHtml(s) {
 }
 
 /**
- * Start the server. Returns { server, port, log, clearLog, close }.
- * `log` records every HTML document request with the Accept-Language it carried.
+ * Start the server. Returns { server, port, log, clearLog, beacons, close }.
+ * `log` records every HTML document request with the Accept-Language it carried;
+ * `beacons` holds the reports launch.html posts after it has loaded.
  */
 export function startServer({ port = 8787, quiet = false } = {}) {
   const log = [];
+  const beacons = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
     const host = (req.headers.host ?? '').replace(/:\d+$/, '');
@@ -68,6 +70,28 @@ export function startServer({ port = 8787, quiet = false } = {}) {
         return html('plain.html');
       case '/prerender.html':
         return html('prerender.html');
+      case '/launch.html':
+        return html('launch.html');
+      case '/api/beacon': {
+        if (req.method !== 'POST') {
+          if (url.searchParams.has('clear')) beacons.length = 0;
+          res.writeHead(200, { 'Content-Type': 'application/json', ...noStore });
+          return res.end(JSON.stringify(beacons));
+        }
+        let body = '';
+        req.setEncoding('utf8');
+        req.on('data', (d) => { if (body.length < 1e6) body += d; });
+        req.on('end', () => {
+          try {
+            beacons.push({ receivedAt: Date.now(), ...JSON.parse(body) });
+          } catch {
+            /* ignore malformed reports */
+          }
+          res.writeHead(204, noStore);
+          res.end();
+        });
+        return;
+      }
       case '/snapshot.js':
         res.writeHead(200, { 'Content-Type': 'text/javascript', ...noStore });
         return res.end(read('snapshot.js'));
@@ -118,6 +142,7 @@ export function startServer({ port = 8787, quiet = false } = {}) {
         port: actual,
         log,
         clearLog: () => { log.length = 0; },
+        beacons,
         close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(() => r()); }),
       });
     });

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>
+// Runs before anything else on the page, like a site's first inline script.
+{{SNAPSHOT_JS}}
+window.__ljStart = __ljSnapshot();
+window.__ljDocumentAcceptLanguage = {{ACCEPT_LANGUAGE_JSON}};
+// Every load of this page in this tab is remembered, so an automatic reload by
+// the extension shows up as a second entry (sessionStorage survives reloads).
+(function () {
+  let loads = [];
+  try { loads = JSON.parse(sessionStorage.getItem('lj-launch-loads') || '[]'); } catch (e) { loads = []; }
+  // Only loads from the last minute belong to this visit.
+  loads = loads.filter((l) => Date.now() - l.at < 60000);
+  loads.push({
+    at: Date.now(),
+    language: window.__ljStart.language,
+    dateLocale: window.__ljStart.dateLocale,
+    acceptLanguage: window.__ljDocumentAcceptLanguage,
+  });
+  try { sessionStorage.setItem('lj-launch-loads', JSON.stringify(loads)); } catch (e) { /* storage blocked */ }
+  window.__ljLoads = loads;
+})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch Check</title>
+<style>
+  :root {
+    --bg: #f7f7f8; --fg: #1d1d20; --muted: #6b6b75; --card: #fff; --line: #e3e3e8;
+    --ok: #1a7f37; --ok-bg: #e7f6ec; --bad: #b42318; --bad-bg: #fdecea; --warn: #8a5a00; --warn-bg: #fff4d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151518; --fg: #ececf1; --muted: #9a9aa6; --card: #1f1f24; --line: #33333b;
+      --ok: #5cd187; --ok-bg: #12301d; --bad: #ff8a80; --bad-bg: #3a1714; --warn: #f5c451; --warn-bg: #3a2e10; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
+  main { max-width: 900px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 24px 0 8px; }
+  p { margin: 4px 0; color: var(--muted); }
+  code { font: 12.5px ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); white-space: nowrap; }
+  td { font: 12.5px ui-monospace, Consolas, monospace; }
+  td.num { text-align: right; }
+  td.ok { background: var(--ok-bg); color: var(--ok); }
+  td.bad { background: var(--bad-bg); color: var(--bad); }
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; background: var(--line); color: var(--muted); }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Launch check</h1>
+  <p>Host <code>{{HOST}}</code>. Open this page as the browser's startup page (or restore it with the session) to see what a site observes while the extension is still starting. Add <code>?expect=en-US</code> to compare.</p>
+  <div class="pills" id="verdict"></div>
+
+  <h2>Loads of this page in this tab (last minute)</h2>
+  <div class="card"><table id="loads"></table></div>
+  <p>A second row means the page was reloaded, normally by Locale Jacket because its override arrived after the first document started.</p>
+
+  <h2>This document</h2>
+  <div class="card"><table id="doc"></table></div>
+
+  <h2>Timing (this document)</h2>
+  <div class="card"><table id="timing"></table></div>
+  <p>Milliseconds from the start of the navigation. <em>fetchStart</em> → <em>requestStart</em> covers connection setup plus any time Locale Jacket holds the request until the override is in place.</p>
+</main>
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const expected = params.get('expect') || '';
+  const esc = (s) => String(s ?? '—').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  const cls = (ok) => (expected ? (ok ? 'ok' : 'bad') : '');
+  const headerOk = (al) => typeof al === 'string' && al.split(',')[0] === expected;
+
+  const report = {
+    host: location.hostname,
+    href: location.href,
+    timeOrigin: performance.timeOrigin,
+    start: window.__ljStart,
+    live: null,
+    documentAcceptLanguage: window.__ljDocumentAcceptLanguage,
+    fetchAcceptLanguage: null,
+    loads: window.__ljLoads,
+    timing: null,
+  };
+  window.__ljReport = report;
+
+  function timing() {
+    const n = performance.getEntriesByType('navigation')[0];
+    if (!n) return null;
+    const r = (v) => Math.round(v * 10) / 10;
+    return {
+      type: n.type,
+      fetchStart: r(n.fetchStart),
+      requestStart: r(n.requestStart),
+      responseStart: r(n.responseStart),
+      responseEnd: r(n.responseEnd),
+      domContentLoaded: r(n.domContentLoadedEventEnd),
+      loadEventEnd: r(n.loadEventEnd),
+    };
+  }
+
+  function render() {
+    const s = report.start;
+    const pills = [];
+    if (expected) {
+      const okStart = s.language === expected && s.dateLocale === expected;
+      const okHeader = headerOk(report.documentAcceptLanguage);
+      pills.push(['Document start: ' + (okStart ? expected : s.language + ' / ' + s.dateLocale), okStart ? 'ok' : 'bad']);
+      pills.push(['Document request header: ' + (okHeader ? 'ok' : report.documentAcceptLanguage), okHeader ? 'ok' : 'bad']);
+      const first = report.loads[0];
+      const firstOk = first.language === expected && headerOk(first.acceptLanguage);
+      if (report.loads.length > 1) pills.push(['First load saw ' + (firstOk ? expected : first.language) + ', reloaded ' + (report.loads.length - 1) + '×', 'warn']);
+    }
+    pills.push(['Load #' + report.loads.length, '']);
+    document.getElementById('verdict').innerHTML = pills.map(([t, c]) => '<span class="pill ' + c + '">' + esc(t) + '</span>').join('');
+
+    const t0 = report.loads[0].at;
+    document.getElementById('loads').innerHTML = '<tr><th>#</th><th>+ms</th><th>navigator.language</th><th>Intl locale</th><th>Accept-Language (server)</th></tr>' +
+      report.loads.map((l, i) => '<tr><th>' + (i + 1) + '</th><td class="num">' + (l.at - t0) + '</td>' +
+        '<td class="' + cls(l.language === expected) + '">' + esc(l.language) + '</td>' +
+        '<td class="' + cls(l.dateLocale === expected) + '">' + esc(l.dateLocale) + '</td>' +
+        '<td class="' + cls(headerOk(l.acceptLanguage)) + '">' + esc(l.acceptLanguage) + '</td></tr>').join('');
+
+    const rows = [
+      ['navigator.language', s.language, report.live && report.live.language],
+      ['navigator.languages', (s.languages || []).join(', '), report.live && report.live.languages.join(', ')],
+      ['Intl.DateTimeFormat', s.dateLocale, report.live && report.live.dateLocale],
+      ['Intl.NumberFormat', s.numberLocale, report.live && report.live.numberLocale],
+      ['Intl.Collator', s.collatorLocale, report.live && report.live.collatorLocale],
+      ['Accept-Language (document)', report.documentAcceptLanguage, ''],
+      ['Accept-Language (fetch)', '', report.fetchAcceptLanguage],
+    ];
+    const matches = (k, v) => (k.startsWith('Accept') ? headerOk(v) : k === 'navigator.languages' ? String(v).split(',')[0] === expected : v === expected);
+    document.getElementById('doc').innerHTML = '<tr><th>Value</th><th>At document start</th><th>After load</th></tr>' +
+      rows.map(([k, a, b]) => '<tr><th>' + k + '</th>' +
+        '<td class="' + (a ? cls(matches(k, a)) : '') + '">' + esc(a || '—') + '</td>' +
+        '<td class="' + (b ? cls(matches(k, b)) : '') + '">' + esc(b || '—') + '</td></tr>').join('');
+
+    const tm = report.timing || {};
+    document.getElementById('timing').innerHTML = '<tr><th>Mark</th><th>ms</th></tr>' +
+      Object.entries(tm).map(([k, v]) => '<tr><th>' + k + '</th><td class="num">' + esc(v) + '</td></tr>').join('');
+  }
+
+  window.__ljReportReady = new Promise((resolve) => {
+    window.addEventListener('load', () => setTimeout(async () => {
+      report.live = __ljSnapshot();
+      report.timing = timing();
+      report.fetchAcceptLanguage = await fetch('/api/headers', { cache: 'no-store' })
+        .then((r) => r.json()).then((j) => j.acceptLanguage).catch((e) => 'ERR: ' + e.message);
+      report.done = true;
+      render();
+      // Hand the result to the verification server so a test can read it without
+      // attaching to the tab (which would change what is being measured).
+      fetch('/api/beacon', { method: 'POST', body: JSON.stringify(report), headers: { 'Content-Type': 'application/json' } }).catch(() => undefined);
+      resolve(report);
+    }, 0));
+  });
+})();
+</script>
+</body>
+</html>
