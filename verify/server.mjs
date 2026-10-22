@@ -45,6 +45,7 @@ export function startServer({ port = 8787, quiet = false } = {}) {
         host,
         path: url.pathname,
         search: url.search,
+        method: req.method,
         acceptLanguage: al,
         dest: req.headers['sec-fetch-dest'] ?? null,
         referer: req.headers.referer ?? null,
@@ -56,8 +57,12 @@ export function startServer({ port = 8787, quiet = false } = {}) {
         .replaceAll('{{ACCEPT_LANGUAGE_JSON}}', JSON.stringify(al).replace(/</g, '\\u003c'))
         .replaceAll('{{ACCEPT_LANGUAGE}}', escapeHtml(al ?? '(none)'))
         .replaceAll('{{HOST}}', escapeHtml(host));
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...noStore });
-      res.end(body);
+      // ?delay=<ms> holds the response like a slow site would (up to 10 s).
+      const delay = Math.min(Math.max(Number(url.searchParams.get('delay')) || 0, 0), 10000);
+      setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...noStore });
+        res.end(body);
+      }, delay);
     };
 
     switch (url.pathname) {
