@@ -4,6 +4,7 @@
 // IP rules:        IP-CIDR, IP-CIDR6, IP-ASN, GEOIP  (need the server address; see MatchContext)
 //
 // Precedence (first difference wins):
+//   0. Layer: your own rules before subscription rules, earlier subscriptions first.
 //   1. Rule type: DOMAIN > DOMAIN-SUFFIX > DOMAIN-KEYWORD > DOMAIN-REGEX > GEOSITE
 //                 > IP-CIDR/IP-CIDR6 > IP-ASN > GEOIP.
 //      Hostname rules beat IP rules because the hostname is always known, the address is not.
@@ -141,13 +142,15 @@ function specificity(rule: Rule): number {
   return 0;
 }
 
+type PrecedenceKey = [number, number, number, number, number];
+
 /** Sort key implementing the precedence above; smaller sorts first (wins). */
-export function precedenceKey(rule: Rule, index: number): [number, number, number, number] {
-  return [TYPE_RANK[rule.type], -specificity(rule), -rule.priority, index];
+export function precedenceKey(rule: Rule, index: number): PrecedenceKey {
+  return [rule.origin?.layer ?? 0, TYPE_RANK[rule.type], -specificity(rule), -rule.priority, index];
 }
 
-export function comparePrecedence(a: [number, number, number, number], b: [number, number, number, number]): number {
-  for (let i = 0; i < 4; i++) {
+export function comparePrecedence(a: PrecedenceKey, b: PrecedenceKey): number {
+  for (let i = 0; i < a.length; i++) {
     const d = (a[i] ?? 0) - (b[i] ?? 0);
     if (d !== 0) return d;
   }
@@ -199,7 +202,8 @@ export function requiredDatasets(rules: Rule[]): { geosite: string[]; geoip: boo
 
 export function ruleLabel(rule: Rule): string {
   const value = rule.type === 'DOMAIN' || rule.type === 'DOMAIN-SUFFIX' ? displayDomain(rule.value) : rule.value;
-  return `${rule.type},${value}${rule.noResolve && isIpRuleType(rule.type) ? ',no-resolve' : ''}`;
+  const label = `${rule.type},${value}${rule.noResolve && isIpRuleType(rule.type) ? ',no-resolve' : ''}`;
+  return rule.origin ? `${label} · ${rule.origin.name}` : label;
 }
 
 export function displayDomain(ascii: string): string {

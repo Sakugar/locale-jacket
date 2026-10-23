@@ -9,7 +9,8 @@
 // Privacy: the only network requests made here are data-set updates the user opted
 // into (Options ▸ Data sets), to the URL each data set was downloaded from, and
 // update checks the user starts or opts into (Options ▸ Updates), to the release
-// address shown there. No URLs
+// address shown there, and the rule subscriptions the user added (Options ▸
+// Subscriptions), to their URLs. No URLs
 // are persisted; the in-memory log keeps only hostnames and is dropped when the
 // worker stops.
 
@@ -19,7 +20,8 @@ import { importConfigText, sanitizeStoredSettings } from '../shared/config-io.js
 import { compileDnrRules } from '../shared/dnr.js';
 import { DatasetRuntime } from './datasets.js';
 import { DatasetUpdater } from './dataset-updater.js';
-import { listDatasets } from '../shared/dataset-store.js';
+import { downloadDataset } from '../shared/dataset-download.js';
+import { DATASETS, listDatasets } from '../shared/dataset-store.js';
 import { autoUpdatesEnabled, type DatasetUpdateState } from '../shared/dataset-schedule.js';
 import {
   checkDue,
@@ -36,6 +38,22 @@ import { parseIp } from '../shared/ip.js';
 import type { GlobalStatus, HostTest, LogEntry, Request, TabStatus } from '../shared/messages.js';
 import { describeAction, needsServerIp, requiredDatasets, resolveHost, ruleLabel } from '../shared/rules.js';
 import { defaultSettings } from '../shared/presets.js';
+import {
+  datasetDownloadDue,
+  datasetsToDownload,
+  fetchSubscription,
+  rawUrl,
+  SUBSCRIPTION_DATASET_STATE_KEY,
+  SUBSCRIPTION_DATA_KEY,
+  subscriptionDue,
+  subscriptionLabel,
+  withSubscriptions,
+  type SubscriptionData,
+  type SubscriptionDataMap,
+  type SubscriptionDatasetState,
+  type SubscriptionOutcome,
+  type SubscriptionTrigger,
+} from '../shared/subscriptions.js';
 import type { ExtensionUpdateOptions, Settings } from '../shared/types.js';
 
 const SETTINGS_KEY = 'settings';
@@ -44,6 +62,7 @@ const SUSPENDED_KEY = 'suspended';
 const UPDATE_STATE_KEY = 'datasetUpdateState';
 const UPDATE_ALARM = 'dataset-update';
 const EXTENSION_UPDATE_ALARM = 'extension-update';
+const SUBSCRIPTION_ALARM = 'subscription-update';
 const LOG_LIMIT = 300;
 
 const logEntries: LogEntry[] = [];
@@ -246,12 +265,130 @@ async function syncUpdateAlarm(settings: Settings): Promise<void> {
   for (const [name, interval] of [
     [UPDATE_ALARM, settings.options.datasetUpdates.interval],
     [EXTENSION_UPDATE_ALARM, settings.options.extensionUpdates.interval],
+    [SUBSCRIPTION_ALARM, settings.subscriptions.some((x) => x.enabled && x.interval !== 'off') ? 'daily' : 'off'],
   ] as const) {
     const want = interval !== 'off';
     const has = await chrome.alarms.get(name);
     if (want && !has) await chrome.alarms.create(name, { delayInMinutes: 1, periodInMinutes: 60 });
     if (!want && has) await chrome.alarms.clear(name);
   }
+}
+
+// ------------------------------------------------------------- subscriptions
+
+/** Your settings as stored; the manager works with these plus the subscription rules. */
+let ownSettings: Settings | null = null;
+/** Rules last fetched for each subscription (mirrors storage.local[SUBSCRIPTION_DATA_KEY]). */
+let subscriptionData: SubscriptionDataMap = {};
+
+async function loadSubscriptionData(): Promise<SubscriptionDataMap> {
+  return ((await chrome.storage.local.get(SUBSCRIPTION_DATA_KEY))[SUBSCRIPTION_DATA_KEY] as SubscriptionDataMap | undefined) ?? {};
+}
+
+/** Apply settings (or new subscription rules) everywhere: data sets, IP watcher, tabs, DNR, badge. */
+async function applySettings(m: SessionManager, own: Settings): Promise<Settings> {
+  const s = withSubscriptions(own, subscriptionData);
+  await datasets.ensure(requiredDatasets(s.rules));
+  syncIpWatcher(s);
+  await m.updateSettings(s);
+  await syncDnr(s, m.isSuspended);
+  await refreshGlobalBadge();
+  return s;
+}
+
+let subscriptionRuns: Promise<unknown> = Promise.resolve();
+
+/** Fetch the subscriptions that are due (or the given ones); runs one after another. */
+function runSubscriptions(trigger: SubscriptionTrigger, ids?: string[]): Promise<SubscriptionOutcome[]> {
+  const run = subscriptionRuns.then(() => updateSubscriptions(trigger, ids));
+  subscriptionRuns = run.catch(() => undefined);
+  return run;
+}
+
+async function updateSubscriptions(trigger: SubscriptionTrigger, ids?: string[]): Promise<SubscriptionOutcome[]> {
+  const m = await ready;
+  const own = ownSettings!;
+  const persist = () => chrome.storage.local.set({ [SUBSCRIPTION_DATA_KEY]: subscriptionData });
+  let rulesChanged = false;
+  // Forget what was fetched for subscriptions that were removed.
+  for (const id of Object.keys(subscriptionData)) {
+    if (own.subscriptions.some((x) => x.id === id)) continue;
+    delete subscriptionData[id];
+    rulesChanged = true;
+  }
+  const outcomes: SubscriptionOutcome[] = [];
+  for (const sub of own.subscriptions) {
+    if (ids && !ids.includes(sub.id)) continue;
+    const prev = subscriptionData[sub.id];
+    if (!subscriptionDue(sub, prev, trigger, Date.now())) {
+      outcomes.push({ id: sub.id, result: 'skipped' });
+      continue;
+    }
+    const url = rawUrl(sub.url);
+    // Rules fetched from a previous URL no longer apply.
+    const base: SubscriptionData = prev && prev.url === url ? prev : { url, rules: [], skipped: [], skippedCount: 0, ignored: [] };
+    if (prev && prev.url !== url) rulesChanged = true;
+    // Recorded before fetching, so a failure also counts against the minimum gap.
+    subscriptionData[sub.id] = { ...base, lastAttempt: Date.now() };
+    await persist();
+    const name = subscriptionLabel(sub);
+    try {
+      const r = await fetchSubscription(sub, base.fetchedAt !== undefined ? base : undefined);
+      if (r.status === 'unchanged') {
+        const { error: _old, ...rest } = subscriptionData[sub.id]!;
+        subscriptionData[sub.id] = { ...rest, fetchedAt: Date.now() };
+        outcomes.push({ id: sub.id, result: 'unchanged', count: rest.rules.length });
+        info(`Subscription "${name}" is unchanged.`);
+      } else {
+        subscriptionData[sub.id] = r.data;
+        rulesChanged = true;
+        outcomes.push({ id: sub.id, result: 'updated', count: r.data.rules.length });
+        info(`Subscription "${name}" updated: ${r.data.rules.length} rule(s)${r.data.skippedCount ? `, ${r.data.skippedCount} skipped` : ''}.`);
+      }
+    } catch (e) {
+      const error = errorMessage(e);
+      subscriptionData[sub.id] = { ...subscriptionData[sub.id]!, error };
+      outcomes.push({ id: sub.id, result: 'failed', error });
+      log({ t: Date.now(), level: 'warn', tabId: null, msg: `Subscription "${name}" failed: ${error}` });
+    }
+  }
+  await persist();
+  if (rulesChanged && ownSettings) await applySettings(m, ownSettings);
+  await downloadSubscriptionDatasets(m);
+  return outcomes;
+}
+
+/**
+ * Download the data sets that subscription rules need and that are not installed
+ * (option "Download the data sets subscriptions need", on by default). The URL is the
+ * one the subscription names, or the built-in default; failures are retried after an hour.
+ */
+async function downloadSubscriptionDatasets(m: SessionManager): Promise<void> {
+  const own = ownSettings;
+  if (!own?.options.subscriptionDatasets) return;
+  const installed = (await listDatasets()).map((x) => x.kind);
+  const todo = datasetsToDownload(own, subscriptionData, installed);
+  if (!todo.length) return;
+  const state = ((await chrome.storage.local.get(SUBSCRIPTION_DATASET_STATE_KEY))[SUBSCRIPTION_DATASET_STATE_KEY] as SubscriptionDatasetState | undefined) ?? {};
+  let saved = false;
+  for (const job of todo) {
+    if (!datasetDownloadDue(state[job.kind], job.url, Date.now())) continue;
+    const label = DATASETS[job.kind].label;
+    info(`Downloading ${label} for subscription "${job.for}" from ${job.url}…`);
+    try {
+      const r = await downloadDataset(job.kind, job.url);
+      state[job.kind] = { url: job.url, for: job.for, at: Date.now(), ok: true };
+      if (r.status === 'saved') {
+        saved = true;
+        info(`${label} downloaded for subscription "${job.for}" (${r.meta.summary}).`);
+      }
+    } catch (e) {
+      state[job.kind] = { url: job.url, for: job.for, at: Date.now(), ok: false, error: errorMessage(e) };
+      log({ t: Date.now(), level: 'warn', tabId: null, msg: `${label} download for subscription "${job.for}" failed: ${errorMessage(e)}` });
+    }
+    await chrome.storage.local.set({ [SUBSCRIPTION_DATASET_STATE_KEY]: state });
+  }
+  if (saved) await reloadDatasets(m);
 }
 
 // --------------------------------------------------------- extension updates
@@ -293,7 +430,9 @@ function checkExtensionUpdate(trigger: CheckTrigger, opts: ExtensionUpdateOption
 }
 
 const ready: Promise<SessionManager> = (async () => {
-  const settings = await loadSettings();
+  ownSettings = await loadSettings();
+  subscriptionData = await loadSubscriptionData();
+  const settings = withSubscriptions(ownSettings, subscriptionData);
   const suspended = Boolean((await chrome.storage.session.get(SUSPENDED_KEY))[SUSPENDED_KEY]);
   setLanguage(settings.options.uiLanguage);
   await datasets.ensure(requiredDatasets(settings.rules));
@@ -337,6 +476,8 @@ const initialized: Promise<SessionManager> = ready.then(async (m) => {
   await refreshGlobalBadge();
   await syncUpdateAlarm(settings).catch((e) => log({ t: Date.now(), level: 'warn', tabId: null, msg: `Update alarm: ${errorMessage(e)}` }));
   info(`Service worker ready (${settings.rules.length} rules, ${settings.enabled ? 'enabled' : 'disabled'}${m.isSuspended ? ', paused' : ''}).`);
+  // Fetch subscriptions that have no rules yet (for example added by an import while the worker slept).
+  void runSubscriptions('changed');
   return m;
 });
 
@@ -412,16 +553,15 @@ chrome.debugger.onDetach.addListener((source, reason) =>
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes[SETTINGS_KEY]) return;
   withManager(async (m) => {
-    const { settings, problems } = sanitizeStoredSettings(changes[SETTINGS_KEY]!.newValue, defaultSettings());
+    const { settings: own, problems } = sanitizeStoredSettings(changes[SETTINGS_KEY]!.newValue, defaultSettings());
+    ownSettings = own;
     settingsProblems = problems;
-    setLanguage(settings.options.uiLanguage);
-    await datasets.ensure(requiredDatasets(settings.rules));
-    syncIpWatcher(settings);
-    await m.updateSettings(settings);
-    await syncDnr(settings, m.isSuspended);
-    await refreshGlobalBadge();
+    setLanguage(own.options.uiLanguage);
+    const settings = await applySettings(m, own);
     await syncUpdateAlarm(settings).catch(() => undefined);
     info(`Settings updated (${settings.rules.length} rules, ${settings.enabled ? 'enabled' : 'disabled'}).`);
+    // A subscription that was just added, or whose URL changed, is fetched right away.
+    void runSubscriptions('changed');
   });
 });
 
@@ -434,10 +574,12 @@ chrome.runtime.onStartup.addListener(() => {
   info('Browser started.');
   withManager((m) => (autoUpdatesEnabled(m.currentSettings.options.datasetUpdates) ? updater.run('startup') : undefined));
   withManager((m) => checkExtensionUpdate('startup', m.currentSettings.options.extensionUpdates));
+  withManager(() => runSubscriptions('startup'));
 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === UPDATE_ALARM) withManager(() => updater.run('alarm'));
   if (alarm.name === EXTENSION_UPDATE_ALARM) withManager((m) => checkExtensionUpdate('alarm', m.currentSettings.options.extensionUpdates));
+  if (alarm.name === SUBSCRIPTION_ALARM) withManager(() => runSubscriptions('alarm'));
 });
 
 function globalStatus(m: SessionManager): GlobalStatus {
@@ -502,6 +644,8 @@ chrome.runtime.onMessage.addListener((msg: Request, sender, sendResponse) => {
           await reloadDatasets(m);
           info('Data sets changed; rules re-evaluated.');
           return { ok: true, problems: datasets.missing };
+        case 'updateSubscriptions':
+          return { outcomes: await runSubscriptions('manual', msg.ids) };
         case 'checkExtensionUpdate':
           return { state: await checkExtensionUpdate('manual', m.currentSettings.options.extensionUpdates) };
         case 'checkDatasetUpdates':

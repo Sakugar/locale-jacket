@@ -12,8 +12,9 @@ import { normalizeProfile } from './locale.js';
 import { DEFAULT_OPTIONS } from './presets.js';
 import { newRuleId, normalizeRuleValue } from './rules.js';
 import { MAX_UPDATE_GAP_HOURS, MIN_UPDATE_GAP_HOURS } from './dataset-schedule.js';
+import type { DatasetKind } from './dataset-store.js';
 import { isHttpUrl } from './extension-update.js';
-import type { DatasetUpdateOptions, ExtensionUpdateOptions, DefaultAction, LocaleProfile, Options, Rule, RuleType, Settings } from './types.js';
+import type { DatasetUpdateInterval, DatasetUpdateOptions, ExtensionUpdateOptions, Subscription, DefaultAction, LocaleProfile, Options, Rule, RuleType, Settings } from './types.js';
 import { isIpRuleType, RULE_TYPES } from './types.js';
 import { parseYaml, stringifyYaml, YamlError, type YamlValue } from './yaml.js';
 
@@ -22,6 +23,9 @@ export interface ImportResult {
   errors: string[];
   warnings: string[];
 }
+
+/** How many rule subscriptions a configuration may have. */
+export const MAX_SUBSCRIPTIONS = 20;
 
 const SYSTEM_WORDS = new Set(['SYSTEM', 'DIRECT', 'NONE', 'OFF']);
 const PROFILE_WORDS = new Set(['PROFILE', 'SPOOF', 'LOCALE']);
@@ -110,6 +114,7 @@ export function importConfigObject(raw: unknown, base?: Settings): ImportResult 
   }
 
   const options = parseOptions(obj.options, base?.options ?? DEFAULT_OPTIONS, errors);
+  const subscriptions = obj.subscriptions !== undefined ? parseSubscriptions(obj.subscriptions, errors) : (base?.subscriptions ?? []);
   let enabled = base?.enabled ?? true;
   if (obj.enabled !== undefined) {
     if (typeof obj.enabled === 'boolean') enabled = obj.enabled;
@@ -128,12 +133,101 @@ export function importConfigObject(raw: unknown, base?: Settings): ImportResult 
       schemaVersion: 1,
       enabled,
       rules,
+      subscriptions,
       defaultAction: defaultAction ?? base?.defaultAction ?? { action: 'SYSTEM' },
       options,
     },
     errors,
     warnings,
   };
+}
+
+function isInterval(v: unknown): v is DatasetUpdateInterval {
+  return v === 'off' || v === 'daily' || v === 'weekly' || v === 'monthly';
+}
+
+export function newSubscriptionId(): string {
+  return `sub-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** A list of subscriptions: URLs, or objects with url (and optional name, enabled, interval, id). */
+function parseSubscriptions(raw: unknown, errors: string[]): Subscription[] {
+  if (!Array.isArray(raw)) {
+    errors.push('"subscriptions" must be a list.');
+    return [];
+  }
+  const out: Subscription[] = [];
+  raw.forEach((item, i) => {
+    const where = `subscriptions[${i}]`;
+    const v: unknown = typeof item === 'string' ? { url: item } : item;
+    if (!isRecord(v)) {
+      errors.push(`${where}: must be a URL or an object with "url".`);
+      return;
+    }
+    const url = typeof v.url === 'string' ? v.url.trim() : '';
+    if (!isHttpUrl(url)) {
+      errors.push(`${where}.url must be an http(s) URL.`);
+      return;
+    }
+    if (v.name !== undefined && typeof v.name !== 'string') errors.push(`${where}.name must be text.`);
+    if (v.enabled !== undefined && typeof v.enabled !== 'boolean') errors.push(`${where}.enabled must be true or false.`);
+    if (v.interval !== undefined && !isInterval(v.interval)) errors.push(`${where}.interval must be "off", "daily", "weekly" or "monthly".`);
+    const id = typeof v.id === 'string' && /^[\w-]{1,64}$/.test(v.id) && !out.some((o) => o.id === v.id) ? v.id : newSubscriptionId();
+    out.push({
+      id,
+      name: typeof v.name === 'string' ? v.name.trim().slice(0, 80) : '',
+      url,
+      enabled: typeof v.enabled === 'boolean' ? v.enabled : true,
+      interval: isInterval(v.interval) ? v.interval : 'daily',
+    });
+  });
+  if (out.length > MAX_SUBSCRIPTIONS) errors.push(`At most ${MAX_SUBSCRIPTIONS} subscriptions are allowed.`);
+  return out;
+}
+
+/**
+ * The rules of a subscription file (JSON or YAML, already parsed). Unlike an import,
+ * invalid entries are skipped and reported instead of rejecting the whole file, and
+ * only "rules" is used: the file cannot change your default, options or subscriptions.
+ */
+export function parseSubscriptionRules(raw: unknown): {
+  rules: Rule[];
+  skipped: string[];
+  ignored: string[];
+  /** Where to download the data sets its rules need: { geosite, geoip, asn } URLs. */
+  datasets: Partial<Record<DatasetKind, string>>;
+} {
+  const obj: Record<string, unknown> | null = Array.isArray(raw) ? { rules: raw } : isRecord(raw) ? raw : null;
+  if (!obj || !Array.isArray(obj.rules)) throw new Error('The file has no "rules" list.');
+  const rules: Rule[] = [];
+  const skipped: string[] = [];
+  const ignored = Object.keys(obj).filter((k) => k !== 'rules' && k !== 'version' && k !== 'datasets');
+  const datasets: Partial<Record<DatasetKind, string>> = {};
+  if (isRecord(obj.datasets)) {
+    for (const kind of ['geosite', 'geoip', 'asn'] as const) {
+      const u = obj.datasets[kind];
+      if (typeof u === 'string' && isHttpUrl(u.trim())) datasets[kind] = u.trim();
+      else if (u !== undefined) skipped.push(`datasets.${kind} must be an http(s) URL.`);
+    }
+  }
+  (obj.rules as unknown[]).forEach((r, i) => {
+    const where = `rules[${i}]`;
+    if (typeof r === 'string') {
+      const res = parseCompactRule(r, where);
+      if (res.error) skipped.push(res.error);
+      else if (res.defaultAction) ignored.push(`${where} (MATCH)`);
+      if (res.rule) rules.push(res.rule);
+      return;
+    }
+    if (!isRecord(r)) {
+      skipped.push(`${where}: each rule must be an object or a "TYPE,value,locale" string.`);
+      return;
+    }
+    const res = parseRuleObject(r, where);
+    if (res.rule && !res.errors.length) rules.push(res.rule);
+    else skipped.push(...res.errors);
+  });
+  return { rules, skipped, ignored, datasets };
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -337,7 +431,7 @@ function parseOptions(raw: unknown, base: Options, errors: string[]): Options {
     if (isUiLanguagePref(raw.uiLanguage)) out.uiLanguage = raw.uiLanguage;
     else errors.push(`options.uiLanguage must be "auto" or one of ${UI_LANGUAGES.map((l) => `"${l.value}"`).join(', ')}.`);
   }
-  for (const k of ['keepSessionOnSystem', 'reloadOnLate', 'dnrHeaders', 'overrideWorkers'] as const) {
+  for (const k of ['keepSessionOnSystem', 'reloadOnLate', 'dnrHeaders', 'overrideWorkers', 'subscriptionDatasets'] as const) {
     if (raw[k] === undefined) continue;
     if (typeof raw[k] === 'boolean') out[k] = raw[k];
     else errors.push(`options.${k} must be true or false.`);
@@ -421,6 +515,9 @@ export function settingsToConfigObject(s: Settings): { [k: string]: YamlValue } 
     version: 1,
     enabled: s.enabled,
     rules,
+    ...(s.subscriptions.length
+      ? { subscriptions: s.subscriptions.map((x) => ({ ...(x.name ? { name: x.name } : {}), url: x.url, enabled: x.enabled, interval: x.interval })) }
+      : {}),
     default: def,
     options: { ...s.options, datasetUpdates: { ...s.options.datasetUpdates }, extensionUpdates: { ...s.options.extensionUpdates } },
   };
@@ -488,6 +585,7 @@ export function sanitizeStoredSettings(raw: unknown, fallback: Settings): { sett
           : { mode: 'SYSTEM' }
         : undefined,
       options: raw.options,
+      ...(Array.isArray(raw.subscriptions) ? { subscriptions: raw.subscriptions } : {}),
     },
     fallback,
   );

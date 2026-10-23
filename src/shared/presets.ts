@@ -48,6 +48,7 @@ export const DEFAULT_OPTIONS: Options = {
   uiLanguage: 'auto',
   datasetUpdates: { onStartup: false, interval: 'off', minIntervalHours: 24, onlyNeeded: true },
   extensionUpdates: { onStartup: false, interval: 'off', source: DEFAULT_RELEASE_SOURCE },
+  subscriptionDatasets: true,
 };
 
 function rule(id: string, partial: Omit<Rule, 'id' | 'enabled' | 'priority' | 'note' | 'profile'> & { locale?: string; note?: string }): Rule {
@@ -84,6 +85,7 @@ export function defaultSettings(): Settings {
     schemaVersion: 1,
     enabled: true,
     rules: examplePresetRules(),
+    subscriptions: [],
     defaultAction: { action: 'SYSTEM' },
     options: { ...DEFAULT_OPTIONS },
   };
@@ -95,6 +97,7 @@ export function globalEnUsSettings(): Settings {
     schemaVersion: 1,
     enabled: true,
     rules: [],
+    subscriptions: [],
     defaultAction: { action: 'PROFILE', profile: makeProfile('en-US') },
     options: { ...DEFAULT_OPTIONS },
   };

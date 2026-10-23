@@ -53,6 +53,28 @@ export interface Rule {
   note: string;
   /** IP rules only: match IP-literal hosts only, never a looked-up server address (Clash no-resolve). */
   noResolve?: boolean;
+  /** Set only on rules that come from a subscription (never stored in Settings.rules). */
+  origin?: RuleOrigin;
+}
+
+export interface RuleOrigin {
+  subscription: string;
+  /** The subscription's display name. */
+  name: string;
+  /** 1 for the first subscription, 2 for the next…; your own rules are layer 0 and always win. */
+  layer: number;
+}
+
+/** A rules file on the internet, fetched and kept up to date by the extension. */
+export interface Subscription {
+  id: string;
+  /** Optional display name; the URL's host is shown when empty. */
+  name: string;
+  /** As entered (GitHub file pages are converted to the raw file when fetching). */
+  url: string;
+  enabled: boolean;
+  /** Automatic updates. */
+  interval: DatasetUpdateInterval;
 }
 
 export type DefaultAction = { action: 'SYSTEM' } | { action: 'PROFILE'; profile: LocaleProfile };
@@ -100,12 +122,17 @@ export interface Options {
   datasetUpdates: DatasetUpdateOptions;
   /** Checks for a newer version of the extension. */
   extensionUpdates: ExtensionUpdateOptions;
+  /** Download the GeoSite / GeoIP / ASN data that subscription rules need when it is missing. */
+  subscriptionDatasets: boolean;
 }
 
 export interface Settings {
   schemaVersion: 1;
   enabled: boolean;
+  /** Your own rules. */
   rules: Rule[];
+  /** Rule subscriptions; their rules apply after yours. */
+  subscriptions: Subscription[];
   defaultAction: DefaultAction;
   options: Options;
 }

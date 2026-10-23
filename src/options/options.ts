@@ -1,7 +1,7 @@
 // Options page: rule management, hostname tester, verification, import/export,
 // settings, sessions/log and documentation of limitations.
 
-import { exportConfig, importConfigText, mergeRules } from '../shared/config-io.js';
+import { exportConfig, importConfigText, MAX_SUBSCRIPTIONS, mergeRules, newSubscriptionId } from '../shared/config-io.js';
 import { downloadDataset } from '../shared/dataset-download.js';
 import { autoUpdatesEnabled, isUrlSource, MAX_UPDATE_GAP_HOURS, MIN_UPDATE_GAP_HOURS, minGapMs, type DatasetUpdateRecord, type UpdateOutcome } from '../shared/dataset-schedule.js';
 import { DATASET_KINDS, DATASETS, deleteDataset, listDatasets, putDataset, type DatasetMeta } from '../shared/dataset-store.js';
@@ -21,7 +21,17 @@ import { describeProfile, makeProfile } from '../shared/locale.js';
 import { send, type HostTest, type TabStatus, type VerifyResult } from '../shared/messages.js';
 import { defaultSettings, examplePresetRules, globalEnUsSettings } from '../shared/presets.js';
 import { analyzeRules, describeAction, displayDomain, resolveHost, ruleLabel, rulesInPrecedenceOrder, requiredDatasets } from '../shared/rules.js';
-import type { DatasetUpdateOptions, ExtensionUpdateOptions, Options, Rule, Settings } from '../shared/types.js';
+import {
+  currentData,
+  rawUrl,
+  SUBSCRIPTION_DATA_KEY,
+  SUBSCRIPTION_DATASET_STATE_KEY,
+  subscriptionLabel,
+  withSubscriptions,
+  type SubscriptionDataMap,
+  type SubscriptionDatasetState,
+} from '../shared/subscriptions.js';
+import type { DatasetUpdateOptions, ExtensionUpdateOptions, Options, Rule, Settings, Subscription } from '../shared/types.js';
 import { $, chip, clear, debounce, h, toggleSwitch } from '../ui/dom.js';
 import { getLanguage, setLanguage, t, translateDocument, UI_LANGUAGES, type MessageKey, type UiLanguagePref } from '../shared/i18n.js';
 import { describeStatus } from '../ui/status.js';
@@ -39,7 +49,7 @@ async function commit(next: Settings): Promise<void> {
 
 // ------------------------------------------------------------------ navigation
 
-const PAGES = ['rules', 'test', 'io', 'data', 'settings', 'sessions', 'updates', 'about'] as const;
+const PAGES = ['rules', 'subs', 'test', 'io', 'data', 'settings', 'sessions', 'updates', 'about'] as const;
 type Page = (typeof PAGES)[number];
 
 function currentPage(): Page {
@@ -75,6 +85,16 @@ function renderRules(): void {
     h('p', { class: 'lead' },
       t('opt.rules.lead')),
   );
+
+  // Rules that come from subscriptions apply after these; say so and link there.
+  const subRules = withSubscriptions(settings, subData).rules.length - settings.rules.length;
+  if (settings.subscriptions.length) {
+    root.append(
+      h('div', { class: 'notice info row wrap' },
+        h('span', { class: 'spacer' }, t('opt.sub.rulesNote', { count: subRules, subs: settings.subscriptions.filter((s) => s.enabled).length })),
+        h('a', { href: '#subs' }, t('opt.sub.manage'))),
+    );
+  }
 
   // Global switch + default action
   const d = settings.defaultAction;
@@ -253,7 +273,7 @@ function renderTest(): void {
           ? h('table', { class: 'trace' },
               h('tr', {}, h('th', {}, '#'), h('th', {}, t('opt.test.matchingRule')), h('th', {}, t('rule.action')), h('th', {}, t('opt.test.why'))),
               ...ht.matches.map((m, i) => {
-                const rule = settings.rules.find((x) => x.id === m.ruleId);
+                const rule = withSubscriptions(settings, subData).rules.find((x) => x.id === m.ruleId);
                 return h('tr', { class: i === 0 ? 'winner' : '' },
                   h('td', {}, String(i + 1)),
                   h('td', { class: 'mono' }, m.label),
@@ -560,7 +580,7 @@ async function renderData(): Promise<void> {
     send({ type: 'getDatasetUpdateState' }).catch(() => null),
   ]);
   clear(root);
-  const needed = requiredDatasets(settings.rules);
+  const needed = requiredDatasets(withSubscriptions(settings, subData).rules);
   root.append(
     h('h1', {}, t('opt.data.title')),
     h('p', { class: 'lead' }, t('opt.data.lead')),
@@ -743,6 +763,191 @@ function updateLine(meta: DatasetMeta, rec: DatasetUpdateRecord | undefined): HT
   );
 }
 
+// --------------------------------------------------------------- subscriptions
+
+/** Rules last fetched for each subscription (written by the service worker). */
+let subData: SubscriptionDataMap = {};
+/** Subscriptions being fetched from this page (shows "Updating…"). */
+const updating = new Map<string, number>();
+
+/** A subscription stops showing "Updating…" once the worker has a result newer than the request. */
+function settleUpdating(): void {
+  for (const [id, since] of updating) {
+    const d = subData[id];
+    if (d && ((d.fetchedAt ?? 0) >= since || (d.error && (d.lastAttempt ?? 0) >= since))) updating.delete(id);
+  }
+}
+
+/** Automatic data-set downloads for subscriptions (written by the service worker). */
+let subDatasetState: SubscriptionDatasetState = {};
+
+async function loadSubData(): Promise<void> {
+  const r = await chrome.storage.local.get([SUBSCRIPTION_DATA_KEY, SUBSCRIPTION_DATASET_STATE_KEY]);
+  subData = (r[SUBSCRIPTION_DATA_KEY] as SubscriptionDataMap | undefined) ?? {};
+  subDatasetState = (r[SUBSCRIPTION_DATASET_STATE_KEY] as SubscriptionDatasetState | undefined) ?? {};
+}
+
+/** The option to download the data sets subscriptions need, and what was downloaded. */
+function subscriptionDatasetsCard(): HTMLElement {
+  const box = h('input', { type: 'checkbox' });
+  box.checked = settings.options.subscriptionDatasets;
+  box.addEventListener('change', () => void commit({ ...settings, options: { ...settings.options, subscriptionDatasets: box.checked } }));
+  const lines = DATASET_KINDS.flatMap((kind) => {
+    const rec = subDatasetState[kind];
+    if (!rec) return [];
+    const name = DATASETS[kind].label;
+    return [rec.ok
+      ? h('p', { class: 'hint' }, t('opt.sub.dsDone', { name, sub: rec.for, url: rec.url, when: new Date(rec.at).toLocaleString(getLanguage()) }))
+      : h('p', { class: 'small error-text' }, t('opt.sub.dsFailed', { name, sub: rec.for, error: rec.error ?? '' }))];
+  });
+  return h('div', { class: 'card stack' },
+    h('label', { class: 'row' }, box, h('span', {}, t('opt.sub.datasets'))),
+    h('p', { class: 'hint' }, t('opt.sub.datasetsHint')),
+    ...lines,
+  );
+}
+
+async function updateSubscriptionsNow(ids?: string[]): Promise<void> {
+  for (const id of ids ?? settings.subscriptions.map((s) => s.id)) updating.set(id, Date.now());
+  renderSubscriptions();
+  try {
+    await send({ type: 'updateSubscriptions', ...(ids ? { ids } : {}) });
+  } finally {
+    for (const id of ids ?? settings.subscriptions.map((s) => s.id)) updating.delete(id);
+    await loadSubData();
+    renderSubscriptions();
+  }
+}
+
+function renderSubscriptions(): void {
+  const root = $('#subs');
+  clear(root);
+  const subs = settings.subscriptions;
+  const setSubs = (next: Subscription[]) => void commit({ ...settings, subscriptions: next });
+  const patch = (id: string, p: Partial<Subscription>) => setSubs(subs.map((s) => (s.id === id ? { ...s, ...p } : s)));
+  const when = (ms: number) => new Date(ms).toLocaleString(getLanguage());
+
+  root.append(
+    h('div', { class: 'row' }, h('h1', {}, t('opt.sub.title')), h('span', { class: 'spacer' }),
+      subs.length ? h('button', { onclick: () => void updateSubscriptionsNow() }, t('opt.sub.updateAll')) : null),
+    h('p', { class: 'lead' }, t('opt.sub.lead')),
+  );
+
+  // Add a subscription
+  const url = h('input', { type: 'url', placeholder: 'https://github.com/<owner>/<repo>/blob/main/rules.yaml', style: 'flex:1;min-width:280px', 'aria-label': t('opt.sub.url'), spellcheck: 'false' });
+  const name = h('input', { type: 'text', placeholder: t('opt.sub.namePlaceholder'), style: 'width:200px', 'aria-label': t('opt.sub.name') });
+  const addMsg = h('div', { class: 'small' });
+  const add = h('button', {
+    class: 'primary',
+    onclick: async () => {
+      const u = url.value.trim();
+      addMsg.className = 'error-text';
+      if (!isHttpUrl(u)) return void (addMsg.textContent = t('opt.sub.invalidUrl'));
+      if (subs.length >= MAX_SUBSCRIPTIONS) return void (addMsg.textContent = t('opt.sub.tooMany', { max: MAX_SUBSCRIPTIONS }));
+      if (subs.some((s) => rawUrl(s.url) === rawUrl(u))) return void (addMsg.textContent = t('opt.sub.duplicate'));
+      // The worker fetches a new subscription as soon as it sees it.
+      const sub: Subscription = { id: newSubscriptionId(), name: name.value.trim(), url: u, enabled: true, interval: 'daily' };
+      updating.set(sub.id, Date.now());
+      setTimeout(() => {
+        updating.delete(sub.id);
+        renderSubscriptions();
+      }, 15_000);
+      await commit({ ...settings, subscriptions: [...subs, sub] });
+    },
+  }, t('opt.sub.add'));
+  root.append(
+    h('div', { class: 'card stack' },
+      h('h2', {}, t('opt.sub.addTitle')),
+      h('div', { class: 'row wrap' }, url, name, add),
+      h('p', { class: 'hint' }, t('opt.sub.formats')),
+      addMsg,
+    ),
+  );
+
+  if (!subs.length) {
+    root.append(h('div', { class: 'card' }, h('p', { class: 'muted' }, t('opt.sub.none'))), subscriptionDatasetsCard());
+    return;
+  }
+  root.append(subscriptionDatasetsCard());
+
+  subs.forEach((sub, i) => {
+    const d = currentData(sub, subData);
+    const busy = updating.has(sub.id);
+    const status = busy
+      ? h('p', { class: 'hint' }, t('opt.sub.updating'))
+      : d?.error
+        ? h('p', { class: 'small error-text' }, t('opt.sub.failed', { when: when(d.lastAttempt ?? Date.now()), error: d.error }), d.fetchedAt ? ` ${t('opt.sub.keeping', { count: d.rules.length })}` : '')
+        : d?.fetchedAt
+          ? h('p', { class: 'hint' }, t('opt.sub.status', { count: d.rules.length, when: when(d.fetchedAt) }))
+          : h('p', { class: 'hint' }, t('opt.sub.notYet'));
+    const interval = h('select', { 'aria-label': t('opt.sub.autoUpdate') },
+      ...(['off', 'daily', 'weekly', 'monthly'] as const).map((v) => h('option', { value: v }, t(`opt.upd.interval.${v}`))));
+    interval.value = sub.interval;
+    interval.addEventListener('change', () => patch(sub.id, { interval: interval.value as Subscription['interval'] }));
+    const nameInput = h('input', { type: 'text', value: sub.name, placeholder: subscriptionLabel({ name: '', url: sub.url }), style: 'width:220px', 'aria-label': t('opt.sub.name') });
+    nameInput.addEventListener('change', () => patch(sub.id, { name: nameInput.value.trim() }));
+    const urlInput = h('input', { type: 'url', value: sub.url, style: 'flex:1;min-width:280px', 'aria-label': t('opt.sub.url'), spellcheck: 'false' });
+    const urlMsg = h('div', { class: 'small' });
+    urlInput.addEventListener('change', () => {
+      const u = urlInput.value.trim();
+      if (isHttpUrl(u)) patch(sub.id, { url: u });
+      else {
+        urlMsg.className = 'error-text';
+        urlMsg.textContent = t('opt.sub.invalidUrl');
+      }
+    });
+    const move = (by: number) => {
+      const next = [...subs];
+      const [x] = next.splice(i, 1);
+      next.splice(i + by, 0, x!);
+      setSubs(next);
+    };
+    const rules = d?.rules ?? [];
+    const shown = rules.slice(0, 500);
+    root.append(
+      h('div', { class: 'card stack', 'data-sub': sub.id },
+        h('div', { class: 'row wrap' },
+          toggleSwitch(sub.enabled, (v) => patch(sub.id, { enabled: v }), t('opt.sub.enabled')),
+          h('h2', {}, subscriptionLabel(sub)),
+          chip(t('opt.sub.layer', { n: i + 1 }), 'off'),
+          d?.fetchedAt ? chip(t('opt.sub.ruleCount', { count: rules.length }), sub.enabled ? 'ok' : 'off') : null,
+          h('span', { class: 'spacer' }),
+          h('button', { disabled: i === 0, title: t('opt.sub.up'), 'aria-label': t('opt.sub.up'), onclick: () => move(-1) }, '↑'),
+          h('button', { disabled: i === subs.length - 1, title: t('opt.sub.down'), 'aria-label': t('opt.sub.down'), onclick: () => move(1) }, '↓'),
+        ),
+        h('div', { class: 'row wrap' }, urlInput, nameInput),
+        urlMsg,
+        rawUrl(sub.url) !== sub.url ? h('p', { class: 'hint' }, t('opt.sub.rawFrom', { url: rawUrl(sub.url) })) : null,
+        status,
+        d?.skippedCount ? h('p', { class: 'small', style: 'color:var(--warn)' }, t('opt.sub.skipped', { count: d.skippedCount }), ' ', d.skipped.slice(0, 3).join(' · ')) : null,
+        d?.ignored.length ? h('p', { class: 'hint' }, t('opt.sub.ignored', { keys: d.ignored.join(', ') })) : null,
+        h('div', { class: 'row wrap' },
+          h('label', { class: 'row' }, h('span', {}, t('opt.sub.autoUpdate')), interval),
+          h('button', { disabled: busy, onclick: () => void updateSubscriptionsNow([sub.id]) }, t('opt.sub.updateNow')),
+          h('button', {
+            class: 'danger',
+            onclick: () => {
+              if (confirm(t('opt.sub.removeConfirm', { name: subscriptionLabel(sub) }))) setSubs(subs.filter((s) => s.id !== sub.id));
+            },
+          }, t('common.delete')),
+        ),
+        rules.length
+          ? h('details', {},
+              h('summary', {}, t('opt.sub.showRules', { count: rules.length })),
+              h('div', { class: 'scroll' },
+                h('table', { class: 'rules' },
+                  h('tr', {}, h('th', {}, t('opt.sub.colType')), h('th', {}, t('opt.sub.colValue')), h('th', {}, t('opt.sub.colResult'))),
+                  ...shown.map((r) => h('tr', { class: r.enabled ? '' : 'disabled' },
+                    h('td', { class: 'type' }, r.type),
+                    h('td', { class: 'value' }, r.type === 'DOMAIN' || r.type === 'DOMAIN-SUFFIX' ? displayDomain(r.value) : r.value),
+                    h('td', {}, describeAction(r)))))),
+              rules.length > shown.length ? h('p', { class: 'hint' }, t('opt.sub.more', { count: rules.length - shown.length })) : null)
+          : null,
+      ),
+    );
+  });
+}
+
 // --------------------------------------------------------------------- updates
 
 const VERSION = chrome.runtime.getManifest().version;
@@ -896,6 +1101,7 @@ function renderAll(): void {
   setLanguage(settings.options.uiLanguage);
   translateDocument();
   renderRules();
+  renderSubscriptions();
   renderTest();
   renderIO();
   renderSettings();
@@ -910,9 +1116,19 @@ function renderAll(): void {
 
 async function main(): Promise<void> {
   settings = await loadSettings();
+  await loadSubData();
   renderAll();
   showPage();
   window.addEventListener('hashchange', showPage);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || (!changes[SUBSCRIPTION_DATA_KEY] && !changes[SUBSCRIPTION_DATASET_STATE_KEY])) return;
+    if (changes[SUBSCRIPTION_DATA_KEY]) subData = (changes[SUBSCRIPTION_DATA_KEY].newValue as SubscriptionDataMap | undefined) ?? {};
+    if (changes[SUBSCRIPTION_DATASET_STATE_KEY]) subDatasetState = (changes[SUBSCRIPTION_DATASET_STATE_KEY].newValue as SubscriptionDatasetState | undefined) ?? {};
+    settleUpdating();
+    renderRules();
+    renderSubscriptions();
+    if (currentPage() === 'data') void renderData();
+  });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes[EXTENSION_UPDATE_STATE_KEY]) return;
     void renderUpdateBadge();
