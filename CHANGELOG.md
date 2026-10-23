@@ -17,6 +17,10 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 ### Changed
 - Rule precedence has a new first step, four tiers: your rules › subscription rules › your special rules (GEOSITE, IP-CIDR, IP-CIDR6, IP-ASN, GEOIP) › subscription special rules. Within the subscription tiers, the earlier subscription wins.
 - The first-request header rules (DNR) no longer mirror a rule that ranks below an IP rule, since the server address might decide instead. The debugger still applies it.
+- *Options ▸ Updates* only tells you that a newer version exists (version, date, link to its release page). The popup tip and the version badge stay.
+
+### Removed
+- From the Updates page: the release notes, the download links, the step-by-step update instructions and the *Reload extension* button.
 
 ## [1.2.2] - 2026-10-23
 

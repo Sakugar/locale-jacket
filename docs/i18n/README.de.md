@@ -115,7 +115,7 @@ Popup und Optionsseite gibt es auf English, 简体中文, 繁體中文, 日本�
 
 ## Updates
 
-Die installierte Version steht neben dem Titel im Pop-up und unten in der Seitenleiste der Optionen. *Optionen ▸ Updates* sucht nach einer neueren Version – nur wenn Sie auf **Jetzt prüfen** klicken oder automatische Prüfungen einschalten (standardmäßig aus, höchstens alle 12 Stunden), und nur bei der dort angezeigten Release-Adresse. Wird eine neuere Version gefunden, zeigt das Pop-up einen Hinweis und die Seite die Versionshinweise, Download-Links (Diff-Paket, Zip, Crx) und die Schritte zum Aktualisieren. Chrome aktualisiert einen entpackten Ordner nie selbst: Kopieren Sie die neuen Dateien über den Ordner und klicken Sie auf **Erweiterung neu laden**. Solange das GitHub-Repository privat ist, antwortet GitHub mit 404; die Seite erklärt das.
+Die installierte Version steht neben dem Titel im Pop-up und unten in der Seitenleiste der Optionen. *Optionen ▸ Updates* sucht nach einer neueren Version – nur wenn Sie auf **Jetzt prüfen** klicken oder automatische Prüfungen einschalten (standardmäßig aus, höchstens alle 12 Stunden), und nur bei der dort angezeigten Release-Adresse. Eine neuere Version ist nur ein Hinweis: Das Pop-up zeigt ihn an, der Link *Updates* die Versionsnummer, und die Seite verlinkt die Release-Seite. Die Erweiterung lädt und installiert nichts selbst; wie Sie aktualisieren, steht unter *Installation*. Solange das GitHub-Repository privat ist, antwortet GitHub mit 404; die Seite erklärt das.
 
 ## Datenschutz und Berechtigungen
 

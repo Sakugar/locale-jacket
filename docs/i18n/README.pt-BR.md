@@ -115,7 +115,7 @@ O pop-up e a página de opções estão em English, 简体中文, 繁體中文, 
 
 ## Atualizações
 
-A versão instalada aparece ao lado do título do pop-up e no rodapé da barra lateral das opções. *Opções ▸ Atualizações* procura uma versão mais nova: só quando você clica em **Verificar agora** ou ativa as verificações automáticas (desativadas por padrão, no máximo uma a cada 12 horas), e só no endereço de publicação mostrado. Se houver uma versão nova, o pop-up mostra um aviso e a página mostra as notas da versão, os links de download (pacote de diferenças, zip, crx) e os passos para atualizar. O Chrome nunca atualiza sozinho uma pasta sem compactação: copie os arquivos novos por cima da pasta e clique em **Recarregar a extensão**. Enquanto o repositório no GitHub for privado, o GitHub responde 404; a página explica isso.
+A versão instalada aparece ao lado do título do pop-up e no rodapé da barra lateral das opções. *Opções ▸ Atualizações* procura uma versão mais nova: só quando você clica em **Verificar agora** ou ativa as verificações automáticas (desativadas por padrão, no máximo uma a cada 12 horas), e só no endereço de publicação mostrado. Uma versão nova é só um aviso: o pop-up o mostra, o link *Atualizações* indica o número da versão e a página leva à página da versão. A extensão não baixa nem instala nada; como atualizar está em *Instalação*. Enquanto o repositório no GitHub for privado, o GitHub responde 404; a página explica isso.
 
 ## Privacidade e permissões
 

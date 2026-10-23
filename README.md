@@ -168,10 +168,7 @@ The installed version is shown next to the popup title and at the bottom of the 
 
 - **When it checks:** only when you click **Check now**, or, if you turn them on, automatically when the browser starts and/or every day, week or month. Automatic checks are off by default, and there is at most one every 12 hours.
 - **Where it asks:** only the release address shown on the page, by default `https://api.github.com/repos/Sakugar/locale-jacket/releases/latest`. While that repository is private, GitHub answers 404 to anyone not signed in, and the page says so; point the address at a public copy, or check the Releases page yourself.
-- **When a newer version is found:**
-  - The popup shows a tip, and the *Updates* link shows the new version number.
-  - The page shows the release notes (as plain text), links to the diff pack from your version, the full `.zip` and the `.crx`, and the steps for your kind of install.
-- **Applying it:** Chrome never updates an unpacked folder, so an unpacked install cannot update itself. Download the diff pack (or the zip), copy it over your folder, delete anything listed in `DELETED.txt`, then click **Reload extension** on the same page. Your rules and settings are kept. Store and policy installs are updated by Chrome.
+- **When a newer version is found:** it is only a tip. The popup shows a notice, the *Updates* link shows the new version number, and the page links to the release page. The extension downloads and installs nothing; see [Install](#install) for how to upgrade (the diff pack or the full zip).
 
 ## Rules
 

@@ -115,7 +115,7 @@ La ventana emergente y la página de opciones están en English, 简体中文, �
 
 ## Actualizaciones
 
-La versión instalada aparece junto al título de la ventana emergente y al pie de la barra lateral de opciones. *Opciones ▸ Actualizaciones* busca una versión más reciente: solo cuando haces clic en **Comprobar ahora** o activas las comprobaciones automáticas (desactivadas de forma predeterminada, como máximo una cada 12 horas), y solo en la dirección de publicación que se muestra. Si encuentra una versión nueva, la ventana emergente muestra un aviso y la página muestra las notas de la versión, los enlaces de descarga (paquete de diferencias, zip, crx) y los pasos para actualizar. Chrome nunca actualiza una carpeta descomprimida por sí mismo: copia los archivos nuevos sobre la carpeta y haz clic en **Recargar la extensión**. Mientras el repositorio de GitHub sea privado, GitHub responde 404; la página lo explica.
+La versión instalada aparece junto al título de la ventana emergente y al pie de la barra lateral de opciones. *Opciones ▸ Actualizaciones* busca una versión más reciente: solo cuando haces clic en **Comprobar ahora** o activas las comprobaciones automáticas (desactivadas de forma predeterminada, como máximo una cada 12 horas), y solo en la dirección de publicación que se muestra. Una versión nueva es solo un aviso: la ventana emergente lo muestra, el enlace *Actualizaciones* indica el número de versión y la página enlaza a la página de la versión. La extensión no descarga ni instala nada; cómo actualizar se explica en *Instalación*. Mientras el repositorio de GitHub sea privado, GitHub responde 404; la página lo explica.
 
 ## Privacidad y permisos
 
