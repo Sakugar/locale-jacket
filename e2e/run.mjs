@@ -603,6 +603,94 @@ try {
     }
   });
 
+  await test('rule subscriptions: added from the UI, layered under your rules, auto-downloaded GeoSite, conditional updates, web pages refused', async () => {
+    // A local "internet": two subscription files, a web page and the GeoSite data they need.
+    const enc = new TextEncoder();
+    const varint = (n) => { const o = []; while (n > 127) { o.push((n & 127) | 128); n >>>= 7; } o.push(n); return o; };
+    const field = (num, bytes) => [...varint(num * 8 + 2), ...varint(bytes.length), ...bytes];
+    const geositeDat = Buffer.from(field(1, [...field(1, [...enc.encode('LJ-SUB')]), ...field(2, [...varint(8), ...varint(2), ...field(2, [...enc.encode('sub-geo.localhost')])])]));
+    const files = new Map();
+    const hits = [];
+    const net = http.createServer((req, res) => {
+      const path = new URL(req.url, 'http://x').pathname;
+      hits.push({ path, inm: req.headers['if-none-match'] ?? null });
+      const f = files.get(path);
+      if (!f) { res.writeHead(404); res.end('not found'); return; }
+      const etag = `"${f.version}"`;
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag }); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': f.type, ETag: etag });
+      res.end(f.body);
+    });
+    await new Promise((r) => net.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${net.address().port}`;
+    const yamlV = (locale) => `datasets:\n  geosite: ${base}/geosite.dat\nrules:\n  - DOMAIN-SUFFIX,sub-a.localhost,${locale}\n  - DOMAIN-SUFFIX,google.localhost,ja-JP\n  - GEOSITE,lj-sub,ko-KR\n  - NOT-A-RULE,x,en-US\n`;
+    files.set('/rules.yaml', { type: 'text/plain', version: 1, body: yamlV('fr-FR') });
+    files.set('/rules.json', { type: 'application/json', version: 1, body: JSON.stringify({ rules: ['DOMAIN-SUFFIX,sub-a.localhost,de-DE', 'DOMAIN,sub-b.localhost,de-DE'] }) });
+    files.set('/page.html', { type: 'text/html; charset=utf-8', version: 1, body: '<!DOCTYPE html><html><body>A repository page</body></html>' });
+    files.set('/geosite.dat', { type: 'application/octet-stream', version: 1, body: geositeDat });
+    const opts = await openTab(`chrome-extension://${extId}/options/options.html#subs`);
+    const datasetsInstalled = () => evaluate(cdp, opts.s, `import('/shared/dataset-store.js').then((s) => s.listDatasets()).then((l) => l.map((m) => m.kind).join(','))`);
+    const subData = () => sw(`chrome.storage.local.get('subscriptionData').then((r) => r.subscriptionData ?? {})`);
+    try {
+      await until(() => evaluate(cdp, opts.s, `!!document.querySelector('#subs input[type=url]')`), { message: 'Subscriptions page' });
+      await evaluate(cdp, opts.s, `import('/shared/dataset-store.js').then((s) => s.deleteDataset('geosite')).then(() => chrome.runtime.sendMessage({ type: 'datasetsChanged' }))`);
+      await setSettings(settingsFrom(CONFIG));
+      // Add the YAML subscription the way a user does.
+      await until(() => evaluate(cdp, opts.s, `!!document.querySelector('#subs input[type=url]')`), { message: 'Subscriptions page' });
+      await evaluate(cdp, opts.s, `(() => {
+        const i = document.querySelector('#subs input[type=url]');
+        i.value = ${JSON.stringify(`${base}/rules.yaml`)};
+        document.querySelector('#subs input[type=text]').value = 'Team rules';
+        [...document.querySelectorAll('#subs button')].find((b) => b.textContent === 'Add').click();
+      })()`);
+      await until(async () => Object.values(await subData()).some((d) => d.rules?.length === 3), { message: 'subscription fetched', timeoutMs: 15000 });
+      await until(async () => (await datasetsInstalled()).includes('geosite'), { message: 'GeoSite downloaded for the subscription', timeoutMs: 15000 });
+      if (hits.filter((h) => h.path === '/geosite.dat').length !== 1) throw new Error(`GeoSite requests: ${JSON.stringify(hits)}`);
+      await until(() => evaluate(cdp, opts.s, `/3 rule\\(s\\), updated/.test(document.querySelector('#subs').textContent) && /1 entry\\(ies\\) are not valid rules/.test(document.querySelector('#subs').textContent)`), { message: 'status and skipped entry shown' });
+
+      // Layers: own rules win, subscription rules apply elsewhere, GEOSITE uses the downloaded data.
+      const t = await openTab(u('sub-a.localhost', '/plain.html'));
+      expectLocale(await report(t), 'fr-FR', 'subscription rule');
+      expectLocale(await navigate(t, u('google.localhost', '/plain.html?own=1'), 'link'), 'en-US', 'your own rule beats the subscription');
+      expectLocale(await navigate(t, u('www.sub-geo.localhost', '/plain.html'), 'link'), 'ko-KR', 'GEOSITE from the auto-downloaded data set');
+      const st = await status(t.tabId);
+      if (!/GEOSITE,lj-sub · Team rules/.test(st.resolution.ruleLabel ?? '')) throw new Error(`rule label: ${st.resolution.ruleLabel}`);
+
+      // A second (JSON) subscription below the first: the first one wins where both match.
+      const first = (await sw(`chrome.storage.local.get('settings').then((r) => r.settings.subscriptions)`))[0];
+      const two = (extra = []) => settingsFrom(CONFIG, { subscriptions: [first, { id: 'json-sub', name: 'JSON', url: `${base}/rules.json`, enabled: true, interval: 'daily' }, ...extra] });
+      await setSettings(two());
+      await until(async () => (await subData())['json-sub']?.rules?.length === 2, { message: 'JSON subscription fetched' });
+      expectLocale(await navigate(t, u('sub-a.localhost', '/plain.html?two=1'), 'link'), 'fr-FR', 'the earlier subscription wins');
+      expectLocale(await navigate(t, u('sub-b.localhost', '/plain.html'), 'link'), 'de-DE', 'the JSON subscription');
+
+      // Update: unchanged first (conditional request), then a new version.
+      const update = (ids) => evaluate(cdp, opts.s, `chrome.runtime.sendMessage({ type: 'updateSubscriptions', ids: ${JSON.stringify(ids)} }).then((r) => r.outcomes.map((o) => o.result).join(','))`);
+      if ((await update([first.id])) !== 'unchanged') throw new Error('expected unchanged');
+      if (hits.filter((h) => h.path === '/rules.yaml').at(-1).inm !== '"1"') throw new Error('update was not conditional');
+      files.set('/rules.yaml', { type: 'text/plain', version: 2, body: yamlV('es-ES') });
+      if ((await update([first.id])) !== 'updated') throw new Error('expected updated');
+      expectLocale(await navigate(t, u('sub-a.localhost', '/plain.html?v2=1'), 'link'), 'es-ES', 'after the subscription changed');
+
+      // A link to a web page is refused with an explanation; the other subscriptions keep working.
+      await setSettings(two([{ id: 'html-sub', name: 'Page', url: `${base}/page.html`, enabled: true, interval: 'daily' }]));
+      await until(async () => /web page/.test((await subData())['html-sub']?.error ?? ''), { message: 'web page refused' });
+      await until(() => evaluate(cdp, opts.s, `/returned a web page/.test(document.querySelector('#subs').textContent)`), { message: 'error shown on the page' });
+      if (!(await sw(`chrome.alarms.get('subscription-update').then((a) => Boolean(a))`))) throw new Error('no hourly alarm for daily subscriptions');
+
+      // Removing them removes their rules (and what was stored for them).
+      await setSettings(settingsFrom(CONFIG));
+      await until(async () => Object.keys(await subData()).length === 0, { message: 'subscription data pruned' });
+      expectLocale(await navigate(t, u('sub-a.localhost', '/plain.html?gone=1'), 'link'), NATIVE, 'no subscription rules left');
+      await until(() => sw(`chrome.alarms.get('subscription-update').then((a) => !a)`), { message: 'alarm cleared' });
+    } finally {
+      net.close();
+      await evaluate(cdp, opts.s, `import('/shared/dataset-store.js').then((s) => s.deleteDataset('geosite')).then(() => chrome.runtime.sendMessage({ type: 'datasetsChanged' }))`).catch(() => undefined);
+      await sw(`chrome.storage.local.remove(['subscriptionData', 'subscriptionDatasetState']).then(() => true)`).catch(() => undefined);
+      await setSettings(settingsFrom(CONFIG));
+    }
+  });
+
   await test('UI follows the browser language (zh-CN) unless set otherwise', async () => {
     await setSettings({ ...settingsFrom(CONFIG), options: { ...settingsFrom(CONFIG).options, uiLanguage: 'auto' } });
     const p = await openTab(`chrome-extension://${extId}/options/options.html#rules`);

@@ -109,6 +109,20 @@ export function startServer({ port = 8787, quiet = false } = {}) {
       case '/api/headers':
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', ...noStore });
         return res.end(JSON.stringify({ host, acceptLanguage: al, headers: req.headers }));
+      case '/sample-rules.yaml':
+        // A small rule subscription for trying Options ▸ Subscriptions locally.
+        res.writeHead(200, { 'Content-Type': 'text/yaml; charset=utf-8', ETag: '"sample-1"', ...noStore });
+        return res.end([
+          '# Sample Locale Jacket subscription (verify/server.mjs)',
+          'rules:',
+          '  - DOMAIN-SUFFIX,example.localhost,en-GB',
+          '  - DOMAIN-SUFFIX,apple.localhost,ja-JP',
+          '  - type: DOMAIN',
+          '    domain: news.example.localhost',
+          '    locale: fr-FR',
+          '  - DOMAIN-KEYWORD,shop,de-DE',
+          '',
+        ].join('\n'));
       case '/api/release': {
         // A GitHub-style "latest release" answer for update-check tests:
         // ?version=9.9.9&from=1.2.1 (diff pack base), ?status=404 for a failure.

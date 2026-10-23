@@ -38,6 +38,7 @@ rules:
   - DOMAIN-SUFFIX,例子.localhost,zh-TW
 `).settings;
   s.options.uiLanguage = ui;
+  s.subscriptions = [{ id: 'sample', name: 'Team rules', url: `http://localhost:${srv.port}/sample-rules.yaml`, enabled: true, interval: 'daily' }];
   await evaluate(cdp, sws, `chrome.storage.local.set({ settings: ${JSON.stringify(s)} }).then(() => true)`);
   // A sample "newer release" so the popup tip and the Updates page have something to show.
   const current = await evaluate(cdp, sws, 'chrome.runtime.getManifest().version');
@@ -93,6 +94,7 @@ rules:
   await shot(`${base}/options/options.html#settings`, 'options-settings');
   await shot(`${base}/options/options.html#sessions`, 'options-sessions');
   await shot(`${base}/options/options.html#updates`, 'options-updates', { height: 1150 });
+  await shot(`${base}/options/options.html#subs`, 'options-subs', { height: 1000, before: `document.querySelector('#subs details')?.setAttribute('open', '')` });
 } finally {
   await b.close();
   await srv.close();
