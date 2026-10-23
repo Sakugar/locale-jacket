@@ -121,7 +121,7 @@ IP 規則使用 Chrome 實際連線的伺服器位址，擴充功能不會進行
 
 一切都在本機執行。除了你在「資料集」中發起的下載與你開啟的自動更新（皆從所示網址取得）、你在「更新」中發起或開啟的更新檢查（只連線到所示的發布位址），以及你在「訂閱」中新增的訂閱（連線到其位址，以及其規則所需的資料集）外，擴充功能不會發出任何網路請求。規則儲存在 `chrome.storage.local`；活動記錄只保存在記憶體中，且只包含主機名稱。
 
-權限：`debugger`（模擬功能本身）、`webNavigation` 與網站存取權、`declarativeNetRequestWithHostAccess`（第一個請求的 Accept-Language）、`webRequest`（IP 規則所需的伺服器位址，以及判斷頁面載入能否安全重新開始，僅觀察）、`alarms`（定期檢查資料集與擴充功能更新，僅在開啟時）、`storage`。
+權限：`debugger`（模擬功能本身）、`webNavigation` 與網站存取權、`declarativeNetRequestWithHostAccess`（第一個請求的 Accept-Language）、`webRequest`（IP 規則所需的伺服器位址，以及判斷頁面載入能否安全重新開始，僅觀察）、`alarms`（定期檢查資料集與擴充功能更新，僅在開啟時）、`scripting`（僅在你檢查時，讀取沒有偵錯工作階段的分頁回報的值）、`storage`。
 
 ## 限制
 

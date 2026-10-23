@@ -2,6 +2,15 @@
 
 All notable changes to Locale Jacket are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- *Check what the page sees* in the popup, and *Verify* in *Options ▸ Test & verify*, are read again when the tab reloads or navigates, instead of showing the values from before until you click again. The options page also follows tabs being opened and closed and keeps the tab you picked.
+- Checking works on every website, also where the extension has no debugger session (sites left at the system language, or a tab not attached yet). Those values are read through `chrome.scripting` in an isolated world; there are no "at start" values in that case.
+
+### Changed
+- New permission `scripting`, used only for that check. It adds no warning, because host access is already granted.
+
 ## [1.3.1] - 2026-10-23
 
 **Hotfix** for 1.3.0.

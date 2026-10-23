@@ -100,7 +100,7 @@ To add a language: copy `src/shared/i18n/en.ts` to a new catalog, register it in
 
 **Popup** (toolbar icon)
 - Turns spoofing on or off for all sites.
-- Shows the current tab: matched rule, profile, status, and a **Check what the page sees** button that reads the live values and the values the page's first scripts saw.
+- Shows the current tab: matched rule, profile, status, and a **Check what the page sees** button that reads the live values and the values the page's first scripts saw. It works on every website, also where the extension is not attached (e.g. sites left at the system language), and the report is read again when the tab reloads or navigates.
 - Adds or changes a rule for the current site (its suffix, or the exact host) or excludes it with *System locale*.
 - Sets the default for all other websites.
 
@@ -311,6 +311,7 @@ Everything runs locally. There is no server, account, telemetry or analytics. Th
 | `declarativeNetRequestWithHostAccess` + `http://*/*`, `https://*/*` | Correct `Accept-Language` on the first document request; host access also lets the popup see the current tab's hostname |
 | `storage` | Save your rules |
 | `alarms` | Hourly check whether a scheduled data-set update, update check or subscription update is due (each alarm exists only while something uses a regular interval) |
+| `scripting` | Only when you click *Check what the page sees* (or *Verify*) on a tab without a debugger session: reads the same values from an isolated world, invisible to the page. No warning at install, because host access is already granted. |
 | `webRequest` | Observe only, kept in memory. The server address of page loads, for IP rules (registered only while IP rules exist). The method of top-level page loads (GET or not), so a load that started before the debugger attached is restarted only if repeating it is safe. |
 
 ## Development

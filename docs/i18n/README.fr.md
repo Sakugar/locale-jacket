@@ -121,7 +121,7 @@ La version installée s’affiche à côté du titre de la fenêtre contextuelle
 
 Tout s’exécute localement. En dehors des téléchargements de jeux de données que vous lancez et des mises à jour automatiques que vous activez (toujours depuis l’URL affichée), des vérifications de mise à jour que vous lancez ou activez dans *Mises à jour* (uniquement vers l’adresse de publication affichée), et des abonnements que vous ajoutez dans *Abonnements* (vers leurs adresses, ainsi que les jeux de données dont leurs règles ont besoin), l’extension n’effectue aucune requête réseau. Les règles sont stockées dans `chrome.storage.local` ; le journal d’activité reste en mémoire et ne contient que des noms d’hôte.
 
-Autorisations : `debugger` (l’émulation elle-même), `webNavigation` et accès aux sites, `declarativeNetRequestWithHostAccess` (Accept-Language de la première requête), `webRequest` (adresses de serveur pour les règles IP et possibilité de relancer sans risque un chargement de page ; en observation seulement), `alarms` (vérification planifiée des mises à jour, seulement si activée), `storage`.
+Autorisations : `debugger` (l’émulation elle-même), `webNavigation` et accès aux sites, `declarativeNetRequestWithHostAccess` (Accept-Language de la première requête), `webRequest` (adresses de serveur pour les règles IP et possibilité de relancer sans risque un chargement de page ; en observation seulement), `alarms` (vérification planifiée des mises à jour, seulement si activée), `scripting` (lit ce que signale un onglet sans session de débogage, uniquement quand vous le vérifiez), `storage`.
 
 ## Limites
 

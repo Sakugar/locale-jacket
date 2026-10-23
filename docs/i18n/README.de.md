@@ -121,7 +121,7 @@ Die installierte Version steht neben dem Titel im Pop-up und unten in der Seiten
 
 Alles läuft lokal. Außer Datensatz-Downloads, die Sie unter *Datensätze* starten, und automatischen Updates, die Sie dort aktivieren (jeweils von der angezeigten URL), Update-Prüfungen, die Sie unter *Updates* starten oder einschalten (nur an die angezeigte Release-Adresse), sowie den Abonnements, die Sie unter *Abonnements* hinzufügen (an deren Adressen, dazu die Datensätze, die ihre Regeln benötigen), stellt die Erweiterung keine Netzwerkanfragen. Regeln liegen in `chrome.storage.local`; das Aktivitätsprotokoll existiert nur im Arbeitsspeicher und enthält nur Hostnamen.
 
-Berechtigungen: `debugger` (die Emulation selbst), `webNavigation` und Hostzugriff, `declarativeNetRequestWithHostAccess` (Accept-Language der ersten Anfrage), `webRequest` (Serveradressen für IP-Regeln und ob ein Seitenaufruf gefahrlos neu gestartet werden kann; nur beobachtend), `alarms` (geplante Prüfung auf Datensatz- und Erweiterungs-Updates, nur wenn aktiviert), `storage`.
+Berechtigungen: `debugger` (die Emulation selbst), `webNavigation` und Hostzugriff, `declarativeNetRequestWithHostAccess` (Accept-Language der ersten Anfrage), `webRequest` (Serveradressen für IP-Regeln und ob ein Seitenaufruf gefahrlos neu gestartet werden kann; nur beobachtend), `alarms` (geplante Prüfung auf Datensatz- und Erweiterungs-Updates, nur wenn aktiviert), `scripting` (liest, was ein Tab ohne Debugger-Sitzung meldet, nur wenn Sie es prüfen), `storage`.
 
 ## Grenzen
 

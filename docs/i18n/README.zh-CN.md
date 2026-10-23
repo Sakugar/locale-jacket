@@ -121,7 +121,7 @@ IP 规则使用 Chrome 实际连接的服务器地址，扩展不会进行 DNS �
 
 所有处理都在本地完成。除了你在“数据集”中发起的下载和你开启的自动更新（均从所示地址获取）、你在“更新”中发起或开启的更新检查（只访问所示的发布地址），以及你在“订阅”中添加的订阅（访问其地址，以及其规则所需的数据集）外，扩展不会发起任何网络请求。规则保存在 `chrome.storage.local`；活动日志只保存在内存中，且只包含主机名。
 
-权限：`debugger`（模拟功能本身）、`webNavigation` 与网站访问权限、`declarativeNetRequestWithHostAccess`（首个请求的 Accept-Language）、`webRequest`（IP 规则所需的服务器地址，以及判断页面加载能否安全重新开始，仅观察）、`alarms`（定时检查数据集和扩展更新，仅在开启时）、`storage`。
+权限：`debugger`（模拟功能本身）、`webNavigation` 与网站访问权限、`declarativeNetRequestWithHostAccess`（首个请求的 Accept-Language）、`webRequest`（IP 规则所需的服务器地址，以及判断页面加载能否安全重新开始，仅观察）、`alarms`（定时检查数据集和扩展更新，仅在开启时）、`scripting`（仅在你检查时，读取没有调试会话的标签页报告的值）、`storage`。
 
 ## 限制
 
