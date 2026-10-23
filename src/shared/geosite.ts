@@ -9,6 +9,8 @@
 // The file is indexed once (category name → byte range); only categories that
 // rules reference are decoded into matchers.
 
+import { regexHazard } from './regex-safety.js';
+
 const decoder = new TextDecoder();
 
 class Reader {
@@ -97,7 +99,7 @@ export interface GeositeList {
   suffix: Set<string>;
   keywords: string[];
   regexes: RegExp[];
-  /** Entries that could not be used (e.g. regex syntax JavaScript does not support). */
+  /** Entries that could not be used (regex syntax JavaScript does not support, or a pattern that could backtrack for too long). */
   skipped: number;
   size: number;
 }
@@ -148,6 +150,8 @@ export function loadGeositeCategory(index: GeositeIndex, name: string, filter?: 
         break;
       case 1:
         try {
+          // Patterns that could backtrack for too long are skipped like invalid ones.
+          if (regexHazard(value)) throw new Error('unsafe');
           list.regexes.push(new RegExp(value, 'i'));
         } catch {
           list.skipped++;

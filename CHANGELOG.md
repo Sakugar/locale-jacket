@@ -2,6 +2,15 @@
 
 All notable changes to Locale Jacket are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+- Regular expressions that could take too long to match are refused. JavaScript regexes backtrack, so a pattern such as `^(a+)+$` can take seconds or longer on some hostnames. The service worker runs them while a page waits for it, so one such pattern stalled every tab. It applies to:
+  - `DOMAIN-REGEX` rules you add or import: refused with a reason. A saved rule like that is dropped when the settings load, and the reason is shown with the other settings problems.
+  - `DOMAIN-REGEX` rules in subscription files: skipped and listed like other invalid entries. Rules fetched before this release no longer match.
+  - `regexp:` entries in GeoSite data sets: skipped (counted as unusable entries). The default data set has one such pattern, `^(.+\.)*zh\.okaapps\.com$`, which took 36 s on a 57-character hostname.
+- Refused: repeating a group that contains `|`, or one that can split the same text in more than one way (`(a+)+`, `(.+\.)*`); back-references; more than 4 unbounded repetitions; more than 512 characters. Ordinary patterns such as `^(.+\.)?example\.com$`, `([a-z0-9-]+\.)*` and `(-[a-z0-9]+)*` are still accepted.
+
 ## [1.3.0] - 2026-10-23
 
 ### Added
@@ -104,6 +113,7 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 - The `Intl` locale is per renderer process, so a conflicting profile in a shared process is reported as *Partial*.
 - Service workers, shared workers and restricted pages are not spoofed. POST navigations that change profile are flagged *Reload needed*.
 
+[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.3.0...HEAD
 [1.3.0]: https://github.com/Sakugar/locale-jacket/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/Sakugar/locale-jacket/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/Sakugar/locale-jacket/compare/v1.2.0...v1.2.1

@@ -21,6 +21,7 @@ import { geositeMatches, type GeositeList } from './geosite.js';
 import { cidrContains, formatCidr, formatIp, isLanIp, parseCidr, parseIp, type Cidr, type IpAddr } from './ip.js';
 import { t } from './i18n.js';
 import { describeProfile, profileKey } from './locale.js';
+import { regexHazard } from './regex-safety.js';
 import type { Resolution, Rule, RuleType, Settings } from './types.js';
 import { isIpRuleType, isSpecialRuleType } from './types.js';
 
@@ -73,10 +74,11 @@ export function isAsciiKeyword(k: string): boolean {
 }
 
 const regexCache = new Map<string, RegExp | null>();
+/** Null when the pattern is invalid or could backtrack for too long (rules saved before the check). */
 function compiledRegex(src: string): RegExp | null {
   if (!regexCache.has(src)) {
     try {
-      regexCache.set(src, new RegExp(src, 'i'));
+      regexCache.set(src, regexHazard(src) ? null : new RegExp(src, 'i'));
     } catch {
       regexCache.set(src, null);
     }
@@ -248,6 +250,10 @@ export function normalizeRuleValue(type: RuleType, input: string): RuleValueResu
         new RegExp(raw, 'i');
       } catch (e) {
         return { value: null, notes: [], error: `Invalid regular expression: ${(e as Error).message}` };
+      }
+      const hazard = regexHazard(raw);
+      if (hazard) {
+        return { value: null, notes: [], error: `This regular expression could take too long to match (${hazard}). Use a simpler pattern, e.g. ^(.+\\.)?example\\.com$, or a DOMAIN-SUFFIX rule.` };
       }
       const notes = ['Matched case-insensitively against the hostname only (e.g. ^(.+\\.)?example\\.com$).'];
       if (!/^\^/.test(raw) || !/\$$/.test(raw)) notes.push('Tip: anchor it with ^ and $ so it cannot match unrelated hosts.');
