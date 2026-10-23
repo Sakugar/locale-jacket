@@ -656,8 +656,18 @@ try {
       const st = await status(t.tabId);
       if (!/GEOSITE,lj-sub · Team rules/.test(st.resolution.ruleLabel ?? '')) throw new Error(`rule label: ${st.resolution.ruleLabel}`);
 
-      // A second (JSON) subscription below the first: the first one wins where both match.
       const first = (await sw(`chrome.storage.local.get('settings').then((r) => r.settings.subscriptions)`))[0];
+
+      // Tiers: your IP rule (your special rule) beats the subscription's GEOSITE (their special rule),
+      // but loses to the subscription's hostname rule.
+      await setSettings(settingsFrom(CONFIG.replace('default:', '  - IP-CIDR,127.0.0.0/8,pt-BR\n  - IP-CIDR6,::1/128,pt-BR\ndefault:'), { subscriptions: [first] }));
+      await navigate(t, u('www.sub-geo.localhost', '/plain.html?tier=1'), 'link');
+      await sleep(1500);
+      expectLocale(await report(t, { settle: 1200 }), 'pt-BR', 'your special rule beats the subscription special rule');
+      expectLocale(await navigate(t, u('sub-a.localhost', '/plain.html?tier=2'), 'link'), 'fr-FR', 'the subscription hostname rule beats your special rule');
+      await setSettings(settingsFrom(CONFIG, { subscriptions: [first] }));
+
+      // A second (JSON) subscription below the first: the first one wins where both match.
       const two = (extra = []) => settingsFrom(CONFIG, { subscriptions: [first, { id: 'json-sub', name: 'JSON', url: `${base}/rules.json`, enabled: true, interval: 'daily' }, ...extra] });
       await setSettings(two());
       await until(async () => (await subData())['json-sub']?.rules?.length === 2, { message: 'JSON subscription fetched' });
