@@ -147,7 +147,7 @@ export const fr: Record<MessageKey, string> = {
   'opt.navStatus': '{count} règle(s) · {state}',
   'opt.workerUnavailable': 'Worker d’arrière-plan indisponible : {error}',
   'opt.rules.title': 'Règles',
-  'opt.rules.lead': 'Chaque site reçoit les paramètres régionaux de la règle la mieux adaptée. Les règles de nom d’hôte (exacte, suffixe, mot-clé, regex, GeoSite) passent avant les règles IP (plage, ASN, pays) ; au sein d’un type, la plus précise l’emporte, puis la priorité, puis l’ordre de la liste. Si rien ne correspond, l’action par défaut s’applique.',
+  'opt.rules.lead': 'Chaque site reçoit la langue de la règle qui correspond le mieux, dans cet ordre : vos règles, puis les règles d’abonnement, puis vos règles spéciales (GeoSite, plage IP, ASN, pays), puis les règles spéciales des abonnements. À l’intérieur de chaque niveau, exact l’emporte sur suffixe, mot-clé et regex, et GeoSite passe avant les règles IP ; ensuite la plus spécifique gagne, puis la priorité, puis l’ordre de la liste. Si rien ne correspond, l’action par défaut s’applique.',
   'opt.rules.enable': 'Activer l’usurpation',
   'opt.rules.isOn': 'L’usurpation est activée',
   'opt.rules.isOff': 'L’usurpation est désactivée',
@@ -436,7 +436,7 @@ export const fr: Record<MessageKey, string> = {
   'opt.ext.sourceInvalid': 'Saisissez une adresse commençant par https:// ou http://.',
   'opt.nav.subs': 'Abonnements',
   'opt.sub.title': 'Abonnements',
-  'opt.sub.lead': 'Des règles issues de fichiers JSON ou YAML sur Internet, tenues à jour automatiquement. Vos propres règles de la page Règles priment toujours sur les règles d’abonnement, et un abonnement placé plus haut prime sur un abonnement placé plus bas. Les règles d’abonnement sont en lecture seule ici : pour changer le traitement d’un site, ajoutez votre propre règle.',
+  'opt.sub.lead': 'Des règles issues de fichiers JSON ou YAML sur Internet, tenues à jour automatiquement. Ordre : vos règles, les règles d’abonnement, vos règles spéciales (GEOSITE, IP-CIDR, IP-ASN, GEOIP), les règles spéciales des abonnements ; entre abonnements, celui placé plus haut l’emporte. Les règles d’abonnement sont en lecture seule ici : pour changer le traitement d’un site, ajoutez votre propre règle de nom d’hôte (exacte, suffixe ou mot-clé).',
   'opt.sub.updateAll': 'Tout mettre à jour',
   'opt.sub.addTitle': 'Ajouter un abonnement',
   'opt.sub.url': 'Adresse du fichier',
@@ -469,11 +469,12 @@ export const fr: Record<MessageKey, string> = {
   'opt.sub.colValue': 'Valeur',
   'opt.sub.colResult': 'Résultat',
   'opt.sub.more': '… et {count} de plus.',
-  'opt.sub.rulesNote': '{count} règle(s) de plus proviennent de {subs} abonnement(s). Elles s’appliquent après vos propres règles.',
+  'opt.sub.rulesNote': '{count} règle(s) de plus proviennent de {subs} abonnement(s). Ordre : vos règles, les leurs, vos règles spéciales (GeoSite et IP), leurs règles spéciales.',
   'opt.sub.manage': 'Gérer les abonnements →',
   'opt.sub.datasets': 'Télécharger les jeux de données dont les abonnements ont besoin',
   'opt.sub.datasetsHint': 'Quand un abonnement contient des règles GEOSITE, GEOIP ou IP-ASN et que le jeu de données n’est pas installé, il est téléchargé depuis l’adresse indiquée par l’abonnement, sinon depuis l’adresse par défaut de la page Jeux de données. Un téléchargement échoué est retenté après une heure.',
   'opt.sub.dsDone': '{name} téléchargé pour « {sub} » depuis {url} ({when}).',
   'opt.sub.dsFailed': 'Impossible de télécharger {name} pour « {sub} » : {error}',
+
   // @append-fr
 };

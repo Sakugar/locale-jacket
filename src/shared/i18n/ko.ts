@@ -147,7 +147,7 @@ export const ko: Record<MessageKey, string> = {
   'opt.navStatus': '규칙 {count}개 · {state}',
   'opt.workerUnavailable': '백그라운드 워커를 사용할 수 없음: {error}',
   'opt.rules.title': '규칙',
-  'opt.rules.lead': '각 웹사이트에는 가장 잘 일치하는 규칙의 로캘이 적용됩니다. 호스트 이름 규칙(정확 일치, 접미사, 키워드, 정규식, GeoSite)이 IP 규칙(범위, ASN, 국가)보다 우선합니다. 같은 유형에서는 더 구체적인 규칙, 그다음 우선순위, 그다음 목록 순서로 결정됩니다. 일치하는 규칙이 없으면 기본값이 적용됩니다.',
+  'opt.rules.lead': '각 웹사이트에는 가장 잘 맞는 규칙의 로캘이 적용되며, 순서는 내 규칙, 구독 규칙, 내 특수 규칙(GeoSite, IP 범위, ASN, 국가), 구독 특수 규칙입니다. 각 단계 안에서는 정확히 일치가 접미사·키워드·정규식보다 우선하고 GeoSite가 IP 규칙보다 먼저입니다. 그다음 더 구체적인 규칙, 우선순위, 목록 순서 순입니다. 일치하는 규칙이 없으면 기본 동작이 적용됩니다.',
   'opt.rules.enable': '위장 사용',
   'opt.rules.isOn': '위장이 켜져 있습니다',
   'opt.rules.isOff': '위장이 꺼져 있습니다',
@@ -436,7 +436,7 @@ export const ko: Record<MessageKey, string> = {
   'opt.ext.sourceInvalid': 'https:// 또는 http://로 시작하는 주소를 입력하세요.',
   'opt.nav.subs': '구독',
   'opt.sub.title': '구독',
-  'opt.sub.lead': '인터넷의 JSON 또는 YAML 파일에 있는 규칙으로, 자동으로 최신 상태로 유지됩니다. 규칙 페이지의 내 규칙은 항상 구독 규칙보다 우선하며, 앞에 있는 구독이 뒤에 있는 구독보다 우선합니다. 구독 규칙은 여기서 읽기 전용입니다. 사이트 처리 방식을 바꾸려면 내 규칙을 추가하세요.',
+  'opt.sub.lead': '인터넷의 JSON 또는 YAML 파일에 있는 규칙으로, 자동으로 최신 상태로 유지됩니다. 순서: 내 규칙, 구독 규칙, 내 특수 규칙(GEOSITE, IP-CIDR, IP-ASN, GEOIP), 구독 특수 규칙. 구독끼리는 위에 있는 것이 우선합니다. 구독 규칙은 여기서 읽기 전용입니다. 사이트 처리 방식을 바꾸려면 내 호스트 이름 규칙(정확히 일치, 접미사, 키워드)을 추가하세요.',
   'opt.sub.updateAll': '모두 업데이트',
   'opt.sub.addTitle': '구독 추가',
   'opt.sub.url': '파일 주소',
@@ -469,11 +469,12 @@ export const ko: Record<MessageKey, string> = {
   'opt.sub.colValue': '값',
   'opt.sub.colResult': '결과',
   'opt.sub.more': '…외 {count}개.',
-  'opt.sub.rulesNote': '규칙 {count}개가 구독 {subs}개에서 추가로 적용됩니다. 내 규칙 다음에 적용됩니다.',
+  'opt.sub.rulesNote': '규칙 {count}개가 구독 {subs}개에서 추가로 적용됩니다. 순서: 내 규칙, 구독 규칙, 내 특수 규칙(GeoSite와 IP), 구독 특수 규칙.',
   'opt.sub.manage': '구독 관리 →',
   'opt.sub.datasets': '구독에 필요한 데이터 세트 다운로드',
   'opt.sub.datasetsHint': '구독에 GEOSITE, GEOIP 또는 IP-ASN 규칙이 있고 해당 데이터 세트가 설치되지 않았으면, 구독이 지정한 주소에서, 없으면 데이터 세트 페이지의 기본 주소에서 다운로드합니다. 실패하면 한 시간 뒤에 다시 시도합니다.',
   'opt.sub.dsDone': '"{sub}"을(를) 위해 {url}에서 {name}을(를) 다운로드했습니다({when}).',
   'opt.sub.dsFailed': '"{sub}"에 필요한 {name}을(를) 다운로드하지 못했습니다: {error}',
+
   // @append-ko
 };

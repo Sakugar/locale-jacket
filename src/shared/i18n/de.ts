@@ -147,7 +147,7 @@ export const de: Record<MessageKey, string> = {
   'opt.navStatus': '{count} Regel(n) · {state}',
   'opt.workerUnavailable': 'Hintergrund-Worker nicht verfügbar: {error}',
   'opt.rules.title': 'Regeln',
-  'opt.rules.lead': 'Jede Website erhält das Gebietsschema der am besten passenden Regel. Hostnamen-Regeln (exakt, Suffix, Stichwort, Regex, GeoSite) kommen vor IP-Regeln (Bereich, ASN, Land); innerhalb eines Typs gewinnt die spezifischste, dann die Priorität, dann die Reihenfolge in der Liste. Passt nichts, gilt der Standard.',
+  'opt.rules.lead': 'Jede Website erhält das Gebietsschema der am besten passenden Regel, in dieser Reihenfolge: Ihre Regeln, dann Abonnement-Regeln, dann Ihre Sonderregeln (GeoSite, IP-Bereich, ASN, Land), dann Sonderregeln aus Abonnements. Innerhalb jeder Stufe schlägt exakt vor Suffix, Schlüsselwort und Regex, und GeoSite kommt vor IP-Regeln; danach gewinnt die spezifischste, dann die Priorität, dann die Listenreihenfolge. Passt nichts, gilt die Standardaktion.',
   'opt.rules.enable': 'Spoofing aktivieren',
   'opt.rules.isOn': 'Spoofing ist an',
   'opt.rules.isOff': 'Spoofing ist aus',
@@ -436,7 +436,7 @@ export const de: Record<MessageKey, string> = {
   'opt.ext.sourceInvalid': 'Geben Sie eine Adresse ein, die mit https:// oder http:// beginnt.',
   'opt.nav.subs': 'Abonnements',
   'opt.sub.title': 'Abonnements',
-  'opt.sub.lead': 'Regeln aus JSON- oder YAML-Dateien im Internet, die automatisch aktuell gehalten werden. Ihre eigenen Regeln auf der Seite „Regeln“ haben immer Vorrang vor Abonnement-Regeln, und ein früheres Abonnement hat Vorrang vor einem späteren. Abonnement-Regeln sind hier schreibgeschützt: Um zu ändern, wie eine Website behandelt wird, fügen Sie eine eigene Regel hinzu.',
+  'opt.sub.lead': 'Regeln aus JSON- oder YAML-Dateien im Internet, die automatisch aktuell gehalten werden. Reihenfolge: Ihre Regeln, Abonnement-Regeln, Ihre Sonderregeln (GEOSITE, IP-CIDR, IP-ASN, GEOIP), Sonderregeln aus Abonnements; unter Abonnements gewinnt das höher stehende. Abonnement-Regeln sind hier schreibgeschützt: Um zu ändern, wie eine Website behandelt wird, fügen Sie eine eigene Hostnamen-Regel hinzu (exakt, Suffix oder Schlüsselwort).',
   'opt.sub.updateAll': 'Alle aktualisieren',
   'opt.sub.addTitle': 'Abonnement hinzufügen',
   'opt.sub.url': 'Dateiadresse',
@@ -469,11 +469,12 @@ export const de: Record<MessageKey, string> = {
   'opt.sub.colValue': 'Wert',
   'opt.sub.colResult': 'Ergebnis',
   'opt.sub.more': '… und {count} weitere.',
-  'opt.sub.rulesNote': '{count} weitere Regel(n) stammen aus {subs} Abonnement(s). Sie gelten nach Ihren eigenen Regeln.',
+  'opt.sub.rulesNote': '{count} weitere Regel(n) stammen aus {subs} Abonnement(s). Reihenfolge: Ihre Regeln, deren Regeln, Ihre Sonderregeln (GeoSite und IP), deren Sonderregeln.',
   'opt.sub.manage': 'Abonnements verwalten →',
   'opt.sub.datasets': 'Datensätze herunterladen, die Abonnements benötigen',
   'opt.sub.datasetsHint': 'Hat ein Abonnement GEOSITE-, GEOIP- oder IP-ASN-Regeln und ist der Datensatz nicht installiert, wird er von der Adresse heruntergeladen, die das Abonnement nennt, sonst von der Standardadresse auf der Seite „Datensätze“. Ein fehlgeschlagener Download wird nach einer Stunde wiederholt.',
   'opt.sub.dsDone': '{name} für „{sub}“ von {url} heruntergeladen ({when}).',
   'opt.sub.dsFailed': '{name} für „{sub}“ konnte nicht heruntergeladen werden: {error}',
+
   // @append-de
 };

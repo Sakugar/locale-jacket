@@ -4,7 +4,10 @@ import { exportConfig, importConfigText, MAX_SUBSCRIPTIONS, sanitizeStoredSettin
 import { DATASETS } from '../src/shared/dataset-store.js';
 import { makeProfile } from '../src/shared/locale.js';
 import { defaultSettings } from '../src/shared/presets.js';
-import { resolveHost, rulesInPrecedenceOrder, ruleLabel } from '../src/shared/rules.js';
+import { compileDnrRules } from '../src/shared/dnr.js';
+import type { GeositeList } from '../src/shared/geosite.js';
+import { parseIp } from '../src/shared/ip.js';
+import { precedenceTier, resolveHost, rulesInPrecedenceOrder, ruleLabel } from '../src/shared/rules.js';
 import {
   datasetDownloadDue,
   datasetsToDownload,
@@ -101,6 +104,42 @@ describe('withSubscriptions and precedence', () => {
     assert.equal(ruleLabel(resolveHost('x.other.example', s).rule!), 'DOMAIN-SUFFIX,other.example · A');
     const moved = withSubscriptions(settingsWith([{ ...a, url: 'https://example.com/moved.yaml' }], own), map);
     assert.equal(moved.rules.length, 1);
+  });
+});
+
+describe('four precedence tiers: your rules › subscriptions › your special rules › subscription special rules', () => {
+  const a = sub('a', 'https://example.com/a.yaml');
+  const geo: GeositeList = { full: new Set(), suffix: new Set(['tier.example']), keywords: [], regexes: [], skipped: 0, size: 1 };
+  const ctx = { geosite: () => geo, ip: parseIp('17.1.2.3') };
+  const merged = (ownYaml: string, subYaml: string) => {
+    const own = importConfigText(ownYaml).settings!;
+    return withSubscriptions(settingsWith([a], own), { a: data(a, subYaml) });
+  };
+  const locale = (s: Settings, host = 'www.tier.example') => resolveHost(host, s, ctx).profile?.locale;
+
+  it('a subscription hostname rule beats your own GEOSITE and IP rules', () => {
+    assert.equal(locale(merged('rules:\n  - GEOSITE,tiered,de-DE\n', 'rules:\n  - DOMAIN-SUFFIX,tier.example,fr-FR\n')), 'fr-FR');
+    assert.equal(locale(merged('rules:\n  - IP-CIDR,17.0.0.0/8,de-DE\n', 'rules:\n  - DOMAIN-KEYWORD,tier,fr-FR\n')), 'fr-FR');
+  });
+
+  it('your own special rules beat subscription special rules, whatever the type', () => {
+    assert.equal(locale(merged('rules:\n  - IP-CIDR,17.0.0.0/8,de-DE\n', 'rules:\n  - GEOSITE,tiered,fr-FR\n')), 'de-DE', 'your IP rule beats their GEOSITE');
+    assert.equal(locale(merged('rules:\n  - GEOIP,LAN,SYSTEM\n  - GEOSITE,tiered,de-DE\n', 'rules:\n  - IP-CIDR,17.0.0.0/8,fr-FR\n')), 'de-DE');
+  });
+
+  it('your own hostname rules still beat everything, and the tiers are ordered for DNR', () => {
+    const s = merged('rules:\n  - DOMAIN,www.tier.example,ja-JP\n  - IP-CIDR,17.0.0.0/8,de-DE\n', 'rules:\n  - DOMAIN-SUFFIX,tier.example,fr-FR\n  - GEOSITE,tiered,ko-KR\n');
+    assert.equal(locale(s), 'ja-JP');
+    assert.deepEqual(rulesInPrecedenceOrder(s.rules).map((r) => precedenceTier(r)), [0, 1, 2, 3]);
+  });
+
+  it('DNR does not mirror rules that rank below an IP rule (the address may decide instead)', () => {
+    const withIp = merged('rules:\n  - IP-CIDR,17.0.0.0/8,de-DE\n', 'rules:\n  - DOMAIN-SUFFIX,sub.example,fr-FR\n  - GEOSITE,tiered,ko-KR\n');
+    const out = compileDnrRules(withIp, { geosite: () => geo });
+    assert.deepEqual(out.rules.map((r) => r.condition.requestDomains), [['sub.example']], 'the subscription hostname rule ranks above the IP rule');
+    assert.match(out.skipped.map((x) => `${x.rule.type}: ${x.reason}`).join('\n'), /GEOSITE: Ranks below an IP rule/);
+    const noIp = merged('rules: []\n', 'rules:\n  - GEOSITE,tiered,ko-KR\n');
+    assert.equal(compileDnrRules(noIp, { geosite: () => geo }).rules.length, 1, 'mirrored when no IP rule ranks above it');
   });
 });
 

@@ -145,7 +145,7 @@ export const en = {
   'opt.navStatus': '{count} rule(s) · {state}',
   'opt.workerUnavailable': 'Background worker unavailable: {error}',
   'opt.rules.title': 'Rules',
-  'opt.rules.lead': 'Each website gets the locale of the best matching rule. Hostname rules (exact, suffix, keyword, regex, GeoSite) come before IP rules (range, ASN, country); within a type the most specific wins, then priority, then list order. If nothing matches, the default applies.',
+  'opt.rules.lead': 'Each website gets the locale of the best matching rule, in this order: your rules, then subscription rules, then your special rules (GeoSite, IP range, ASN, country), then subscription special rules. Within each, exact beats suffix, keyword and regex, and GeoSite comes before IP rules; then the most specific wins, then priority, then list order. If nothing matches, the default applies.',
   'opt.rules.enable': 'Enable spoofing',
   'opt.rules.isOn': 'Spoofing is on',
   'opt.rules.isOff': 'Spoofing is off',
@@ -435,7 +435,7 @@ export const en = {
 
   'opt.nav.subs': 'Subscriptions',
   'opt.sub.title': 'Subscriptions',
-  'opt.sub.lead': 'Rules from JSON or YAML files on the internet, kept up to date automatically. Your own rules on the Rules page always take precedence over subscription rules, and an earlier subscription takes precedence over a later one. Subscription rules are read-only here: to change how a site is handled, add your own rule.',
+  'opt.sub.lead': 'Rules from JSON or YAML files on the internet, kept up to date automatically. Order: your rules, subscription rules, your special rules (GEOSITE, IP-CIDR, IP-ASN, GEOIP), subscription special rules; between subscriptions, the higher one wins. Subscription rules are read-only here: to change how a site is handled, add your own hostname rule (exact, suffix or keyword).',
   'opt.sub.updateAll': 'Update all',
   'opt.sub.addTitle': 'Add a subscription',
   'opt.sub.url': 'File address',
@@ -468,12 +468,13 @@ export const en = {
   'opt.sub.colValue': 'Value',
   'opt.sub.colResult': 'Result',
   'opt.sub.more': '…and {count} more.',
-  'opt.sub.rulesNote': '{count} more rule(s) come from {subs} subscription(s). They apply after your own rules.',
+  'opt.sub.rulesNote': '{count} more rule(s) come from {subs} subscription(s). Order: your rules, theirs, your special rules (GeoSite and IP), their special rules.',
   'opt.sub.manage': 'Manage subscriptions →',
   'opt.sub.datasets': 'Download the data sets subscriptions need',
   'opt.sub.datasetsHint': 'When a subscription has GEOSITE, GEOIP or IP-ASN rules and that data set is not installed, it is downloaded from the address the subscription names, or otherwise from the default address on the Data sets page. A failed download is retried after an hour.',
   'opt.sub.dsDone': '{name} downloaded for “{sub}” from {url} ({when}).',
   'opt.sub.dsFailed': '{name} for “{sub}” could not be downloaded: {error}',
+
   // @append-en
 } as const;
 

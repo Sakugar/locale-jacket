@@ -147,7 +147,7 @@ export const ptBR: Record<MessageKey, string> = {
   'opt.navStatus': '{count} regra(s) · {state}',
   'opt.workerUnavailable': 'Processo em segundo plano indisponível: {error}',
   'opt.rules.title': 'Regras',
-  'opt.rules.lead': 'Cada site recebe a localidade da regra que melhor corresponde. Regras de nome de host (exata, sufixo, palavra-chave, regex, GeoSite) vêm antes das regras de IP (intervalo, ASN, país); dentro de um tipo vence a mais específica, depois a prioridade, depois a ordem da lista. Se nada corresponder, aplica-se o padrão.',
+  'opt.rules.lead': 'Cada site recebe a localidade da regra que melhor corresponde, nesta ordem: suas regras, depois as regras de assinatura, depois suas regras especiais (GeoSite, faixa de IP, ASN, país) e por fim as regras especiais das assinaturas. Dentro de cada nível, exata vence sufixo, palavra-chave e regex, e GeoSite vem antes das regras de IP; depois vence a mais específica, então a prioridade e então a ordem da lista. Se nada corresponder, vale a ação padrão.',
   'opt.rules.enable': 'Ativar o disfarce',
   'opt.rules.isOn': 'O disfarce está ativado',
   'opt.rules.isOff': 'O disfarce está desativado',
@@ -436,7 +436,7 @@ export const ptBR: Record<MessageKey, string> = {
   'opt.ext.sourceInvalid': 'Digite um endereço que comece com https:// ou http://.',
   'opt.nav.subs': 'Assinaturas',
   'opt.sub.title': 'Assinaturas',
-  'opt.sub.lead': 'Regras de arquivos JSON ou YAML na internet, mantidas atualizadas automaticamente. Suas próprias regras na página Regras sempre têm prioridade sobre as regras de assinatura, e uma assinatura mais acima tem prioridade sobre uma mais abaixo. As regras de assinatura são somente leitura aqui: para mudar como um site é tratado, adicione sua própria regra.',
+  'opt.sub.lead': 'Regras de arquivos JSON ou YAML na internet, mantidas atualizadas automaticamente. Ordem: suas regras, as regras de assinatura, suas regras especiais (GEOSITE, IP-CIDR, IP-ASN, GEOIP) e as regras especiais das assinaturas; entre assinaturas, vence a que está mais acima. As regras de assinatura são somente leitura aqui: para mudar como um site é tratado, adicione sua própria regra de nome de host (exata, sufixo ou palavra-chave).',
   'opt.sub.updateAll': 'Atualizar todas',
   'opt.sub.addTitle': 'Adicionar uma assinatura',
   'opt.sub.url': 'Endereço do arquivo',
@@ -469,11 +469,12 @@ export const ptBR: Record<MessageKey, string> = {
   'opt.sub.colValue': 'Valor',
   'opt.sub.colResult': 'Resultado',
   'opt.sub.more': '…e mais {count}.',
-  'opt.sub.rulesNote': 'Mais {count} regra(s) vêm de {subs} assinatura(s). Elas se aplicam depois das suas próprias regras.',
+  'opt.sub.rulesNote': 'Mais {count} regra(s) vêm de {subs} assinatura(s). Ordem: suas regras, as delas, suas regras especiais (GeoSite e IP), as regras especiais delas.',
   'opt.sub.manage': 'Gerenciar assinaturas →',
   'opt.sub.datasets': 'Baixar os conjuntos de dados de que as assinaturas precisam',
   'opt.sub.datasetsHint': 'Quando uma assinatura tem regras GEOSITE, GEOIP ou IP-ASN e esse conjunto de dados não está instalado, ele é baixado do endereço que a assinatura indica ou, se não houver, do endereço padrão da página Conjuntos de dados. Um download com falha é tentado de novo depois de uma hora.',
   'opt.sub.dsDone': '{name} baixado para “{sub}” de {url} ({when}).',
   'opt.sub.dsFailed': 'Não foi possível baixar {name} para “{sub}”: {error}',
+
   // @append-pt-BR
 };

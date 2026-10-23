@@ -13,6 +13,13 @@ export function isIpRuleType(t: RuleType): t is IpRuleType {
   return (IP_RULE_TYPES as readonly string[]).includes(t);
 }
 
+/** "Special" rules rely on a data set or the server address: GEOSITE and the IP rules. */
+export const SPECIAL_RULE_TYPES: readonly RuleType[] = ['GEOSITE', ...IP_RULE_TYPES];
+
+export function isSpecialRuleType(t: RuleType): boolean {
+  return (SPECIAL_RULE_TYPES as readonly string[]).includes(t);
+}
+
 /** PROFILE = spoof with the rule's locale profile; SYSTEM = keep the browser's own locale. */
 export type RuleAction = 'PROFILE' | 'SYSTEM';
 

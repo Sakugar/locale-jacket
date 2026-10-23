@@ -147,7 +147,7 @@ export const zhCN: Record<MessageKey, string> = {
   'opt.navStatus': '{count} 条规则 · {state}',
   'opt.workerUnavailable': '后台服务不可用：{error}',
   'opt.rules.title': '规则',
-  'opt.rules.lead': '每个网站使用最佳匹配规则的语言。主机名规则（精确、后缀、关键字、正则、GeoSite）优先于 IP 规则（网段、ASN、国家/地区）；同类规则中越具体越优先，其次比较优先级，最后按列表顺序。没有规则匹配时使用默认操作。',
+  'opt.rules.lead': '每个网站使用最匹配规则的区域设置，顺序为：你的规则，然后是订阅规则，然后是你的特殊规则（GeoSite、IP 段、ASN、国家），最后是订阅的特殊规则。每一层内，精确匹配优先于后缀、关键词和正则，GeoSite 优先于 IP 规则；然后更具体的优先，再按优先级，最后按列表顺序。没有匹配时使用默认设置。',
   'opt.rules.enable': '启用伪装',
   'opt.rules.isOn': '伪装已开启',
   'opt.rules.isOff': '伪装已关闭',
@@ -436,7 +436,7 @@ export const zhCN: Record<MessageKey, string> = {
   'opt.ext.sourceInvalid': '请输入以 https:// 或 http:// 开头的地址。',
   'opt.nav.subs': '订阅',
   'opt.sub.title': '订阅',
-  'opt.sub.lead': '来自网上 JSON 或 YAML 文件的规则，会自动保持最新。“规则”页面中你自己的规则始终优先于订阅规则，排在前面的订阅优先于后面的订阅。订阅规则在此只读：要改变某个网站的处理方式，请添加你自己的规则。',
+  'opt.sub.lead': '来自网上 JSON 或 YAML 文件的规则，会自动保持最新。顺序：你的规则、订阅规则、你的特殊规则（GEOSITE、IP-CIDR、IP-ASN、GEOIP）、订阅的特殊规则；订阅之间排在上面的优先。订阅规则在此只读：要改变某个网站的处理方式，请添加你自己的主机名规则（精确、后缀或关键词）。',
   'opt.sub.updateAll': '全部更新',
   'opt.sub.addTitle': '添加订阅',
   'opt.sub.url': '文件地址',
@@ -469,11 +469,12 @@ export const zhCN: Record<MessageKey, string> = {
   'opt.sub.colValue': '值',
   'opt.sub.colResult': '结果',
   'opt.sub.more': '……还有 {count} 条。',
-  'opt.sub.rulesNote': '另有 {count} 条规则来自 {subs} 个订阅，它们在你自己的规则之后生效。',
+  'opt.sub.rulesNote': '另有 {count} 条规则来自 {subs} 个订阅。顺序：你的规则、订阅规则、你的特殊规则（GeoSite 和 IP）、订阅的特殊规则。',
   'opt.sub.manage': '管理订阅 →',
   'opt.sub.datasets': '下载订阅所需的数据集',
   'opt.sub.datasetsHint': '当订阅包含 GEOSITE、GEOIP 或 IP-ASN 规则而对应数据集未安装时，会从订阅指定的地址下载，否则从“数据集”页面的默认地址下载。下载失败会在一小时后重试。',
   'opt.sub.dsDone': '已为“{sub}”从 {url} 下载 {name}（{when}）。',
   'opt.sub.dsFailed': '无法为“{sub}”下载 {name}：{error}',
+
   // @append-zh
 };

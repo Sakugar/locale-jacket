@@ -57,10 +57,18 @@ export function compileDnrRules(settings: Pick<Settings, 'rules' | 'defaultActio
   const out: DnrRule[] = [];
   let regexCount = 0;
   const top = ordered.length + 1;
+  // DNR cannot see server addresses, so a rule that ranks below an IP rule (a subscription's
+  // GEOSITE below your own IP rules) might be overruled for any host: leave it to the debugger.
+  let belowIpRule = false;
 
   ordered.forEach((rule, rank) => {
     const priority = top - rank + 1; // > 1, so the catch-all default (priority 1) always loses.
     let condition: DnrRule['condition'];
+    if (belowIpRule && !isIpRuleType(rule.type)) {
+      skipped.push({ rule, reason: 'Ranks below an IP rule, which may decide instead; applied by the debugger session only.' });
+      return;
+    }
+    if (isIpRuleType(rule.type)) belowIpRule = true;
     if (rule.type === 'DOMAIN-SUFFIX') {
       condition = { resourceTypes: ['main_frame'], requestDomains: [rule.value] };
     } else if (rule.type === 'DOMAIN') {

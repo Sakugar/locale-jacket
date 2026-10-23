@@ -3,8 +3,11 @@
 // Hostname rules:  DOMAIN, DOMAIN-SUFFIX, DOMAIN-KEYWORD, DOMAIN-REGEX, GEOSITE
 // IP rules:        IP-CIDR, IP-CIDR6, IP-ASN, GEOIP  (need the server address; see MatchContext)
 //
+// "Special" rules: GEOSITE and the IP rules (they rely on a data set or the server address).
+//
 // Precedence (first difference wins):
-//   0. Layer: your own rules before subscription rules, earlier subscriptions first.
+//   0. Tier: your own rules › subscription rules › your own special rules › subscription
+//      special rules. Within the subscription tiers, an earlier subscription wins.
 //   1. Rule type: DOMAIN > DOMAIN-SUFFIX > DOMAIN-KEYWORD > DOMAIN-REGEX > GEOSITE
 //                 > IP-CIDR/IP-CIDR6 > IP-ASN > GEOIP.
 //      Hostname rules beat IP rules because the hostname is always known, the address is not.
@@ -19,7 +22,7 @@ import { cidrContains, formatCidr, formatIp, isLanIp, parseCidr, parseIp, type C
 import { t } from './i18n.js';
 import { describeProfile, profileKey } from './locale.js';
 import type { Resolution, Rule, RuleType, Settings } from './types.js';
-import { isIpRuleType } from './types.js';
+import { isIpRuleType, isSpecialRuleType } from './types.js';
 
 const TYPE_RANK: Record<RuleType, number> = {
   DOMAIN: 0,
@@ -142,11 +145,16 @@ function specificity(rule: Rule): number {
   return 0;
 }
 
-type PrecedenceKey = [number, number, number, number, number];
+type PrecedenceKey = [number, number, number, number, number, number];
+
+/** 0 your rules, 1 subscription rules, 2 your special rules, 3 subscription special rules. */
+export function precedenceTier(rule: Rule): number {
+  return (isSpecialRuleType(rule.type) ? 2 : 0) + (rule.origin ? 1 : 0);
+}
 
 /** Sort key implementing the precedence above; smaller sorts first (wins). */
 export function precedenceKey(rule: Rule, index: number): PrecedenceKey {
-  return [rule.origin?.layer ?? 0, TYPE_RANK[rule.type], -specificity(rule), -rule.priority, index];
+  return [precedenceTier(rule), rule.origin?.layer ?? 0, TYPE_RANK[rule.type], -specificity(rule), -rule.priority, index];
 }
 
 export function comparePrecedence(a: PrecedenceKey, b: PrecedenceKey): number {

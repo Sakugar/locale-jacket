@@ -147,7 +147,7 @@ export const es: Record<MessageKey, string> = {
   'opt.navStatus': '{count} regla(s) · {state}',
   'opt.workerUnavailable': 'El proceso en segundo plano no está disponible: {error}',
   'opt.rules.title': 'Reglas',
-  'opt.rules.lead': 'Cada sitio recibe la configuración regional de la regla que mejor coincide. Las reglas de nombre de host (exacta, sufijo, palabra clave, regex, GeoSite) van antes que las reglas IP (rango, ASN, país); dentro de un tipo gana la más específica, luego la prioridad y luego el orden de la lista. Si nada coincide, se aplica la acción predeterminada.',
+  'opt.rules.lead': 'Cada sitio recibe la configuración regional de la regla que mejor coincide, en este orden: tus reglas, luego las reglas de suscripción, luego tus reglas especiales (GeoSite, rango IP, ASN, país) y por último las reglas especiales de las suscripciones. Dentro de cada nivel, exacta gana a sufijo, palabra clave y regex, y GeoSite va antes que las reglas IP; después gana la más específica, luego la prioridad y luego el orden de la lista. Si nada coincide, se aplica la acción predeterminada.',
   'opt.rules.enable': 'Activar la suplantación',
   'opt.rules.isOn': 'La suplantación está activada',
   'opt.rules.isOff': 'La suplantación está desactivada',
@@ -436,7 +436,7 @@ export const es: Record<MessageKey, string> = {
   'opt.ext.sourceInvalid': 'Introduce una dirección que empiece por https:// o http://.',
   'opt.nav.subs': 'Suscripciones',
   'opt.sub.title': 'Suscripciones',
-  'opt.sub.lead': 'Reglas de archivos JSON o YAML en internet, que se mantienen actualizadas automáticamente. Tus propias reglas de la página Reglas siempre tienen prioridad sobre las de suscripción, y una suscripción situada antes tiene prioridad sobre una posterior. Las reglas de suscripción son de solo lectura aquí: para cambiar cómo se trata un sitio, añade tu propia regla.',
+  'opt.sub.lead': 'Reglas de archivos JSON o YAML en internet, que se mantienen actualizadas automáticamente. Orden: tus reglas, las reglas de suscripción, tus reglas especiales (GEOSITE, IP-CIDR, IP-ASN, GEOIP) y las reglas especiales de las suscripciones; entre suscripciones gana la que está más arriba. Las reglas de suscripción son de solo lectura aquí: para cambiar cómo se trata un sitio, añade tu propia regla de nombre de host (exacta, sufijo o palabra clave).',
   'opt.sub.updateAll': 'Actualizar todas',
   'opt.sub.addTitle': 'Añadir una suscripción',
   'opt.sub.url': 'Dirección del archivo',
@@ -469,11 +469,12 @@ export const es: Record<MessageKey, string> = {
   'opt.sub.colValue': 'Valor',
   'opt.sub.colResult': 'Resultado',
   'opt.sub.more': '…y {count} más.',
-  'opt.sub.rulesNote': '{count} regla(s) más proceden de {subs} suscripción(es). Se aplican después de tus propias reglas.',
+  'opt.sub.rulesNote': '{count} regla(s) más proceden de {subs} suscripción(es). Orden: tus reglas, las suyas, tus reglas especiales (GeoSite e IP), sus reglas especiales.',
   'opt.sub.manage': 'Gestionar suscripciones →',
   'opt.sub.datasets': 'Descargar los conjuntos de datos que necesitan las suscripciones',
   'opt.sub.datasetsHint': 'Cuando una suscripción tiene reglas GEOSITE, GEOIP o IP-ASN y ese conjunto de datos no está instalado, se descarga desde la dirección que indica la suscripción o, si no, desde la dirección predeterminada de la página Conjuntos de datos. Una descarga fallida se reintenta al cabo de una hora.',
   'opt.sub.dsDone': '{name} descargado para «{sub}» desde {url} ({when}).',
   'opt.sub.dsFailed': 'No se pudo descargar {name} para «{sub}»: {error}',
+
   // @append-es
 };

@@ -147,7 +147,7 @@ export const zhTW: Record<MessageKey, string> = {
   'opt.navStatus': '{count} 條規則 · {state}',
   'opt.workerUnavailable': '背景服務無法使用：{error}',
   'opt.rules.title': '規則',
-  'opt.rules.lead': '每個網站使用最佳符合規則的語言。主機名稱規則（精確、後綴、關鍵字、規則運算式、GeoSite）優先於 IP 規則（範圍、ASN、國家/地區）；同類規則中越具體越優先，其次比較優先順序，最後依清單順序。沒有規則符合時使用預設動作。',
+  'opt.rules.lead': '每個網站使用最符合規則的地區設定，順序為：你的規則，然後是訂閱規則，然後是你的特殊規則（GeoSite、IP 範圍、ASN、國家），最後是訂閱的特殊規則。每一層內，完全符合優先於後綴、關鍵字和規則運算式，GeoSite 優先於 IP 規則；接著較具體的優先，再依優先順序，最後依清單順序。沒有符合時使用預設值。',
   'opt.rules.enable': '啟用偽裝',
   'opt.rules.isOn': '偽裝已開啟',
   'opt.rules.isOff': '偽裝已關閉',
@@ -436,7 +436,7 @@ export const zhTW: Record<MessageKey, string> = {
   'opt.ext.sourceInvalid': '請輸入以 https:// 或 http:// 開頭的位址。',
   'opt.nav.subs': '訂閱',
   'opt.sub.title': '訂閱',
-  'opt.sub.lead': '來自網路上 JSON 或 YAML 檔案的規則，會自動保持最新。「規則」頁面中你自己的規則一律優先於訂閱規則，排在前面的訂閱優先於後面的訂閱。訂閱規則在此唯讀：要改變某個網站的處理方式，請新增你自己的規則。',
+  'opt.sub.lead': '來自網路上 JSON 或 YAML 檔案的規則，會自動保持最新。順序：你的規則、訂閱規則、你的特殊規則（GEOSITE、IP-CIDR、IP-ASN、GEOIP）、訂閱的特殊規則；訂閱之間排在上面的優先。訂閱規則在此唯讀：要改變某個網站的處理方式，請新增你自己的主機名稱規則（完全符合、後綴或關鍵字）。',
   'opt.sub.updateAll': '全部更新',
   'opt.sub.addTitle': '新增訂閱',
   'opt.sub.url': '檔案位址',
@@ -469,11 +469,12 @@ export const zhTW: Record<MessageKey, string> = {
   'opt.sub.colValue': '值',
   'opt.sub.colResult': '結果',
   'opt.sub.more': '……還有 {count} 條。',
-  'opt.sub.rulesNote': '另有 {count} 條規則來自 {subs} 個訂閱，它們在你自己的規則之後生效。',
+  'opt.sub.rulesNote': '另有 {count} 條規則來自 {subs} 個訂閱。順序：你的規則、訂閱規則、你的特殊規則（GeoSite 和 IP）、訂閱的特殊規則。',
   'opt.sub.manage': '管理訂閱 →',
   'opt.sub.datasets': '下載訂閱所需的資料集',
   'opt.sub.datasetsHint': '當訂閱含有 GEOSITE、GEOIP 或 IP-ASN 規則而對應資料集未安裝時，會從訂閱指定的位址下載，否則從「資料集」頁面的預設位址下載。下載失敗會在一小時後重試。',
   'opt.sub.dsDone': '已為「{sub}」從 {url} 下載 {name}（{when}）。',
   'opt.sub.dsFailed': '無法為「{sub}」下載 {name}：{error}',
+
   // @append-zh-TW
 };

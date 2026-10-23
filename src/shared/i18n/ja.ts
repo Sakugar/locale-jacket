@@ -147,7 +147,7 @@ export const ja: Record<MessageKey, string> = {
   'opt.navStatus': 'ルール {count} 件 · {state}',
   'opt.workerUnavailable': 'バックグラウンドワーカーを利用できません: {error}',
   'opt.rules.title': 'ルール',
-  'opt.rules.lead': '各サイトには最もよく一致するルールのロケールが使われます。ホスト名ルール（完全一致、サフィックス、キーワード、正規表現、GeoSite）は IP ルール（範囲、ASN、国）より優先されます。同じ種類の中ではより具体的なもの、次に優先度、最後にリストの順序で決まります。何にも一致しない場合はデフォルトが適用されます。',
+  'opt.rules.lead': '各サイトには最も一致するルールのロケールが使われます。順序は、自分のルール、購読ルール、自分の特殊ルール（GeoSite、IP 範囲、ASN、国）、購読の特殊ルールです。各層の中では、完全一致がサフィックス・キーワード・正規表現より優先され、GeoSite は IP ルールより先です。次により具体的なもの、優先度、リストの順で決まります。一致しない場合は既定の動作になります。',
   'opt.rules.enable': '偽装を有効にする',
   'opt.rules.isOn': '偽装はオンです',
   'opt.rules.isOff': '偽装はオフです',
@@ -436,7 +436,7 @@ export const ja: Record<MessageKey, string> = {
   'opt.ext.sourceInvalid': 'https:// または http:// で始まるアドレスを入力してください。',
   'opt.nav.subs': '購読',
   'opt.sub.title': '購読',
-  'opt.sub.lead': 'インターネット上の JSON または YAML ファイルのルールで、自動で最新に保たれます。「ルール」ページの自分のルールは常に購読ルールより優先され、先にある購読は後の購読より優先されます。購読ルールはここでは読み取り専用です。サイトの扱いを変えるには自分のルールを追加してください。',
+  'opt.sub.lead': 'インターネット上の JSON または YAML ファイルのルールで、自動で最新に保たれます。順序：自分のルール、購読ルール、自分の特殊ルール（GEOSITE、IP-CIDR、IP-ASN、GEOIP）、購読の特殊ルール。購読どうしでは上にあるものが優先されます。購読ルールはここでは読み取り専用です。サイトの扱いを変えるには、自分のホスト名ルール（完全一致、サフィックス、キーワード）を追加してください。',
   'opt.sub.updateAll': 'すべて更新',
   'opt.sub.addTitle': '購読を追加',
   'opt.sub.url': 'ファイルのアドレス',
@@ -469,11 +469,12 @@ export const ja: Record<MessageKey, string> = {
   'opt.sub.colValue': '値',
   'opt.sub.colResult': '結果',
   'opt.sub.more': '…ほか {count} 件。',
-  'opt.sub.rulesNote': 'さらに {count} 件のルールが {subs} 件の購読から適用されます。自分のルールの後に適用されます。',
+  'opt.sub.rulesNote': 'さらに {count} 件のルールが {subs} 件の購読から適用されます。順序：自分のルール、購読ルール、自分の特殊ルール（GeoSite と IP）、購読の特殊ルール。',
   'opt.sub.manage': '購読を管理 →',
   'opt.sub.datasets': '購読に必要なデータセットをダウンロードする',
   'opt.sub.datasetsHint': '購読に GEOSITE、GEOIP、IP-ASN のルールがあり、そのデータセットが未インストールの場合、購読が指定するアドレス、なければ「データセット」ページの既定のアドレスからダウンロードします。失敗した場合は 1 時間後に再試行します。',
   'opt.sub.dsDone': '「{sub}」のために {name} を {url} からダウンロードしました（{when}）。',
   'opt.sub.dsFailed': '「{sub}」のための {name} をダウンロードできませんでした：{error}',
+
   // @append-ja
 };
