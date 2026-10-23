@@ -94,6 +94,8 @@ export interface FrameVerification {
 export interface VerifyResult {
   ok: boolean;
   attached: boolean;
+  /** How the values were read: through the tab's debugger session, or by a content script when there is none. */
+  source: 'debugger' | 'script';
   frames: FrameVerification[];
   error: string | null;
 }

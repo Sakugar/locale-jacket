@@ -851,7 +851,7 @@ export class TabSession {
 
   async verify(): Promise<VerifyResult> {
     if (this.state !== 'attached' || !this.mainFrameId) {
-      return { ok: false, attached: false, frames: [], error: 'No debugger session on this tab.' };
+      return { ok: false, attached: false, source: 'debugger', frames: [], error: 'No debugger session on this tab.' };
     }
     const frames: FrameVerification[] = [];
     const evalIn = async (sessionId: string | undefined, frameId: string): Promise<{ url: string; start: LocaleSnapshot | null; live: LocaleSnapshot }> => {
@@ -885,7 +885,7 @@ export class TabSession {
       }
     }
     const ok = frames.every((f) => !f.error && (!f.expectedLocale || f.live?.dateLocale === f.expectedLocale));
-    return { ok, attached: true, frames, error: null };
+    return { ok, attached: true, source: 'debugger', frames, error: null };
   }
 
   status(): TabStatus {

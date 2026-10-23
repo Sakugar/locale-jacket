@@ -443,6 +443,31 @@ try {
     await setSettings(settingsFrom(CONFIG));
   });
 
+  await test('popup "Check what the page sees": works without a debugger session and is read again after a reload', async () => {
+    const check = async (site, expected) => {
+      const popup = await openTab(`chrome-extension://${extId}/popup/popup.html?tabId=${site.tabId}`);
+      await until(() => evaluate(cdp, popup.s, `(() => { const b = [...document.querySelectorAll('#tabCard button')].find((x) => x.textContent === 'Check what the page sees'); b?.click(); return !!b; })()`), { message: 'check button' });
+      const cells = () => evaluate(cdp, popup.s, `[...(document.querySelector('.verify table')?.rows ?? [])].map((r) => [...r.cells].map((c) => c.textContent))`);
+      const rows = await until(async () => ((await cells()).length ? cells() : null), { message: 'verify table' });
+      const lang = rows.find((r) => r[0] === 'navigator.language');
+      if (lang.at(-1) !== expected) throw new Error(`navigator.language now = ${lang.at(-1)}, want ${expected}`);
+      return { popup, rows };
+    };
+    // A site left at the system language has no debugger session: read via chrome.scripting, no "at start" column.
+    const plain = await openTab(u('plain.localhost', '/plain.html'));
+    await report(plain);
+    const a = await check(plain, NATIVE);
+    if (a.rows[0].length !== 2) throw new Error(`expected only a "Now" column: ${JSON.stringify(a.rows[0])}`);
+    // A spoofed site: debugger path with both columns; the report follows a reload.
+    const site = await openTab(u('www.google.localhost', '/plain.html'));
+    await report(site);
+    const b = await check(site, 'en-US');
+    if (b.rows[0].length !== 3) throw new Error(`expected "At start" and "Now": ${JSON.stringify(b.rows[0])}`);
+    await evaluate(cdp, b.popup.s, `document.querySelector('.verify table').dataset.stale = '1'`);
+    await cdp.send('Page.reload', {}, site.s);
+    await until(() => evaluate(cdp, b.popup.s, `!!document.querySelector('.verify table') && !document.querySelector('.verify table').dataset.stale`), { message: 'report re-read after reload' });
+  });
+
   await test('version tip and Updates page: nothing checked until asked; a newer release shows only a tip (release page link, no update steps)', async () => {
     const version = await sw('chrome.runtime.getManifest().version');
     const releaseUrl = (q) => u('localhost', `/api/release?${q}`);

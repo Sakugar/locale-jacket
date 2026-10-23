@@ -322,39 +322,52 @@ function prio(r: Rule): string {
   return r.priority ? t('opt.why.priority', { priority: r.priority }) : '';
 }
 
+/** Tab whose report is shown on the Test page; the card re-reads it whenever tabs load or close. */
+let verifiedTab: number | null = null;
+
 async function renderVerifyCard(): Promise<void> {
   const card = document.getElementById('verifyCard');
   if (!card) return;
-  clear(card);
   const tabs = (await chrome.tabs.query({})).filter((t) => t.id !== undefined && t.url && hostFromUrl(t.url));
+  if (!tabs.some((t) => t.id === verifiedTab)) verifiedTab = null;
   const select = h('select', { 'aria-label': t('opt.verify.heading') }, ...tabs.map((t) => h('option', { value: String(t.id) }, `${hostFromUrl(t.url!)} — ${t.title ?? ''}`.slice(0, 90))));
+  // Keep what the user picked across re-renders.
+  const picked = card.querySelector('select')?.value;
+  if (verifiedTab !== null) select.value = String(verifiedTab);
+  else if (picked && tabs.some((t) => String(t.id) === picked)) select.value = picked;
   const out = h('div', { class: 'stack' });
+  const check = async (tabId: number) => {
+    if (!out.childElementCount) out.append(h('p', { class: 'muted' }, t('popup.checking')));
+    const [st, v] = await Promise.all([send({ type: 'getStatus', tabId }), send({ type: 'verify', tabId })]);
+    clear(out);
+    out.append(renderVerification(st.status, v));
+  };
+  clear(card);
   card.append(
     h('h2', {}, t('opt.verify.heading')),
     h('p', { class: 'hint' }, t('opt.verify.hint')),
     tabs.length
       ? h('div', { class: 'row' }, select, h('button', {
-          onclick: async () => {
+          onclick: () => {
+            verifiedTab = Number(select.value);
             clear(out);
-            out.append(h('p', { class: 'muted' }, t('popup.checking')));
-            const tabId = Number(select.value);
-            const [st, v] = await Promise.all([send({ type: 'getStatus', tabId }), send({ type: 'verify', tabId })]);
-            clear(out);
-            out.append(renderVerification(st.status, v));
+            void check(verifiedTab);
           },
         }, t('opt.verify.button')))
       : h('p', { class: 'muted' }, t('opt.verify.noTabs')),
     out,
   );
+  if (verifiedTab !== null) await check(verifiedTab);
 }
 
 function renderVerification(status: TabStatus | null, v: VerifyResult): HTMLElement {
   const view = describeStatus(status, null);
   const box = h('div', { class: 'stack' }, h('div', { class: 'row' }, chip(view.label, view.kind), h('span', { class: 'small muted' }, view.detail)));
-  if (!v.attached) {
+  if (!v.frames.length) {
     box.append(h('div', { class: 'notice info' }, v.error ?? t('opt.verify.notAttached')));
     return box;
   }
+  const withStart = v.source === 'debugger';
   for (const f of v.frames) {
     if (f.error || !f.live) {
       box.append(h('div', { class: 'notice bad' }, `${f.kind} ${f.url}: ${f.error ?? t('opt.verify.noData')}`));
@@ -375,13 +388,14 @@ function renderVerification(status: TabStatus | null, v: VerifyResult): HTMLElem
     ];
     box.append(
       h('div', { class: 'card' },
-        h('div', { class: 'row' }, h('strong', {}, f.kind === 'main' ? t('common.page') : t('opt.verify.crossSiteFrame')), h('code', {}, f.url), h('span', { class: 'spacer' }), h('span', { class: 'muted small' }, t('opt.verify.expected', { locale: exp ?? t('profile.system') }))),
-        h('table', {}, h('tr', {}, h('th', {}, 'API'), h('th', {}, t('common.atStart')), h('th', {}, t('common.now'))),
-          ...rows.map(([label, get, check]) => h('tr', {}, h('th', {}, label), f.start ? cell(get(f.start), check) : h('td', { class: 'muted' }, 'n/a'), cell(get(f.live!), check))),
+        h('div', { class: 'row' }, h('strong', {}, f.kind === 'main' ? t('common.page') : withStart ? t('opt.verify.crossSiteFrame') : t('common.frameHost', { host: hostFromUrl(f.url) ?? '' })), h('code', {}, f.url), h('span', { class: 'spacer' }), h('span', { class: 'muted small' }, t('opt.verify.expected', { locale: exp ?? t('profile.system') }))),
+        h('table', {}, h('tr', {}, h('th', {}, 'API'), ...(withStart ? [h('th', {}, t('common.atStart'))] : []), h('th', {}, t('common.now'))),
+          ...rows.map(([label, get, check]) => h('tr', {}, h('th', {}, label), ...(withStart ? [f.start ? cell(get(f.start), check) : h('td', { class: 'muted' }, 'n/a')] : []), cell(get(f.live!), check))),
         ),
       ),
     );
   }
+  if (!withStart) box.append(h('p', { class: 'small muted' }, t('popup.verifyNoteScript')));
   return box;
 }
 
@@ -1093,6 +1107,12 @@ async function main(): Promise<void> {
   renderAll();
   showPage();
   window.addEventListener('hashchange', showPage);
+  const refreshVerifyCard = debounce(() => void renderVerifyCard(), 300);
+  chrome.tabs.onCreated.addListener(refreshVerifyCard);
+  chrome.tabs.onRemoved.addListener(refreshVerifyCard);
+  chrome.tabs.onUpdated.addListener((_id, change) => {
+    if (change.status === 'complete') refreshVerifyCard();
+  });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || (!changes[SUBSCRIPTION_DATA_KEY] && !changes[SUBSCRIPTION_DATASET_STATE_KEY])) return;
     if (changes[SUBSCRIPTION_DATA_KEY]) subData = (changes[SUBSCRIPTION_DATA_KEY].newValue as SubscriptionDataMap | undefined) ?? {};

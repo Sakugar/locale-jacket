@@ -101,27 +101,23 @@ function renderTab(): void {
       }, t('popup.reloadTab')),
     );
   }
-  if (status?.session === 'attached') {
-    actions.append(
-      h('button', {
-        disabled: verifying,
-        onclick: async () => {
-          if (tab?.id === undefined) return;
-          verifying = true;
-          renderTab();
-          try {
-            verify = await send({ type: 'verify', tabId: tab.id });
-          } catch (e) {
-            verify = { ok: false, attached: false, frames: [], error: (e as Error).message };
-          }
-          verifying = false;
-          renderTab();
-        },
-      }, t(verifying ? 'popup.checking' : 'popup.checkPage')),
-    );
-  }
-  if (actions.childElementCount) card.append(actions);
+  actions.append(h('button', { disabled: verifying, onclick: () => void runVerify() }, t(verifying ? 'popup.checking' : 'popup.checkPage')));
+  card.append(actions);
   if (verify) card.append(renderVerify(verify));
+}
+
+/** Read what the page sees; once shown, the report is re-read when the tab reloads or navigates. */
+async function runVerify(): Promise<void> {
+  if (tab?.id === undefined || verifying) return;
+  verifying = true;
+  renderTab();
+  try {
+    verify = await send({ type: 'verify', tabId: tab.id });
+  } catch (e) {
+    verify = { ok: false, attached: false, source: 'script', frames: [], error: (e as Error).message };
+  }
+  verifying = false;
+  renderTab();
 }
 
 function renderVerify(v: VerifyResult): HTMLElement {
@@ -138,8 +134,10 @@ function renderVerify(v: VerifyResult): HTMLElement {
     ['Intl.Collator', (s) => s.collatorLocale, true],
     [t('common.timeZone'), (s) => s.timeZone, false],
   ];
+  const withStart = v.source === 'debugger';
   for (const f of v.frames) {
-    const table = h('table', {}, h('tr', {}, h('th', {}, f.kind === 'main' ? t('common.page') : t('common.frameHost', { host: hostFromUrl(f.url) ?? '' })), h('th', {}, t('common.atStart')), h('th', {}, t('common.now'))));
+    const title = f.kind === 'main' ? t('common.page') : t('common.frameHost', { host: hostFromUrl(f.url) ?? '' });
+    const table = h('table', {}, h('tr', {}, h('th', {}, title), ...(withStart ? [h('th', {}, t('common.atStart'))] : []), h('th', {}, t('common.now'))));
     if (f.error) {
       box.append(h('div', { class: 'notice bad' }, `${f.kind}: ${f.error}`));
       continue;
@@ -148,11 +146,11 @@ function renderVerify(v: VerifyResult): HTMLElement {
       const start = f.start ? get(f.start) : 'n/a';
       const live = f.live ? get(f.live) : 'n/a';
       const check = (val: string) => (f.expectedLocale && checked ? (val === f.expectedLocale ? 'ok' : 'bad') : '');
-      table.append(h('tr', {}, h('th', {}, label), h('td', { class: check(start) }, start), h('td', { class: check(live) }, live)));
+      table.append(h('tr', {}, h('th', {}, label), ...(withStart ? [h('td', { class: check(start) }, start)] : []), h('td', { class: check(live) }, live)));
     }
     box.append(table);
   }
-  box.append(h('p', { class: 'small muted' }, t('popup.verifyNote')));
+  box.append(h('p', { class: 'small muted' }, t(withStart ? 'popup.verifyNote' : 'popup.verifyNoteScript')));
   return box;
 }
 
@@ -298,8 +296,12 @@ async function main(): Promise<void> {
   });
   await refresh();
   onSettingsChanged(() => {
-    verify = null;
-    void refresh();
+    void refresh().then(() => (verify ? runVerify() : undefined));
+  });
+  chrome.tabs.onUpdated.addListener((id, change) => {
+    if (id !== tab?.id) return;
+    if (change.url) tab.url = change.url;
+    if (change.status === 'complete' && verify) void runVerify();
   });
   // Keep the status chip current while the popup is open (e.g. after a reload).
   setInterval(async () => {

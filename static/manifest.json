@@ -11,7 +11,8 @@
     "alarms",
     "webNavigation",
     "webRequest",
-    "declarativeNetRequestWithHostAccess"
+    "declarativeNetRequestWithHostAccess",
+    "scripting"
   ],
   "host_permissions": [
     "http://*/*",

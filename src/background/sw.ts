@@ -32,6 +32,7 @@ import {
   type ExtensionUpdateState,
 } from '../shared/extension-update.js';
 import { IpCache } from './ip-cache.js';
+import { verifyWithScripting } from './probe.js';
 import { hostFromUrl, normalizeHost } from '../shared/domain.js';
 import { setLanguage, t } from '../shared/i18n.js';
 import { parseIp } from '../shared/ip.js';
@@ -625,8 +626,12 @@ chrome.runtime.onMessage.addListener((msg: Request, sender, sendResponse) => {
           return { status: m.status(msg.tabId), global: globalStatus(m) };
         case 'listStatuses':
           return { statuses: m.statuses(), global: globalStatus(m) };
-        case 'verify':
-          return m.verify(msg.tabId);
+        case 'verify': {
+          const r = await m.verify(msg.tabId);
+          if (r.attached) return r;
+          // No debugger session (e.g. a site left at the system language): read the live values another way.
+          return verifyWithScripting(msg.tabId, m.status(msg.tabId)?.resolution.profile?.locale ?? null);
+        }
         case 'reloadTab':
           await chrome.tabs.reload(msg.tabId);
           return { ok: true };

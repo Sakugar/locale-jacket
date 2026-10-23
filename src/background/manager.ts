@@ -217,7 +217,7 @@ export class SessionManager {
 
   async verify(tabId: number): Promise<VerifyResult> {
     const t = this.tabs.get(tabId);
-    if (!t) return { ok: false, attached: false, frames: [], error: 'This tab is not tracked yet.' };
+    if (!t) return { ok: false, attached: false, frames: [], source: 'debugger', error: 'This tab is not tracked yet.' };
     return t.verify();
   }
 }
