@@ -8,14 +8,15 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 - **Rule subscriptions** (*Options ▸ Subscriptions*): rules from JSON or YAML files on the internet, fetched when added and kept up to date (daily by default; weekly, monthly or never).
   - Links to a GitHub file page or a gist are turned into the raw file. A link that returns a web page is refused with an explanation.
   - Updates are conditional (ETag / Last-Modified), with *Update now* and *Update all*.
-  - Subscription rules are kept apart from your own and shown read-only. Your own rules always take precedence; between subscriptions, the higher one wins, and they can be reordered or switched off.
+  - Subscription rules are kept apart from your own and shown read-only. Precedence is your rules, then subscription rules, then your special rules (GEOSITE and IP rules), then subscription special rules; between subscriptions, the higher one wins, and they can be reordered or switched off.
   - Only `rules` is read from a file. Invalid entries are skipped and listed, without rejecting the file.
   - Subscriptions are part of the exported and imported configuration.
 - **Data sets for subscriptions:** a missing GeoSite, GeoIP or ASN data set that subscription rules need is downloaded automatically, from the URL the file names (`datasets:`) or the default. It is an option, on by default, and a failed download is retried after an hour.
 - Subscription rules show their subscription's name wherever the matched rule is shown (popup, tester, status).
 
 ### Changed
-- Rule precedence has a new first step: your own rules, then each subscription in order.
+- Rule precedence has a new first step, four tiers: your rules › subscription rules › your special rules (GEOSITE, IP-CIDR, IP-CIDR6, IP-ASN, GEOIP) › subscription special rules. Within the subscription tiers, the earlier subscription wins.
+- The first-request header rules (DNR) no longer mirror a rule that ranks below an IP rule, since the server address might decide instead. The debugger still applies it.
 
 ## [1.2.2] - 2026-10-23
 

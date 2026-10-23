@@ -134,8 +134,10 @@ To add a language: copy `src/shared/i18n/en.ts` to a new catalog, register it in
   - Updates are conditional (`ETag` / `Last-Modified`), so an unchanged file is not downloaded again. Use **Update now** or **Update all** to fetch at once.
 - **Separate from your own rules:**
   - Subscription rules are stored apart from the rules on the *Rules* page and shown read-only.
-  - Your own rules always take precedence over subscription rules, whatever their type. Between subscriptions, the one higher in the list wins; reorder them with ↑ ↓.
-  - To handle a site differently from a subscription, add your own rule, for example from the popup.
+  - Order: your rules, subscription rules, your **special** rules (`GEOSITE`, `IP-CIDR`, `IP-CIDR6`, `IP-ASN`, `GEOIP`), then subscription special rules. Between subscriptions, the one higher in the list wins; reorder them with ↑ ↓.
+  - So a subscription's hostname rule beats your own GeoSite or IP rule, while your special rules beat a subscription's special rules.
+  - To handle a site differently from a subscription, add your own hostname rule (exact, suffix or keyword), for example from the popup.
+  - Because the first-request header rules cannot see server addresses, a rule that ranks below an IP rule (such as a subscription's `GEOSITE` below your own `IP-CIDR`) is applied by the debugger only.
   - Each subscription can be switched off without removing it.
 - **What is used from a file:** only `rules`. A file cannot change your default action, options or subscriptions. Entries that are not valid rules are skipped and listed, without rejecting the file.
 - **Data sets:**
@@ -211,7 +213,16 @@ default:
 4. Earlier position in the list wins.
 5. The default applies only when nothing matches.
 
-Before all of this, your own rules come before rules from [subscriptions](#rule-subscriptions), and an earlier subscription before a later one; the order above applies within each.
+Before all of this come four tiers. **Special** rules are `GEOSITE` and the IP rules (`IP-CIDR`, `IP-CIDR6`, `IP-ASN`, `GEOIP`):
+
+| Tier | Rules |
+|---|---|
+| 1 | your own rules |
+| 2 | rules from [subscriptions](#rule-subscriptions) |
+| 3 | your own special rules |
+| 4 | special rules from subscriptions |
+
+Between subscriptions, the one higher in the list wins. The order above applies within each tier.
 
 So `DOMAIN,accounts.google.com → SYSTEM` overrides `DOMAIN-SUFFIX,google.com → en-US`, whatever the list order.
 
