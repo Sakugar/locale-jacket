@@ -4,6 +4,8 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+**Hotfix** for 1.3.0.
+
 ### Security
 - Regular expressions that could take too long to match are refused. JavaScript regexes backtrack, so a pattern such as `^(a+)+$` can take seconds or longer on some hostnames. The service worker runs them while a page waits for it, so one such pattern stalled every tab. It applies to:
   - `DOMAIN-REGEX` rules you add or import: refused with a reason. A saved rule like that is dropped when the settings load, and the reason is shown with the other settings problems.
