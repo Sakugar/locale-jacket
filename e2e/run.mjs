@@ -443,7 +443,7 @@ try {
     await setSettings(settingsFrom(CONFIG));
   });
 
-  await test('version tip and Updates page: nothing checked until asked; a newer release shows notes, downloads and a popup tip', async () => {
+  await test('version tip and Updates page: nothing checked until asked; a newer release shows only a tip (release page link, no update steps)', async () => {
     const version = await sw('chrome.runtime.getManifest().version');
     const releaseUrl = (q) => u('localhost', `/api/release?${q}`);
     const withSource = (q) => settingsFrom(CONFIG, { options: { extensionUpdates: { onStartup: false, interval: 'off', source: releaseUrl(q) } } });
@@ -459,18 +459,18 @@ try {
 
     const clickCheck = () => evaluate(cdp, opts.s, `document.querySelector('#updates button.primary').click()`);
     await clickCheck();
-    await until(() => evaluate(cdp, opts.s, `!!document.querySelector('#newVersion')`), { message: 'new version card' });
+    await until(() => evaluate(cdp, opts.s, `!!document.querySelector('#newVersion')`), { message: 'new version tip' });
     const page = await evaluate(cdp, opts.s, `({
       badge: document.querySelector('#updateBadge').hidden ? null : document.querySelector('#updateBadge').textContent,
-      title: document.querySelector('#newVersion h2').textContent,
-      notes: document.querySelector('#newVersion .release-notes')?.textContent ?? '',
-      links: [...document.querySelectorAll('#newVersion a')].map((a) => a.href),
-      steps: document.querySelectorAll('#newVersion ol li').length,
-      reload: [...document.querySelectorAll('#updates button')].some((b) => b.textContent === 'Reload extension'),
+      tip: document.querySelector('#newVersion').textContent,
+      links: [...document.querySelectorAll('#updates a')].map((a) => a.href),
+      buttons: [...document.querySelectorAll('#updates button')].map((b) => b.textContent),
+      lists: document.querySelectorAll('#updates ol').length,
     })`);
-    if (page.badge !== '9.9.9' || page.title !== 'What’s new in 9.9.9' || !page.notes.includes('Test release')) throw new Error(JSON.stringify(page));
-    if (!page.links.some((l) => l.endsWith(`locale-jacket-${version}-to-9.9.9.diff.zip`)) || !page.links.some((l) => l.endsWith('locale-jacket-9.9.9.zip'))) throw new Error(`links: ${page.links.join(' ')}`);
-    if (page.steps !== 3 || !page.reload) throw new Error(`unpacked install should get the manual steps and a reload button: ${JSON.stringify(page)}`);
+    if (page.badge !== '9.9.9' || !page.tip.includes('Version 9.9.9 is available.')) throw new Error(JSON.stringify(page));
+    // Only a tip: the release page, no downloads, no update steps, no reload button.
+    if (page.links.length !== 1 || !page.links[0].endsWith('/releases/v9.9.9')) throw new Error(`links: ${page.links.join(' ')}`);
+    if (page.lists || page.buttons.includes('Reload extension')) throw new Error(`update instructions shown: ${JSON.stringify(page)}`);
 
     const popup = await openTab(`chrome-extension://${extId}/popup/popup.html`);
     await until(() => evaluate(cdp, popup.s, `document.querySelector('#version').textContent === 'v${version}' && !document.querySelector('#updateTip').hidden && document.querySelector('#updateTip').textContent.includes('9.9.9')`), { message: 'popup version and update tip' });

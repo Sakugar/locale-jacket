@@ -118,13 +118,3 @@ export function checkDue(opts: ExtensionUpdateOptions, state: ExtensionUpdateSta
   const overdue = opts.interval !== 'off' && now - (state?.lastChecked ?? 0) >= INTERVAL_MS[opts.interval];
   return trigger === 'startup' ? opts.onStartup || overdue : overdue;
 }
-
-/** Download links for a release, as built by scripts/package.mjs, pack-crx.mjs and diff-pack.mjs. */
-export function releaseDownloads(release: ReleaseInfo, current: string): { diff?: ReleaseAsset; zip?: ReleaseAsset; crx?: ReleaseAsset } {
-  const find = (name: string) => release.assets.find((a) => a.name === name);
-  return {
-    diff: find(`locale-jacket-${current}-to-${release.version}.diff.zip`),
-    zip: find(`locale-jacket-${release.version}.zip`),
-    crx: find(`locale-jacket-${release.version}.crx`),
-  };
-}

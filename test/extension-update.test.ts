@@ -9,7 +9,6 @@ import {
   fetchLatestRelease,
   MIN_CHECK_GAP_HOURS,
   parseRelease,
-  releaseDownloads,
 } from '../src/shared/extension-update.js';
 import { DEFAULT_OPTIONS, defaultSettings } from '../src/shared/presets.js';
 import type { ExtensionUpdateOptions } from '../src/shared/types.js';
@@ -86,7 +85,7 @@ describe('fetchLatestRelease', () => {
   });
 });
 
-describe('availableUpdate and releaseDownloads', () => {
+describe('availableUpdate', () => {
   it('reports only a newer version', () => {
     const latest = parseRelease(githubRelease('1.3.0'));
     assert.equal(availableUpdate({ latest }, '1.2.1')?.version, '1.3.0');
@@ -95,14 +94,6 @@ describe('availableUpdate and releaseDownloads', () => {
     assert.equal(availableUpdate(undefined, '1.2.1'), null);
   });
 
-  it('finds the zip, the crx and the diff pack from the installed version', () => {
-    const latest = parseRelease(githubRelease('1.3.0'));
-    const d = releaseDownloads(latest, '1.2.1');
-    assert.match(d.diff!.url, /locale-jacket-1\.2\.1-to-1\.3\.0\.diff\.zip$/);
-    assert.match(d.zip!.url, /locale-jacket-1\.3\.0\.zip$/);
-    assert.match(d.crx!.url, /locale-jacket-1\.3\.0\.crx$/);
-    assert.equal(releaseDownloads(latest, '1.1.0').diff, undefined, 'no diff pack from older versions');
-  });
 });
 
 describe('checkDue', () => {

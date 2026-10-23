@@ -13,7 +13,6 @@ import {
   EXTENSION_UPDATE_STATE_KEY,
   isHttpUrl,
   MIN_CHECK_GAP_HOURS,
-  releaseDownloads,
   type ExtensionUpdateState,
 } from '../shared/extension-update.js';
 import { hostFromUrl, normalizeHost, toUnicode } from '../shared/domain.js';
@@ -966,52 +965,26 @@ async function renderUpdateBadge(): Promise<void> {
 
 async function renderUpdates(): Promise<void> {
   const state = await extensionUpdateState();
-  const self = await chrome.management.getSelf().catch(() => null);
   const root = $('#updates');
   clear(root);
   const when = (ms: number) => new Date(ms).toLocaleString(getLanguage());
   const next = availableUpdate(state, VERSION);
-  const install = self?.installType ?? 'other';
-  const managed = install === 'admin' || install === 'normal';
-  const installText: MessageKey =
-    install === 'development' ? 'opt.ext.install.development' : install === 'admin' ? 'opt.ext.install.admin' : install === 'normal' ? 'opt.ext.install.normal' : 'opt.ext.install.other';
 
-  root.append(h('h1', {}, t('opt.ext.title')));
+  // Only a tip: which version is out and where its release page is. Installing it is up to you.
   root.append(
+    h('h1', {}, t('opt.ext.title')),
     h('div', { class: 'card stack' },
       h('div', { class: 'row' }, h('h2', {}, t('opt.ext.thisTitle')), next ? chip(t('opt.ext.available', { version: next.version }), 'accent') : null),
       h('p', {}, t('opt.ext.installed', { version: VERSION })),
-      h('p', { class: 'hint' }, t(installText)),
-      install === 'development'
-        ? h('div', { class: 'row wrap' },
-            h('button', { onclick: () => chrome.runtime.reload() }, t('opt.ext.reload')),
-            h('span', { class: 'hint' }, t('opt.ext.reloadHint')))
-        : null,
     ),
   );
-
   if (next) {
-    const dl = releaseDownloads(next, VERSION);
-    const link = (url: string, text: string) => h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, text);
     root.append(
-      h('div', { class: 'card stack', id: 'newVersion' },
-        h('h2', {}, t('opt.ext.newTitle', { version: next.version })),
-        next.publishedAt ? h('p', { class: 'hint' }, t('opt.ext.published', { date: new Date(next.publishedAt).toLocaleDateString(getLanguage()) })) : null,
-        // Release notes are shown as plain text, never as HTML.
-        next.notes ? h('div', { class: 'release-notes' }, next.notes) : null,
-        h('div', { class: 'row wrap' },
-          next.page ? link(next.page, t('opt.ext.openRelease')) : null,
-          dl.diff ? link(dl.diff.url, t('opt.ext.dl.diff', { from: VERSION })) : null,
-          dl.zip ? link(dl.zip.url, t('opt.ext.dl.zip')) : null,
-          dl.crx ? link(dl.crx.url, t('opt.ext.dl.crx')) : null,
-        ),
-        h('h2', {}, t('opt.ext.howTitle')),
-        managed
-          ? h('p', {}, t('opt.ext.how.managed'))
-          : h('ol', { class: 'steps' },
-              h('li', {}, t('opt.ext.how.unpacked1')),
-              h('li', {}, t('opt.ext.how.unpacked2')),
-              h('li', {}, t('opt.ext.how.unpacked3'))),
+      h('div', { class: 'notice info row wrap', id: 'newVersion' },
+        h('span', { class: 'spacer' },
+          t('opt.ext.available', { version: next.version }),
+          next.publishedAt ? ` ${t('opt.ext.published', { date: new Date(next.publishedAt).toLocaleDateString(getLanguage()) })}` : ''),
+        next.page ? h('a', { href: next.page, target: '_blank', rel: 'noopener noreferrer' }, t('opt.ext.openRelease')) : null,
       ),
     );
   }
