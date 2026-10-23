@@ -120,6 +120,18 @@ To add a language: copy `src/shared/i18n/en.ts` to a new catalog, register it in
   - the DNR header rules
   - worker overrides
 - **Sessions & log:** which tabs are being debugged, their status, and an in-memory activity log.
+- **Updates:** see [Updating](#updating).
+
+## Updating
+
+The installed version is shown next to the popup title and at the bottom of the options sidebar. *Options ▸ Updates* checks for a newer release:
+
+- **When it checks:** only when you click **Check now**, or, if you turn them on, automatically when the browser starts and/or every day, week or month. Automatic checks are off by default, and there is at most one every 12 hours.
+- **Where it asks:** only the release address shown on the page, by default `https://api.github.com/repos/Sakugar/locale-jacket/releases/latest`. While that repository is private, GitHub answers 404 to anyone not signed in, and the page says so; point the address at a public copy, or check the Releases page yourself.
+- **When a newer version is found:**
+  - The popup shows a tip, and the *Updates* link shows the new version number.
+  - The page shows the release notes (as plain text), links to the diff pack from your version, the full `.zip` and the `.crx`, and the steps for your kind of install.
+- **Applying it:** Chrome never updates an unpacked folder, so an unpacked install cannot update itself. Download the diff pack (or the zip), copy it over your folder, delete anything listed in `DELETED.txt`, then click **Reload extension** on the same page. Your rules and settings are kept. Store and policy installs are updated by Chrome.
 
 ## Rules
 
@@ -239,7 +251,9 @@ These are documented in the extension (*Options ▸ Limitations & privacy*) and 
 
 ## Privacy and permissions
 
-Everything runs locally. There is no server, account, telemetry or analytics. The extension makes no network requests of its own, except data-set downloads you start yourself in *Options ▸ Data sets* and the automatic updates you can turn on there, always from the URL shown there. Rules are stored in `chrome.storage.local`. The activity log lives in memory only and contains hostnames, not URLs.
+Everything runs locally. There is no server, account, telemetry or analytics. The extension makes no network requests of its own, except:
+- data-set downloads you start yourself in *Options ▸ Data sets*, and the automatic data-set updates you can turn on there, always from the URL shown there;
+- update checks you start or turn on in *Options ▸ Updates*, only to the release address shown there. Rules are stored in `chrome.storage.local`. The activity log lives in memory only and contains hostnames, not URLs.
 
 | Permission | Why |
 |---|---|
@@ -247,7 +261,7 @@ Everything runs locally. There is no server, account, telemetry or analytics. Th
 | `webNavigation` | Know when a tab navigates, to attach and reconcile in time |
 | `declarativeNetRequestWithHostAccess` + `http://*/*`, `https://*/*` | Correct `Accept-Language` on the first document request; host access also lets the popup see the current tab's hostname |
 | `storage` | Save your rules |
-| `alarms` | Hourly check whether a scheduled data-set update is due (only while a regular interval is chosen) |
+| `alarms` | Hourly check whether a scheduled data-set update or update check is due (each alarm exists only while its regular interval is chosen) |
 | `webRequest` | Observe only, kept in memory. The server address of page loads, for IP rules (registered only while IP rules exist). The method of top-level page loads (GET or not), so a load that started before the debugger attached is restarted only if repeating it is safe. |
 
 ## Development

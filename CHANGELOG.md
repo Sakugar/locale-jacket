@@ -2,6 +2,19 @@
 
 All notable changes to Locale Jacket are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **The installed version is shown** next to the popup title and at the bottom of the options sidebar.
+- **Options ▸ Updates**, which checks for a newer release:
+  - It checks only when you click *Check now*, or on browser start and/or daily, weekly or monthly if you turn that on. Automatic checks are off by default and run at most once every 12 hours.
+  - It asks only the release address shown on the page (a GitHub "latest release" API URL, editable).
+  - When a newer version is found, the popup shows a tip and the *Updates* link shows its number. The page shows the release notes as plain text, links to the diff pack from your version, the zip and the crx, the steps for your kind of install, and a *Reload extension* button.
+
+### Known limitations
+- Chrome never updates an unpacked folder, so an unpacked install cannot update itself: the page shows what to download and how to apply it.
+- While the GitHub repository is private, GitHub answers 404 to update checks; the page explains this.
+
 ## [1.2.1] - 2026-10-23
 
 ### Added
@@ -71,6 +84,7 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 - The `Intl` locale is per renderer process, so a conflicting profile in a shared process is reported as *Partial*.
 - Service workers, shared workers and restricted pages are not spoofed. POST navigations that change profile are flagged *Reload needed*.
 
+[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.2.1...HEAD
 [1.2.1]: https://github.com/Sakugar/locale-jacket/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Sakugar/locale-jacket/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Sakugar/locale-jacket/compare/v1.0.0...v1.1.0

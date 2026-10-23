@@ -109,9 +109,13 @@ Las reglas IP usan la dirección a la que Chrome se conectó realmente; la exten
 
 La ventana emergente y la página de opciones están en English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español, Русский y Português (Brasil). De forma predeterminada siguen el idioma del navegador; se cambia en *Opciones ▸ Ajustes ▸ Idioma de la interfaz*. Esto nunca cambia lo que ven los sitios.
 
+## Actualizaciones
+
+La versión instalada aparece junto al título de la ventana emergente y al pie de la barra lateral de opciones. *Opciones ▸ Actualizaciones* busca una versión más reciente: solo cuando haces clic en **Comprobar ahora** o activas las comprobaciones automáticas (desactivadas de forma predeterminada, como máximo una cada 12 horas), y solo en la dirección de publicación que se muestra. Si encuentra una versión nueva, la ventana emergente muestra un aviso y la página muestra las notas de la versión, los enlaces de descarga (paquete de diferencias, zip, crx) y los pasos para actualizar. Chrome nunca actualiza una carpeta descomprimida por sí mismo: copia los archivos nuevos sobre la carpeta y haz clic en **Recargar la extensión**. Mientras el repositorio de GitHub sea privado, GitHub responde 404; la página lo explica.
+
 ## Privacidad y permisos
 
-Todo se ejecuta localmente. Aparte de las descargas de conjuntos de datos que inicies y de las actualizaciones automáticas que actives (siempre desde la URL mostrada), la extensión no hace solicitudes de red. Las reglas se guardan en `chrome.storage.local`; el registro de actividad solo está en memoria y solo contiene nombres de host.
+Todo se ejecuta localmente. Aparte de las descargas de conjuntos de datos que inicies y de las actualizaciones automáticas que actives (siempre desde la URL mostrada), y de las comprobaciones de actualizaciones que inicies o actives en *Actualizaciones* (solo a la dirección de publicación mostrada), la extensión no hace solicitudes de red. Las reglas se guardan en `chrome.storage.local`; el registro de actividad solo está en memoria y solo contiene nombres de host.
 
 Permisos: `debugger` (la propia emulación), `webNavigation` y acceso a sitios, `declarativeNetRequestWithHostAccess` (Accept-Language de la primera solicitud), `webRequest` (direcciones de servidor para reglas IP y si una carga de página puede reiniciarse sin riesgo; solo observación), `alarms` (comprobación programada de actualizaciones, solo si está activada), `storage`.
 

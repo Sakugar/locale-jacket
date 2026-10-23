@@ -109,9 +109,13 @@ As regras de IP usam o endereço ao qual o Chrome realmente se conectou; a exten
 
 O pop-up e a página de opções estão em English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español, Русский e Português (Brasil). Por padrão seguem o idioma do navegador; dá para mudar em *Opções ▸ Configurações ▸ Idioma de exibição*. Isso nunca muda o que os sites veem.
 
+## Atualizações
+
+A versão instalada aparece ao lado do título do pop-up e no rodapé da barra lateral das opções. *Opções ▸ Atualizações* procura uma versão mais nova: só quando você clica em **Verificar agora** ou ativa as verificações automáticas (desativadas por padrão, no máximo uma a cada 12 horas), e só no endereço de publicação mostrado. Se houver uma versão nova, o pop-up mostra um aviso e a página mostra as notas da versão, os links de download (pacote de diferenças, zip, crx) e os passos para atualizar. O Chrome nunca atualiza sozinho uma pasta sem compactação: copie os arquivos novos por cima da pasta e clique em **Recarregar a extensão**. Enquanto o repositório no GitHub for privado, o GitHub responde 404; a página explica isso.
+
 ## Privacidade e permissões
 
-Tudo roda localmente. Além dos downloads de conjuntos de dados que você inicia e das atualizações automáticas que você ativa (sempre a partir da URL mostrada), a extensão não faz solicitações de rede. As regras ficam em `chrome.storage.local`; o registro de atividades existe só na memória e contém apenas nomes de host.
+Tudo roda localmente. Além dos downloads de conjuntos de dados que você inicia e das atualizações automáticas que você ativa (sempre a partir da URL mostrada), e das verificações de atualização que você inicia ou ativa em *Atualizações* (apenas para o endereço de publicação mostrado), a extensão não faz solicitações de rede. As regras ficam em `chrome.storage.local`; o registro de atividades existe só na memória e contém apenas nomes de host.
 
 Permissões: `debugger` (a própria emulação), `webNavigation` e acesso a sites, `declarativeNetRequestWithHostAccess` (Accept-Language da primeira solicitação), `webRequest` (endereços de servidor para regras de IP e se um carregamento de página pode ser reiniciado com segurança; apenas observação), `alarms` (verificação programada de atualizações, apenas se ativada), `storage`.
 

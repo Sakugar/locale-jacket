@@ -109,9 +109,13 @@ Les règles IP utilisent l’adresse à laquelle Chrome s’est réellement conn
 
 La fenêtre contextuelle et la page d’options existent en English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español, Русский et Português (Brasil). Par défaut elles suivent la langue du navigateur ; modifiable dans *Options ▸ Paramètres ▸ Langue d’affichage*. Cela ne change jamais ce que voient les sites.
 
+## Mises à jour
+
+La version installée s’affiche à côté du titre de la fenêtre contextuelle et en bas de la barre latérale des options. *Options ▸ Mises à jour* recherche une version plus récente : uniquement quand vous cliquez sur **Vérifier maintenant** ou activez les vérifications automatiques (désactivées par défaut, au plus une toutes les 12 heures), et uniquement auprès de l’adresse de publication affichée. Si une version plus récente existe, la fenêtre contextuelle affiche un message et la page montre les notes de version, les liens de téléchargement (paquet de différences, zip, crx) et les étapes de mise à jour. Chrome ne met jamais à jour un dossier non empaqueté lui-même : copiez les nouveaux fichiers par-dessus le dossier, puis cliquez sur **Recharger l’extension**. Tant que le dépôt GitHub est privé, GitHub répond 404 ; la page l’explique.
+
 ## Confidentialité et autorisations
 
-Tout s’exécute localement. En dehors des téléchargements de jeux de données que vous lancez et des mises à jour automatiques que vous activez (toujours depuis l’URL affichée), l’extension n’effectue aucune requête réseau. Les règles sont stockées dans `chrome.storage.local` ; le journal d’activité reste en mémoire et ne contient que des noms d’hôte.
+Tout s’exécute localement. En dehors des téléchargements de jeux de données que vous lancez et des mises à jour automatiques que vous activez (toujours depuis l’URL affichée), ainsi que des vérifications de mise à jour que vous lancez ou activez dans *Mises à jour* (uniquement vers l’adresse de publication affichée), l’extension n’effectue aucune requête réseau. Les règles sont stockées dans `chrome.storage.local` ; le journal d’activité reste en mémoire et ne contient que des noms d’hôte.
 
 Autorisations : `debugger` (l’émulation elle-même), `webNavigation` et accès aux sites, `declarativeNetRequestWithHostAccess` (Accept-Language de la première requête), `webRequest` (adresses de serveur pour les règles IP et possibilité de relancer sans risque un chargement de page ; en observation seulement), `alarms` (vérification planifiée des mises à jour, seulement si activée), `storage`.
 

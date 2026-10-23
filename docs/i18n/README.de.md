@@ -109,11 +109,15 @@ IP-Regeln verwenden die Adresse, mit der Chrome tatsächlich verbunden war; die 
 
 Popup und Optionsseite gibt es auf English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Español, Русский und Português (Brasil). Standardmäßig folgen sie der UI-Sprache des Browsers; ändern lässt sie sich unter *Optionen ▸ Einstellungen ▸ Anzeigesprache*. Das ändert nie, was Websites sehen.
 
+## Updates
+
+Die installierte Version steht neben dem Titel im Pop-up und unten in der Seitenleiste der Optionen. *Optionen ▸ Updates* sucht nach einer neueren Version – nur wenn Sie auf **Jetzt prüfen** klicken oder automatische Prüfungen einschalten (standardmäßig aus, höchstens alle 12 Stunden), und nur bei der dort angezeigten Release-Adresse. Wird eine neuere Version gefunden, zeigt das Pop-up einen Hinweis und die Seite die Versionshinweise, Download-Links (Diff-Paket, Zip, Crx) und die Schritte zum Aktualisieren. Chrome aktualisiert einen entpackten Ordner nie selbst: Kopieren Sie die neuen Dateien über den Ordner und klicken Sie auf **Erweiterung neu laden**. Solange das GitHub-Repository privat ist, antwortet GitHub mit 404; die Seite erklärt das.
+
 ## Datenschutz und Berechtigungen
 
-Alles läuft lokal. Außer Datensatz-Downloads, die Sie unter *Datensätze* starten, und automatischen Updates, die Sie dort aktivieren (jeweils von der angezeigten URL), stellt die Erweiterung keine Netzwerkanfragen. Regeln liegen in `chrome.storage.local`; das Aktivitätsprotokoll existiert nur im Arbeitsspeicher und enthält nur Hostnamen.
+Alles läuft lokal. Außer Datensatz-Downloads, die Sie unter *Datensätze* starten, und automatischen Updates, die Sie dort aktivieren (jeweils von der angezeigten URL), sowie Update-Prüfungen, die Sie unter *Updates* starten oder einschalten (nur an die angezeigte Release-Adresse), stellt die Erweiterung keine Netzwerkanfragen. Regeln liegen in `chrome.storage.local`; das Aktivitätsprotokoll existiert nur im Arbeitsspeicher und enthält nur Hostnamen.
 
-Berechtigungen: `debugger` (die Emulation selbst), `webNavigation` und Hostzugriff, `declarativeNetRequestWithHostAccess` (Accept-Language der ersten Anfrage), `webRequest` (Serveradressen für IP-Regeln und ob ein Seitenaufruf gefahrlos neu gestartet werden kann; nur beobachtend), `alarms` (geplante Prüfung auf Datensatz-Updates, nur wenn aktiviert), `storage`.
+Berechtigungen: `debugger` (die Emulation selbst), `webNavigation` und Hostzugriff, `declarativeNetRequestWithHostAccess` (Accept-Language der ersten Anfrage), `webRequest` (Serveradressen für IP-Regeln und ob ein Seitenaufruf gefahrlos neu gestartet werden kann; nur beobachtend), `alarms` (geplante Prüfung auf Datensatz- und Erweiterungs-Updates, nur wenn aktiviert), `storage`.
 
 ## Grenzen
 
