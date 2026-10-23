@@ -39,6 +39,22 @@ rules:
 `).settings;
   s.options.uiLanguage = ui;
   await evaluate(cdp, sws, `chrome.storage.local.set({ settings: ${JSON.stringify(s)} }).then(() => true)`);
+  // A sample "newer release" so the popup tip and the Updates page have something to show.
+  const current = await evaluate(cdp, sws, 'chrome.runtime.getManifest().version');
+  const dl = (name) => ({ name, url: `https://github.com/Sakugar/locale-jacket/releases/download/v9.9.9/${name}`, size: 200000 });
+  const sampleUpdate = {
+    lastAttempt: Date.now() - 60_000,
+    lastChecked: Date.now() - 60_000,
+    latest: {
+      version: '9.9.9',
+      name: 'Locale Jacket 9.9.9',
+      page: 'https://github.com/Sakugar/locale-jacket/releases/tag/v9.9.9',
+      publishedAt: new Date().toISOString(),
+      notes: '### New in 9.9.9\n- Sample release notes for the screenshot.\n- Shown as plain text.',
+      assets: [dl(`locale-jacket-${current}-to-9.9.9.diff.zip`), dl('locale-jacket-9.9.9.zip'), dl('locale-jacket-9.9.9.crx')],
+    },
+  };
+  await evaluate(cdp, sws, `chrome.storage.local.set({ extensionUpdateState: ${JSON.stringify(sampleUpdate)} }).then(() => true)`);
   await sleep(500);
 
   const site = await cdp.send('Target.createTarget', { url: `http://mail.google.localhost:${srv.port}/` });
@@ -76,6 +92,7 @@ rules:
   await shot(`${base}/options/options.html#data`, 'options-data', { height: 1000 });
   await shot(`${base}/options/options.html#settings`, 'options-settings');
   await shot(`${base}/options/options.html#sessions`, 'options-sessions');
+  await shot(`${base}/options/options.html#updates`, 'options-updates', { height: 1150 });
 } finally {
   await b.close();
   await srv.close();

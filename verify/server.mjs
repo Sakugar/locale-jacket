@@ -109,6 +109,30 @@ export function startServer({ port = 8787, quiet = false } = {}) {
       case '/api/headers':
         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', ...noStore });
         return res.end(JSON.stringify({ host, acceptLanguage: al, headers: req.headers }));
+      case '/api/release': {
+        // A GitHub-style "latest release" answer for update-check tests:
+        // ?version=9.9.9&from=1.2.1 (diff pack base), ?status=404 for a failure.
+        const status = Number(url.searchParams.get('status')) || 200;
+        const version = url.searchParams.get('version') ?? '9.9.9';
+        const from = url.searchParams.get('from') ?? '1.0.0';
+        log.push({ time: Date.now(), host, path: url.pathname, search: url.search, method: req.method, acceptLanguage: al, dest: req.headers['sec-fetch-dest'] ?? null });
+        const base = `http://${req.headers.host}/download/v${version}/`;
+        const asset = (name) => ({ name, browser_download_url: base + name, size: 1234 });
+        const body = status === 200
+          ? {
+              tag_name: `v${version}`,
+              name: `Locale Jacket ${version}`,
+              html_url: `http://${req.headers.host}/releases/v${version}`,
+              published_at: '2026-10-23T04:05:09Z',
+              draft: false,
+              prerelease: false,
+              body: `### New in ${version}\n- Test release served by verify/server.mjs.`,
+              assets: [asset(`locale-jacket-${version}.zip`), asset(`locale-jacket-${version}.crx`), asset(`locale-jacket-${from}-to-${version}.diff.zip`)],
+            }
+          : { message: 'Not Found' };
+        res.writeHead(status, { 'Content-Type': 'application/json', ...noStore });
+        return res.end(JSON.stringify(body));
+      }
       case '/api/log':
         if (url.searchParams.has('clear')) log.length = 0;
         res.writeHead(200, { 'Content-Type': 'application/json', ...noStore });

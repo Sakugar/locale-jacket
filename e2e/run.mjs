@@ -418,7 +418,7 @@ try {
     const opts = await openTab(`chrome-extension://${extId}/options/options.html#rules`);
     await cdp.send('Runtime.enable', {}, opts.s);
     await until(() => evaluate(cdp, opts.s, `document.querySelectorAll('#rules table tr').length > 1`), { message: 'options rules table' });
-    for (const page of ['test', 'io', 'settings', 'sessions', 'about']) {
+    for (const page of ['test', 'io', 'settings', 'sessions', 'updates', 'about']) {
       await evaluate(cdp, opts.s, `location.hash = '#${page}'`);
       await until(() => evaluate(cdp, opts.s, `!document.getElementById('${page}').hidden && document.getElementById('${page}').childElementCount > 0`), { message: `options page ${page}` });
     }
@@ -440,6 +440,53 @@ try {
     expectLocale(await report(site), 'fr-FR', 'after popup rule');
     cdp.off('Runtime.exceptionThrown', onException);
     if (errors.length) throw new Error(`page errors: ${errors.join(' | ')}`);
+    await setSettings(settingsFrom(CONFIG));
+  });
+
+  await test('version tip and Updates page: nothing checked until asked; a newer release shows notes, downloads and a popup tip', async () => {
+    const version = await sw('chrome.runtime.getManifest().version');
+    const releaseUrl = (q) => u('localhost', `/api/release?${q}`);
+    const withSource = (q) => settingsFrom(CONFIG, { options: { extensionUpdates: { onStartup: false, interval: 'off', source: releaseUrl(q) } } });
+    await sw(`chrome.storage.local.remove('extensionUpdateState').then(() => true)`);
+    srv.clearLog();
+    await setSettings(withSource(`version=9.9.9&from=${version}`));
+
+    const opts = await openTab(`chrome-extension://${extId}/options/options.html#updates`);
+    await until(() => evaluate(cdp, opts.s, `document.querySelector('#navVersion')?.textContent === 'Version ${version}' && !!document.querySelector('#updates button.primary')`), { message: 'Updates page' });
+    await sleep(500);
+    if (srv.log.some((l) => l.path === '/api/release')) throw new Error('checked for updates without being asked');
+    if (!(await evaluate(cdp, opts.s, `document.querySelector('#updateBadge').hidden`))) throw new Error('badge shown before any check');
+
+    const clickCheck = () => evaluate(cdp, opts.s, `document.querySelector('#updates button.primary').click()`);
+    await clickCheck();
+    await until(() => evaluate(cdp, opts.s, `!!document.querySelector('#newVersion')`), { message: 'new version card' });
+    const page = await evaluate(cdp, opts.s, `({
+      badge: document.querySelector('#updateBadge').hidden ? null : document.querySelector('#updateBadge').textContent,
+      title: document.querySelector('#newVersion h2').textContent,
+      notes: document.querySelector('#newVersion .release-notes')?.textContent ?? '',
+      links: [...document.querySelectorAll('#newVersion a')].map((a) => a.href),
+      steps: document.querySelectorAll('#newVersion ol li').length,
+      reload: [...document.querySelectorAll('#updates button')].some((b) => b.textContent === 'Reload extension'),
+    })`);
+    if (page.badge !== '9.9.9' || page.title !== 'What’s new in 9.9.9' || !page.notes.includes('Test release')) throw new Error(JSON.stringify(page));
+    if (!page.links.some((l) => l.endsWith(`locale-jacket-${version}-to-9.9.9.diff.zip`)) || !page.links.some((l) => l.endsWith('locale-jacket-9.9.9.zip'))) throw new Error(`links: ${page.links.join(' ')}`);
+    if (page.steps !== 3 || !page.reload) throw new Error(`unpacked install should get the manual steps and a reload button: ${JSON.stringify(page)}`);
+
+    const popup = await openTab(`chrome-extension://${extId}/popup/popup.html`);
+    await until(() => evaluate(cdp, popup.s, `document.querySelector('#version').textContent === 'v${version}' && !document.querySelector('#updateTip').hidden && document.querySelector('#updateTip').textContent.includes('9.9.9')`), { message: 'popup version and update tip' });
+
+    // A failed check (private repository) is explained; an equal version is "latest".
+    await setSettings(withSource('status=404'));
+    await until(() => evaluate(cdp, opts.s, `!!document.querySelector('#updates button.primary')`), { message: 'Updates page re-rendered' });
+    await clickCheck();
+    await until(() => evaluate(cdp, opts.s, `/private GitHub repository/.test(document.querySelector('#updateStatus')?.textContent ?? '')`), { message: '404 explained' });
+    await setSettings(withSource(`version=${version}`));
+    await until(() => evaluate(cdp, opts.s, `!!document.querySelector('#updates button.primary')`), { message: 'Updates page re-rendered' });
+    await clickCheck();
+    await until(() => evaluate(cdp, opts.s, `/You have the latest version/.test(document.querySelector('#updateStatus')?.textContent ?? '') && !document.querySelector('#newVersion') && document.querySelector('#updateBadge').hidden`), { message: 'up to date' });
+    await until(() => evaluate(cdp, popup.s, `location.reload(), true`).then(() => sleep(500)).then(() => evaluate(cdp, popup.s, `document.querySelector('#updateTip').hidden`)), { message: 'popup tip gone' });
+    if (srv.log.filter((l) => l.path === '/api/release').length !== 3) throw new Error(`expected exactly 3 checks: ${srv.log.filter((l) => l.path === '/api/release').length}`);
+    await sw(`chrome.storage.local.remove('extensionUpdateState').then(() => true)`);
     await setSettings(settingsFrom(CONFIG));
   });
 
