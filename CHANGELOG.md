@@ -4,6 +4,8 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-23
+
 ### Fixed
 - *Check what the page sees* in the popup, and *Verify* in *Options ▸ Test & verify*, are read again when the tab reloads or navigates, instead of showing the values from before until you click again. The options page also follows tabs being opened and closed and keeps the tab you picked.
 - Checking works on every website, also where the extension has no debugger session (sites left at the system language, or a tab not attached yet). Those values are read through `chrome.scripting` in an isolated world; there are no "at start" values in that case.
@@ -124,7 +126,8 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 - The `Intl` locale is per renderer process, so a conflicting profile in a shared process is reported as *Partial*.
 - Service workers, shared workers and restricted pages are not spoofed. POST navigations that change profile are flagged *Reload needed*.
 
-[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/Sakugar/locale-jacket/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Sakugar/locale-jacket/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Sakugar/locale-jacket/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/Sakugar/locale-jacket/compare/v1.2.1...v1.2.2
