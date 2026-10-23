@@ -27,6 +27,7 @@ e2e/artifacts/
 # Claude Code project instructions and per-user settings
 /claude.md
 /CLAUDE.md
+/handoff.md
 .claude/settings.local.json
 
 # Editors and OS
