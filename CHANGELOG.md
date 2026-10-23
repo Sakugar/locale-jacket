@@ -2,7 +2,7 @@
 
 All notable changes to Locale Jacket are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.3.1] - 2026-10-23
 
 **Hotfix** for 1.3.0.
 
@@ -115,7 +115,8 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 - The `Intl` locale is per renderer process, so a conflicting profile in a shared process is reported as *Partial*.
 - Service workers, shared workers and restricted pages are not spoofed. POST navigations that change profile are flagged *Reload needed*.
 
-[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Sakugar/locale-jacket/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Sakugar/locale-jacket/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/Sakugar/locale-jacket/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/Sakugar/locale-jacket/compare/v1.2.0...v1.2.1
