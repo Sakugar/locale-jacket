@@ -12,7 +12,8 @@ import { normalizeProfile } from './locale.js';
 import { DEFAULT_OPTIONS } from './presets.js';
 import { newRuleId, normalizeRuleValue } from './rules.js';
 import { MAX_UPDATE_GAP_HOURS, MIN_UPDATE_GAP_HOURS } from './dataset-schedule.js';
-import type { DatasetUpdateOptions, DefaultAction, LocaleProfile, Options, Rule, RuleType, Settings } from './types.js';
+import { isHttpUrl } from './extension-update.js';
+import type { DatasetUpdateOptions, ExtensionUpdateOptions, DefaultAction, LocaleProfile, Options, Rule, RuleType, Settings } from './types.js';
 import { isIpRuleType, RULE_TYPES } from './types.js';
 import { parseYaml, stringifyYaml, YamlError, type YamlValue } from './yaml.js';
 
@@ -342,6 +343,28 @@ function parseOptions(raw: unknown, base: Options, errors: string[]): Options {
     else errors.push(`options.${k} must be true or false.`);
   }
   if (raw.datasetUpdates !== undefined) out.datasetUpdates = parseDatasetUpdates(raw.datasetUpdates, base.datasetUpdates, errors);
+  if (raw.extensionUpdates !== undefined) out.extensionUpdates = parseExtensionUpdates(raw.extensionUpdates, base.extensionUpdates, errors);
+  return out;
+}
+
+function parseExtensionUpdates(raw: unknown, base: ExtensionUpdateOptions, errors: string[]): ExtensionUpdateOptions {
+  const out: ExtensionUpdateOptions = { ...(base ?? DEFAULT_OPTIONS.extensionUpdates) };
+  if (!isRecord(raw)) {
+    errors.push('options.extensionUpdates must be an object.');
+    return out;
+  }
+  if (raw.onStartup !== undefined) {
+    if (typeof raw.onStartup === 'boolean') out.onStartup = raw.onStartup;
+    else errors.push('options.extensionUpdates.onStartup must be true or false.');
+  }
+  if (raw.interval !== undefined) {
+    if (raw.interval === 'off' || raw.interval === 'daily' || raw.interval === 'weekly' || raw.interval === 'monthly') out.interval = raw.interval;
+    else errors.push('options.extensionUpdates.interval must be "off", "daily", "weekly" or "monthly".');
+  }
+  if (raw.source !== undefined) {
+    if (typeof raw.source === 'string' && isHttpUrl(raw.source.trim())) out.source = raw.source.trim();
+    else errors.push('options.extensionUpdates.source must be an http(s) URL.');
+  }
   return out;
 }
 
@@ -399,7 +422,7 @@ export function settingsToConfigObject(s: Settings): { [k: string]: YamlValue } 
     enabled: s.enabled,
     rules,
     default: def,
-    options: { ...s.options, datasetUpdates: { ...s.options.datasetUpdates } },
+    options: { ...s.options, datasetUpdates: { ...s.options.datasetUpdates }, extensionUpdates: { ...s.options.extensionUpdates } },
   };
 }
 

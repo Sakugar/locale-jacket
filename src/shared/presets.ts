@@ -1,5 +1,6 @@
 // Locale presets shown in the UI and the example configuration shipped on first install.
 
+import { DEFAULT_RELEASE_SOURCE } from './extension-update.js';
 import { makeProfile } from './locale.js';
 import type { Options, Rule, Settings } from './types.js';
 
@@ -46,6 +47,7 @@ export const DEFAULT_OPTIONS: Options = {
   overrideWorkers: true,
   uiLanguage: 'auto',
   datasetUpdates: { onStartup: false, interval: 'off', minIntervalHours: 24, onlyNeeded: true },
+  extensionUpdates: { onStartup: false, interval: 'off', source: DEFAULT_RELEASE_SOURCE },
 };
 
 function rule(id: string, partial: Omit<Rule, 'id' | 'enabled' | 'priority' | 'note' | 'profile'> & { locale?: string; note?: string }): Rule {

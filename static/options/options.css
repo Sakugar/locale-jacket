@@ -35,4 +35,6 @@ textarea.config { min-height: 280px; }
 .option .hint { grid-column: 2; }
 .log { max-height: 360px; overflow: auto; font-family: var(--mono); font-size: 12px; background: var(--surface-2); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; }
 .limits li { margin: 6px 0; }
+.release-notes { max-height: 320px; overflow: auto; font-family: var(--mono); font-size: 12px; background: var(--surface-2); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.steps li { margin: 4px 0; }
 @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } nav { position: static; height: auto; flex-direction: row; flex-wrap: wrap; } main { padding: 16px; } }

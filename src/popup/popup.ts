@@ -1,6 +1,7 @@
 // Popup: global switch, current-tab status, quick per-site rule, default action.
 
 import { hostFromUrl, toUnicode } from '../shared/domain.js';
+import { availableUpdate, EXTENSION_UPDATE_STATE_KEY, type ExtensionUpdateState } from '../shared/extension-update.js';
 import { setLanguage, t, translateDocument } from '../shared/i18n.js';
 import { describeProfile, makeProfile } from '../shared/locale.js';
 import { send, type GlobalStatus, type HostTest, type TabStatus, type VerifyResult } from '../shared/messages.js';
@@ -251,6 +252,29 @@ function renderDefault(): void {
   card.append(h('div', { class: 'section-title' }, t('popup.otherSites')), picker.el, h('div', { class: 'row' }, apply), h('p', { class: 'small muted' }, t('popup.otherSitesHint')));
 }
 
+/** The installed version, and a tip when the last update check found a newer one. */
+async function renderVersion(): Promise<void> {
+  const version = chrome.runtime.getManifest().version;
+  $('#version').textContent = `v${version}`;
+  const state = (await chrome.storage.local.get(EXTENSION_UPDATE_STATE_KEY))[EXTENSION_UPDATE_STATE_KEY] as ExtensionUpdateState | undefined;
+  const next = availableUpdate(state, version);
+  const tip = $('#updateTip');
+  tip.hidden = !next;
+  clear(tip);
+  if (!next) return;
+  tip.className = 'notice info row';
+  tip.append(
+    h('span', { class: 'spacer' }, t('popup.updateTip', { version: next.version })),
+    h('button', {
+      class: 'link',
+      onclick: () => {
+        void chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html#updates') });
+        window.close();
+      },
+    }, t('popup.updateTipLink')),
+  );
+}
+
 async function refresh(): Promise<void> {
   settings = await loadSettings();
   setLanguage(settings.options.uiLanguage);
@@ -260,6 +284,7 @@ async function refresh(): Promise<void> {
   renderTab();
   renderSite();
   renderDefault();
+  await renderVersion();
 }
 
 async function main(): Promise<void> {

@@ -4,6 +4,7 @@
 
 import type { DatasetMeta } from './dataset-store.js';
 import type { DatasetUpdateState, UpdateOutcome } from './dataset-schedule.js';
+import type { ExtensionUpdateState } from './extension-update.js';
 import type { LocaleProfile, ResolutionSource, RuleAction } from './types.js';
 
 export type SessionState =
@@ -114,6 +115,7 @@ export type Request =
   | { type: 'testHost'; host: string; ip?: string }
   | { type: 'datasetsChanged' }
   | { type: 'checkDatasetUpdates' }
+  | { type: 'checkExtensionUpdate' }
   | { type: 'getDatasetUpdateState' }
   | { type: 'geositeCategories' };
 
@@ -128,6 +130,7 @@ export interface ResponseMap {
   testHost: HostTest;
   datasetsChanged: { ok: boolean; problems: string[] };
   checkDatasetUpdates: { outcomes: UpdateOutcome[]; problems: string[] };
+  checkExtensionUpdate: { state: ExtensionUpdateState };
   getDatasetUpdateState: { state: DatasetUpdateState; busy: boolean; alarm: boolean };
   geositeCategories: { names: string[] };
 }

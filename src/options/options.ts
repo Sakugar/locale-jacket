@@ -7,12 +7,21 @@ import { autoUpdatesEnabled, isUrlSource, MAX_UPDATE_GAP_HOURS, MIN_UPDATE_GAP_H
 import { DATASET_KINDS, DATASETS, deleteDataset, listDatasets, putDataset, type DatasetMeta } from '../shared/dataset-store.js';
 import { validateDataset } from '../shared/dataset-validate.js';
 import { compileDnrRules } from '../shared/dnr.js';
+import {
+  availableUpdate,
+  DEFAULT_RELEASE_SOURCE,
+  EXTENSION_UPDATE_STATE_KEY,
+  isHttpUrl,
+  MIN_CHECK_GAP_HOURS,
+  releaseDownloads,
+  type ExtensionUpdateState,
+} from '../shared/extension-update.js';
 import { hostFromUrl, normalizeHost, toUnicode } from '../shared/domain.js';
 import { describeProfile, makeProfile } from '../shared/locale.js';
 import { send, type HostTest, type TabStatus, type VerifyResult } from '../shared/messages.js';
 import { defaultSettings, examplePresetRules, globalEnUsSettings } from '../shared/presets.js';
 import { analyzeRules, describeAction, displayDomain, resolveHost, ruleLabel, rulesInPrecedenceOrder, requiredDatasets } from '../shared/rules.js';
-import type { DatasetUpdateOptions, Options, Rule, Settings } from '../shared/types.js';
+import type { DatasetUpdateOptions, ExtensionUpdateOptions, Options, Rule, Settings } from '../shared/types.js';
 import { $, chip, clear, debounce, h, toggleSwitch } from '../ui/dom.js';
 import { getLanguage, setLanguage, t, translateDocument, UI_LANGUAGES, type MessageKey, type UiLanguagePref } from '../shared/i18n.js';
 import { describeStatus } from '../ui/status.js';
@@ -30,7 +39,7 @@ async function commit(next: Settings): Promise<void> {
 
 // ------------------------------------------------------------------ navigation
 
-const PAGES = ['rules', 'test', 'io', 'data', 'settings', 'sessions', 'about'] as const;
+const PAGES = ['rules', 'test', 'io', 'data', 'settings', 'sessions', 'updates', 'about'] as const;
 type Page = (typeof PAGES)[number];
 
 function currentPage(): Page {
@@ -47,6 +56,7 @@ function showPage(): void {
   }
   if (page === 'sessions') void renderSessions();
   if (page === 'data') void renderData();
+  if (page === 'updates') void renderUpdates();
 }
 
 // ----------------------------------------------------------------------- rules
@@ -733,6 +743,136 @@ function updateLine(meta: DatasetMeta, rec: DatasetUpdateRecord | undefined): HT
   );
 }
 
+// --------------------------------------------------------------------- updates
+
+const VERSION = chrome.runtime.getManifest().version;
+
+async function extensionUpdateState(): Promise<ExtensionUpdateState> {
+  return ((await chrome.storage.local.get(EXTENSION_UPDATE_STATE_KEY))[EXTENSION_UPDATE_STATE_KEY] as ExtensionUpdateState | undefined) ?? {};
+}
+
+/** The badge on the Updates link, showing the newer version when there is one. */
+async function renderUpdateBadge(): Promise<void> {
+  const next = availableUpdate(await extensionUpdateState(), VERSION);
+  const badge = $('#updateBadge');
+  badge.hidden = !next;
+  badge.textContent = next ? next.version : '';
+}
+
+async function renderUpdates(): Promise<void> {
+  const state = await extensionUpdateState();
+  const self = await chrome.management.getSelf().catch(() => null);
+  const root = $('#updates');
+  clear(root);
+  const when = (ms: number) => new Date(ms).toLocaleString(getLanguage());
+  const next = availableUpdate(state, VERSION);
+  const install = self?.installType ?? 'other';
+  const managed = install === 'admin' || install === 'normal';
+  const installText: MessageKey =
+    install === 'development' ? 'opt.ext.install.development' : install === 'admin' ? 'opt.ext.install.admin' : install === 'normal' ? 'opt.ext.install.normal' : 'opt.ext.install.other';
+
+  root.append(h('h1', {}, t('opt.ext.title')));
+  root.append(
+    h('div', { class: 'card stack' },
+      h('div', { class: 'row' }, h('h2', {}, t('opt.ext.thisTitle')), next ? chip(t('opt.ext.available', { version: next.version }), 'accent') : null),
+      h('p', {}, t('opt.ext.installed', { version: VERSION })),
+      h('p', { class: 'hint' }, t(installText)),
+      install === 'development'
+        ? h('div', { class: 'row wrap' },
+            h('button', { onclick: () => chrome.runtime.reload() }, t('opt.ext.reload')),
+            h('span', { class: 'hint' }, t('opt.ext.reloadHint')))
+        : null,
+    ),
+  );
+
+  if (next) {
+    const dl = releaseDownloads(next, VERSION);
+    const link = (url: string, text: string) => h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, text);
+    root.append(
+      h('div', { class: 'card stack', id: 'newVersion' },
+        h('h2', {}, t('opt.ext.newTitle', { version: next.version })),
+        next.publishedAt ? h('p', { class: 'hint' }, t('opt.ext.published', { date: new Date(next.publishedAt).toLocaleDateString(getLanguage()) })) : null,
+        // Release notes are shown as plain text, never as HTML.
+        next.notes ? h('div', { class: 'release-notes' }, next.notes) : null,
+        h('div', { class: 'row wrap' },
+          next.page ? link(next.page, t('opt.ext.openRelease')) : null,
+          dl.diff ? link(dl.diff.url, t('opt.ext.dl.diff', { from: VERSION })) : null,
+          dl.zip ? link(dl.zip.url, t('opt.ext.dl.zip')) : null,
+          dl.crx ? link(dl.crx.url, t('opt.ext.dl.crx')) : null,
+        ),
+        h('h2', {}, t('opt.ext.howTitle')),
+        managed
+          ? h('p', {}, t('opt.ext.how.managed'))
+          : h('ol', { class: 'steps' },
+              h('li', {}, t('opt.ext.how.unpacked1')),
+              h('li', {}, t('opt.ext.how.unpacked2')),
+              h('li', {}, t('opt.ext.how.unpacked3'))),
+      ),
+    );
+  }
+
+  const u = settings.options.extensionUpdates;
+  const set = (patch: Partial<ExtensionUpdateOptions>) => void commit({ ...settings, options: { ...settings.options, extensionUpdates: { ...u, ...patch } } });
+  const onStartup = h('input', { type: 'checkbox' });
+  onStartup.checked = u.onStartup;
+  onStartup.addEventListener('change', () => set({ onStartup: onStartup.checked }));
+  const interval = h('select', { 'aria-label': t('opt.upd.interval') },
+    ...(['off', 'daily', 'weekly', 'monthly'] as const).map((v) => h('option', { value: v }, t(`opt.upd.interval.${v}`))));
+  interval.value = u.interval;
+  interval.addEventListener('change', () => set({ interval: interval.value as ExtensionUpdateOptions['interval'] }));
+  const source = h('input', { type: 'url', value: u.source, style: 'flex:1;min-width:260px', 'aria-label': t('opt.ext.source'), spellcheck: 'false' });
+  const sourceMsg = h('div', { class: 'small' });
+  source.addEventListener('change', () => {
+    const v = source.value.trim();
+    if (isHttpUrl(v)) set({ source: v });
+    else {
+      sourceMsg.className = 'error-text';
+      sourceMsg.textContent = t('opt.ext.sourceInvalid');
+    }
+  });
+
+  const status = h('p', { class: state.lastError ? 'small error-text' : 'hint', id: 'updateStatus' },
+    state.lastError && state.lastAttempt !== undefined
+      ? t('opt.ext.failed', { when: when(state.lastAttempt), error: state.lastError })
+      : state.lastChecked !== undefined
+        ? `${t('opt.ext.lastChecked', { when: when(state.lastChecked) })} ${next ? t('opt.ext.available', { version: next.version }) : t('opt.ext.upToDate')}`
+        : t('opt.ext.never'));
+  const check = h('button', {
+    class: 'primary',
+    onclick: async () => {
+      check.disabled = true;
+      status.className = 'hint';
+      status.textContent = t('opt.ext.checking');
+      try {
+        await send({ type: 'checkExtensionUpdate' });
+      } catch (e) {
+        status.className = 'small error-text';
+        status.textContent = (e as Error).message;
+        check.disabled = false;
+        return;
+      }
+      void renderUpdates();
+      void renderUpdateBadge();
+    },
+  }, t('opt.ext.checkNow'));
+
+  root.append(
+    h('div', { class: 'card stack' },
+      h('div', { class: 'row' }, h('h2', {}, t('opt.ext.checkTitle')), u.onStartup || u.interval !== 'off' ? chip(t('common.on'), 'ok') : chip(t('common.off'), 'off')),
+      h('p', { class: 'hint' }, t('opt.ext.lead')),
+      h('div', { class: 'row wrap' }, check, status),
+      h('label', { class: 'row' }, onStartup, h('span', {}, t('opt.upd.onStartup'))),
+      h('label', { class: 'row' }, h('span', {}, t('opt.upd.interval')), interval),
+      h('p', { class: 'hint' }, t('opt.ext.autoHint', { hours: MIN_CHECK_GAP_HOURS })),
+      h('label', { class: 'stack' }, h('span', {}, t('opt.ext.source')),
+        h('div', { class: 'row wrap' }, source,
+          u.source !== DEFAULT_RELEASE_SOURCE ? h('button', { onclick: () => set({ source: DEFAULT_RELEASE_SOURCE }) }, t('opt.ext.sourceReset')) : null)),
+      h('p', { class: 'hint' }, t('opt.ext.sourceHint')),
+      sourceMsg,
+    ),
+  );
+}
+
 // ----------------------------------------------------------------------- about
 
 function renderAbout(): void {
@@ -762,6 +902,9 @@ function renderAll(): void {
   renderAbout();
   if (currentPage() === 'sessions') void renderSessions();
   if (currentPage() === 'data') void renderData();
+  if (currentPage() === 'updates') void renderUpdates();
+  void renderUpdateBadge();
+  $('#navVersion').textContent = t('common.version', { version: VERSION });
   $('#navStatus').textContent = t('opt.navStatus', { count: settings.rules.length, state: t(settings.enabled ? 'common.on' : 'common.off') });
 }
 
@@ -770,6 +913,11 @@ async function main(): Promise<void> {
   renderAll();
   showPage();
   window.addEventListener('hashchange', showPage);
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes[EXTENSION_UPDATE_STATE_KEY]) return;
+    void renderUpdateBadge();
+    if (currentPage() === 'updates') void renderUpdates();
+  });
   onSettingsChanged((s) => {
     if (JSON.stringify(s) === JSON.stringify(settings)) return;
     settings = s;

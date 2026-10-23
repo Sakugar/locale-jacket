@@ -7,7 +7,9 @@
 // sleep and is revived by the next tab/navigation event.
 //
 // Privacy: the only network requests made here are data-set updates the user opted
-// into (Options ▸ Data sets), to the URL each data set was downloaded from. No URLs
+// into (Options ▸ Data sets), to the URL each data set was downloaded from, and
+// update checks the user starts or opts into (Options ▸ Updates), to the release
+// address shown there. No URLs
 // are persisted; the in-memory log keeps only hostnames and is dropped when the
 // worker stops.
 
@@ -19,6 +21,14 @@ import { DatasetRuntime } from './datasets.js';
 import { DatasetUpdater } from './dataset-updater.js';
 import { listDatasets } from '../shared/dataset-store.js';
 import { autoUpdatesEnabled, type DatasetUpdateState } from '../shared/dataset-schedule.js';
+import {
+  checkDue,
+  compareVersions,
+  EXTENSION_UPDATE_STATE_KEY,
+  fetchLatestRelease,
+  type CheckTrigger,
+  type ExtensionUpdateState,
+} from '../shared/extension-update.js';
 import { IpCache } from './ip-cache.js';
 import { hostFromUrl, normalizeHost } from '../shared/domain.js';
 import { setLanguage, t } from '../shared/i18n.js';
@@ -26,13 +36,14 @@ import { parseIp } from '../shared/ip.js';
 import type { GlobalStatus, HostTest, LogEntry, Request, TabStatus } from '../shared/messages.js';
 import { describeAction, needsServerIp, requiredDatasets, resolveHost, ruleLabel } from '../shared/rules.js';
 import { defaultSettings } from '../shared/presets.js';
-import type { Settings } from '../shared/types.js';
+import type { ExtensionUpdateOptions, Settings } from '../shared/types.js';
 
 const SETTINGS_KEY = 'settings';
 const PRESET_FILE = 'presets/default-rules.yaml';
 const SUSPENDED_KEY = 'suspended';
 const UPDATE_STATE_KEY = 'datasetUpdateState';
 const UPDATE_ALARM = 'dataset-update';
+const EXTENSION_UPDATE_ALARM = 'extension-update';
 const LOG_LIMIT = 300;
 
 const logEntries: LogEntry[] = [];
@@ -230,12 +241,55 @@ const updater = new DatasetUpdater({
   },
 });
 
-/** The hourly alarm exists only while a regular interval is chosen; it just checks whether one is due. */
+/** The hourly alarms exist only while a regular interval is chosen; they just check whether one is due. */
 async function syncUpdateAlarm(settings: Settings): Promise<void> {
-  const want = settings.options.datasetUpdates.interval !== 'off';
-  const has = await chrome.alarms.get(UPDATE_ALARM);
-  if (want && !has) await chrome.alarms.create(UPDATE_ALARM, { delayInMinutes: 1, periodInMinutes: 60 });
-  if (!want && has) await chrome.alarms.clear(UPDATE_ALARM);
+  for (const [name, interval] of [
+    [UPDATE_ALARM, settings.options.datasetUpdates.interval],
+    [EXTENSION_UPDATE_ALARM, settings.options.extensionUpdates.interval],
+  ] as const) {
+    const want = interval !== 'off';
+    const has = await chrome.alarms.get(name);
+    if (want && !has) await chrome.alarms.create(name, { delayInMinutes: 1, periodInMinutes: 60 });
+    if (!want && has) await chrome.alarms.clear(name);
+  }
+}
+
+// --------------------------------------------------------- extension updates
+
+let extensionCheck: Promise<ExtensionUpdateState> | null = null;
+
+async function readExtensionUpdateState(): Promise<ExtensionUpdateState> {
+  return ((await chrome.storage.local.get(EXTENSION_UPDATE_STATE_KEY))[EXTENSION_UPDATE_STATE_KEY] as ExtensionUpdateState | undefined) ?? {};
+}
+
+/**
+ * Ask the release address for the latest version, if a check is due (manual checks
+ * always are). One check at a time; the attempt is recorded before fetching, so a
+ * failure also counts against the minimum gap between automatic checks.
+ */
+function checkExtensionUpdate(trigger: CheckTrigger, opts: ExtensionUpdateOptions): Promise<ExtensionUpdateState> {
+  extensionCheck ??= (async () => {
+    const state = await readExtensionUpdateState();
+    const now = Date.now();
+    if (!checkDue(opts, state, trigger, now)) return state;
+    const next: ExtensionUpdateState = { ...state, lastAttempt: now };
+    await chrome.storage.local.set({ [EXTENSION_UPDATE_STATE_KEY]: next });
+    const current = chrome.runtime.getManifest().version;
+    try {
+      next.latest = await fetchLatestRelease(opts.source);
+      next.lastChecked = Date.now();
+      delete next.lastError;
+      info(compareVersions(next.latest.version, current) > 0 ? `Locale Jacket ${next.latest.version} is available (installed: ${current}).` : `Locale Jacket is up to date (${current}).`);
+    } catch (e) {
+      next.lastError = errorMessage(e);
+      log({ t: Date.now(), level: 'warn', tabId: null, msg: `Update check failed: ${next.lastError}` });
+    }
+    await chrome.storage.local.set({ [EXTENSION_UPDATE_STATE_KEY]: next });
+    return next;
+  })().finally(() => {
+    extensionCheck = null;
+  });
+  return extensionCheck;
 }
 
 const ready: Promise<SessionManager> = (async () => {
@@ -379,9 +433,11 @@ chrome.runtime.onStartup.addListener(() => {
   startedAt = Date.now();
   info('Browser started.');
   withManager((m) => (autoUpdatesEnabled(m.currentSettings.options.datasetUpdates) ? updater.run('startup') : undefined));
+  withManager((m) => checkExtensionUpdate('startup', m.currentSettings.options.extensionUpdates));
 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === UPDATE_ALARM) withManager(() => updater.run('alarm'));
+  if (alarm.name === EXTENSION_UPDATE_ALARM) withManager((m) => checkExtensionUpdate('alarm', m.currentSettings.options.extensionUpdates));
 });
 
 function globalStatus(m: SessionManager): GlobalStatus {
@@ -446,6 +502,8 @@ chrome.runtime.onMessage.addListener((msg: Request, sender, sendResponse) => {
           await reloadDatasets(m);
           info('Data sets changed; rules re-evaluated.');
           return { ok: true, problems: datasets.missing };
+        case 'checkExtensionUpdate':
+          return { state: await checkExtensionUpdate('manual', m.currentSettings.options.extensionUpdates) };
         case 'checkDatasetUpdates':
           return { outcomes: await updater.run('manual'), problems: datasets.missing };
         case 'getDatasetUpdateState':

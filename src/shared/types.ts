@@ -73,6 +73,16 @@ export interface DatasetUpdateOptions {
   onlyNeeded: boolean;
 }
 
+/** Checks for a newer Locale Jacket release (opt-in). */
+export interface ExtensionUpdateOptions {
+  /** Check when the browser starts. */
+  onStartup: boolean;
+  /** Check regularly. */
+  interval: DatasetUpdateInterval;
+  /** Where to ask: a GitHub "latest release" API URL. */
+  source: string;
+}
+
 export interface Options {
   /** inherit: frames use the tab's top-level profile. per-frame: cross-site frames resolve their own rule. */
   frameMode: FrameMode;
@@ -88,6 +98,8 @@ export interface Options {
   uiLanguage: UiLanguagePref;
   /** Automatic data-set updates. */
   datasetUpdates: DatasetUpdateOptions;
+  /** Checks for a newer version of the extension. */
+  extensionUpdates: ExtensionUpdateOptions;
 }
 
 export interface Settings {
