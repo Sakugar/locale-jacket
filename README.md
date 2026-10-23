@@ -120,7 +120,45 @@ To add a language: copy `src/shared/i18n/en.ts` to a new catalog, register it in
   - the DNR header rules
   - worker overrides
 - **Sessions & log:** which tabs are being debugged, their status, and an in-memory activity log.
+- **Subscriptions:** see [Rule subscriptions](#rule-subscriptions).
 - **Updates:** see [Updating](#updating).
+
+## Rule subscriptions
+
+*Options ▸ Subscriptions* pulls rules from files on the internet and keeps them up to date, in the same JSON or YAML format as *Import / export*.
+
+- **Adding one:** paste the file's address and click **Add**.
+  - A link to the file's page on GitHub (`https://github.com/<owner>/<repo>/blob/<branch>/<path>`) or to a gist is turned into the raw file automatically.
+  - A link that still returns a web page is refused with an explanation.
+  - A new subscription is fetched right away, then on its schedule: daily by default, or weekly, monthly or never.
+  - Updates are conditional (`ETag` / `Last-Modified`), so an unchanged file is not downloaded again. Use **Update now** or **Update all** to fetch at once.
+- **Separate from your own rules:**
+  - Subscription rules are stored apart from the rules on the *Rules* page and shown read-only.
+  - Your own rules always take precedence over subscription rules, whatever their type. Between subscriptions, the one higher in the list wins; reorder them with ↑ ↓.
+  - To handle a site differently from a subscription, add your own rule, for example from the popup.
+  - Each subscription can be switched off without removing it.
+- **What is used from a file:** only `rules`. A file cannot change your default action, options or subscriptions. Entries that are not valid rules are skipped and listed, without rejecting the file.
+- **Data sets:**
+  - If a subscription has `GEOSITE`, `GEOIP` or `IP-ASN` rules and that data set is not installed, it is downloaded automatically. This is the option *Download the data sets subscriptions need*, on by default.
+  - The file may name where to get each one; otherwise the default address from *Data sets* is used:
+
+    ```yaml
+    datasets:
+      geosite: https://example.com/geosite.dat
+    rules:
+      - GEOSITE,google,en-US
+      - DOMAIN-SUFFIX,example.org,fr-FR
+    ```
+- **Limits:** up to 20 subscriptions, 5,000 rules and 2 MB per file. Very large rule sets can exceed Chrome's limit for the first-request header rules; those rules still work through the debugger.
+
+Subscriptions are part of the exported configuration (name, address, on/off, schedule), so `subscriptions:` can also be imported.
+
+```yaml
+subscriptions:
+  - name: Team rules
+    url: https://github.com/example/locale-rules/blob/main/rules.yaml
+    interval: weekly
+```
 
 ## Updating
 
@@ -172,6 +210,8 @@ default:
 3. Higher `priority` wins.
 4. Earlier position in the list wins.
 5. The default applies only when nothing matches.
+
+Before all of this, your own rules come before rules from [subscriptions](#rule-subscriptions), and an earlier subscription before a later one; the order above applies within each.
 
 So `DOMAIN,accounts.google.com → SYSTEM` overrides `DOMAIN-SUFFIX,google.com → en-US`, whatever the list order.
 
@@ -253,7 +293,8 @@ These are documented in the extension (*Options ▸ Limitations & privacy*) and 
 
 Everything runs locally. There is no server, account, telemetry or analytics. The extension makes no network requests of its own, except:
 - data-set downloads you start yourself in *Options ▸ Data sets*, and the automatic data-set updates you can turn on there, always from the URL shown there;
-- update checks you start or turn on in *Options ▸ Updates*, only to the release address shown there. Rules are stored in `chrome.storage.local`. The activity log lives in memory only and contains hostnames, not URLs.
+- update checks you start or turn on in *Options ▸ Updates*, only to the release address shown there;
+- the rule subscriptions you add in *Options ▸ Subscriptions*, to their addresses, plus the data sets their rules need (from the address the subscription names, or the default one). Rules are stored in `chrome.storage.local`. The activity log lives in memory only and contains hostnames, not URLs.
 
 | Permission | Why |
 |---|---|
@@ -261,7 +302,7 @@ Everything runs locally. There is no server, account, telemetry or analytics. Th
 | `webNavigation` | Know when a tab navigates, to attach and reconcile in time |
 | `declarativeNetRequestWithHostAccess` + `http://*/*`, `https://*/*` | Correct `Accept-Language` on the first document request; host access also lets the popup see the current tab's hostname |
 | `storage` | Save your rules |
-| `alarms` | Hourly check whether a scheduled data-set update or update check is due (each alarm exists only while its regular interval is chosen) |
+| `alarms` | Hourly check whether a scheduled data-set update, update check or subscription update is due (each alarm exists only while something uses a regular interval) |
 | `webRequest` | Observe only, kept in memory. The server address of page loads, for IP rules (registered only while IP rules exist). The method of top-level page loads (GET or not), so a load that started before the debugger attached is restarted only if repeating it is safe. |
 
 ## Development

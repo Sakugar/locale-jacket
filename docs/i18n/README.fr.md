@@ -97,6 +97,10 @@ default:
 
 Ainsi `DOMAIN,accounts.google.com → SYSTEM` l’emporte toujours sur `DOMAIN-SUFFIX,google.com → en-US`, quel que soit l’ordre.
 
+## Abonnements de règles
+
+*Options ▸ Abonnements* récupère des règles dans des fichiers JSON ou YAML sur Internet (au format d’*Importer / exporter*) et les tient à jour : dès l’ajout, puis chaque jour (ou chaque semaine, chaque mois, jamais), avec des requêtes conditionnelles. Les liens vers la page d’un fichier sur GitHub (`github.com/…/blob/…`) ou vers un gist sont convertis en fichier brut ; une adresse qui renvoie une page web est refusée avec une explication. Les règles d’abonnement sont stockées à part des vôtres et seulement affichées : vos propres règles priment toujours et, entre abonnements, celui placé plus haut l’emporte. Seul `rules` est lu dans un fichier ; les entrées invalides sont ignorées. Si les règles d’un abonnement ont besoin de GeoSite, GeoIP ou ASN et que ce jeu de données manque, il est téléchargé automatiquement depuis l’adresse indiquée par le fichier sous `datasets:`, sinon depuis l’adresse par défaut.
+
 ## Jeux de données et mises à jour automatiques
 
 Les règles `GEOSITE`, `GEOIP` (pays) et `IP-ASN` nécessitent des fichiers de données. Rien n’est téléchargé sans votre demande : dans *Options ▸ Jeux de données*, téléchargez-les depuis une URL modifiable ou importez un fichier local.
@@ -115,7 +119,7 @@ La version installée s’affiche à côté du titre de la fenêtre contextuelle
 
 ## Confidentialité et autorisations
 
-Tout s’exécute localement. En dehors des téléchargements de jeux de données que vous lancez et des mises à jour automatiques que vous activez (toujours depuis l’URL affichée), ainsi que des vérifications de mise à jour que vous lancez ou activez dans *Mises à jour* (uniquement vers l’adresse de publication affichée), l’extension n’effectue aucune requête réseau. Les règles sont stockées dans `chrome.storage.local` ; le journal d’activité reste en mémoire et ne contient que des noms d’hôte.
+Tout s’exécute localement. En dehors des téléchargements de jeux de données que vous lancez et des mises à jour automatiques que vous activez (toujours depuis l’URL affichée), des vérifications de mise à jour que vous lancez ou activez dans *Mises à jour* (uniquement vers l’adresse de publication affichée), et des abonnements que vous ajoutez dans *Abonnements* (vers leurs adresses, ainsi que les jeux de données dont leurs règles ont besoin), l’extension n’effectue aucune requête réseau. Les règles sont stockées dans `chrome.storage.local` ; le journal d’activité reste en mémoire et ne contient que des noms d’hôte.
 
 Autorisations : `debugger` (l’émulation elle-même), `webNavigation` et accès aux sites, `declarativeNetRequestWithHostAccess` (Accept-Language de la première requête), `webRequest` (adresses de serveur pour les règles IP et possibilité de relancer sans risque un chargement de page ; en observation seulement), `alarms` (vérification planifiée des mises à jour, seulement si activée), `storage`.
 

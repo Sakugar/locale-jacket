@@ -97,6 +97,10 @@ default:
 
 Por eso `DOMAIN,accounts.google.com → SYSTEM` siempre prevalece sobre `DOMAIN-SUFFIX,google.com → en-US`, sea cual sea el orden.
 
+## Suscripciones de reglas
+
+*Opciones ▸ Suscripciones* toma reglas de archivos JSON o YAML en internet (con el formato de *Importar / exportar*) y las mantiene al día: al añadirlas y después cada día (o cada semana, cada mes o nunca), con solicitudes condicionales. Los enlaces a la página de un archivo en GitHub (`github.com/…/blob/…`) o a un gist se convierten en el archivo sin procesar; una dirección que devuelve una página web se rechaza con una explicación. Las reglas de suscripción se guardan aparte de las tuyas y solo se muestran: tus propias reglas siempre tienen prioridad y, entre suscripciones, gana la que está más arriba. De un archivo solo se lee `rules`; las entradas no válidas se omiten. Si las reglas de una suscripción necesitan GeoSite, GeoIP o ASN y falta ese conjunto de datos, se descarga automáticamente desde la dirección que indica el archivo en `datasets:` o, si no, desde la predeterminada.
+
 ## Conjuntos de datos y actualizaciones automáticas
 
 Las reglas `GEOSITE`, `GEOIP` de país e `IP-ASN` necesitan archivos de datos. No se descarga nada salvo que lo pidas: en *Opciones ▸ Conjuntos de datos*, descárgalos desde una URL editable o importa un archivo local.
@@ -115,7 +119,7 @@ La versión instalada aparece junto al título de la ventana emergente y al pie 
 
 ## Privacidad y permisos
 
-Todo se ejecuta localmente. Aparte de las descargas de conjuntos de datos que inicies y de las actualizaciones automáticas que actives (siempre desde la URL mostrada), y de las comprobaciones de actualizaciones que inicies o actives en *Actualizaciones* (solo a la dirección de publicación mostrada), la extensión no hace solicitudes de red. Las reglas se guardan en `chrome.storage.local`; el registro de actividad solo está en memoria y solo contiene nombres de host.
+Todo se ejecuta localmente. Aparte de las descargas de conjuntos de datos que inicies y de las actualizaciones automáticas que actives (siempre desde la URL mostrada), de las comprobaciones de actualizaciones que inicies o actives en *Actualizaciones* (solo a la dirección de publicación mostrada) y de las suscripciones que añadas en *Suscripciones* (a sus direcciones, más los conjuntos de datos que necesiten sus reglas), la extensión no hace solicitudes de red. Las reglas se guardan en `chrome.storage.local`; el registro de actividad solo está en memoria y solo contiene nombres de host.
 
 Permisos: `debugger` (la propia emulación), `webNavigation` y acceso a sitios, `declarativeNetRequestWithHostAccess` (Accept-Language de la primera solicitud), `webRequest` (direcciones de servidor para reglas IP y si una carga de página puede reiniciarse sin riesgo; solo observación), `alarms` (comprobación programada de actualizaciones, solo si está activada), `storage`.
 

@@ -2,6 +2,21 @@
 
 All notable changes to Locale Jacket are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Rule subscriptions** (*Options ▸ Subscriptions*): rules from JSON or YAML files on the internet, fetched when added and kept up to date (daily by default; weekly, monthly or never).
+  - Links to a GitHub file page or a gist are turned into the raw file. A link that returns a web page is refused with an explanation.
+  - Updates are conditional (ETag / Last-Modified), with *Update now* and *Update all*.
+  - Subscription rules are kept apart from your own and shown read-only. Your own rules always take precedence; between subscriptions, the higher one wins, and they can be reordered or switched off.
+  - Only `rules` is read from a file. Invalid entries are skipped and listed, without rejecting the file.
+  - Subscriptions are part of the exported and imported configuration.
+- **Data sets for subscriptions:** a missing GeoSite, GeoIP or ASN data set that subscription rules need is downloaded automatically, from the URL the file names (`datasets:`) or the default. It is an option, on by default, and a failed download is retried after an hour.
+- Subscription rules show their subscription's name wherever the matched rule is shown (popup, tester, status).
+
+### Changed
+- Rule precedence has a new first step: your own rules, then each subscription in order.
+
 ## [1.2.2] - 2026-10-23
 
 ### Added
@@ -84,6 +99,7 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 - The `Intl` locale is per renderer process, so a conflicting profile in a shared process is reported as *Partial*.
 - Service workers, shared workers and restricted pages are not spoofed. POST navigations that change profile are flagged *Reload needed*.
 
+[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.2.2...HEAD
 [1.2.2]: https://github.com/Sakugar/locale-jacket/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/Sakugar/locale-jacket/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Sakugar/locale-jacket/compare/v1.1.0...v1.2.0

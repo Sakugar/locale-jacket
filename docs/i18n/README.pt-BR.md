@@ -97,6 +97,10 @@ default:
 
 Por isso `DOMAIN,accounts.google.com → SYSTEM` sempre prevalece sobre `DOMAIN-SUFFIX,google.com → en-US`, qualquer que seja a ordem.
 
+## Assinaturas de regras
+
+*Opções ▸ Assinaturas* busca regras em arquivos JSON ou YAML na internet (no formato de *Importar / exportar*) e as mantém atualizadas: logo ao adicionar e depois todo dia (ou toda semana, todo mês ou nunca), com solicitações condicionais. Links para a página de um arquivo no GitHub (`github.com/…/blob/…`) ou para um gist são convertidos no arquivo bruto; um endereço que devolve uma página web é recusado com uma explicação. As regras de assinatura ficam guardadas à parte das suas e só são exibidas: suas próprias regras sempre têm prioridade e, entre assinaturas, vence a que está mais acima. De um arquivo só se lê `rules`; itens inválidos são ignorados. Se as regras de uma assinatura precisam de GeoSite, GeoIP ou ASN e esse conjunto de dados não está instalado, ele é baixado automaticamente do endereço que o arquivo indica em `datasets:` ou, se não houver, do endereço padrão.
+
 ## Conjuntos de dados e atualizações automáticas
 
 As regras `GEOSITE`, `GEOIP` de país e `IP-ASN` precisam de arquivos de dados. Nada é baixado sem que você peça: em *Opções ▸ Conjuntos de dados*, baixe-os de uma URL editável ou importe um arquivo local.
@@ -115,7 +119,7 @@ A versão instalada aparece ao lado do título do pop-up e no rodapé da barra l
 
 ## Privacidade e permissões
 
-Tudo roda localmente. Além dos downloads de conjuntos de dados que você inicia e das atualizações automáticas que você ativa (sempre a partir da URL mostrada), e das verificações de atualização que você inicia ou ativa em *Atualizações* (apenas para o endereço de publicação mostrado), a extensão não faz solicitações de rede. As regras ficam em `chrome.storage.local`; o registro de atividades existe só na memória e contém apenas nomes de host.
+Tudo roda localmente. Além dos downloads de conjuntos de dados que você inicia e das atualizações automáticas que você ativa (sempre a partir da URL mostrada), das verificações de atualização que você inicia ou ativa em *Atualizações* (apenas para o endereço de publicação mostrado) e das assinaturas que você adiciona em *Assinaturas* (para os endereços delas, mais os conjuntos de dados de que as regras delas precisam), a extensão não faz solicitações de rede. As regras ficam em `chrome.storage.local`; o registro de atividades existe só na memória e contém apenas nomes de host.
 
 Permissões: `debugger` (a própria emulação), `webNavigation` e acesso a sites, `declarativeNetRequestWithHostAccess` (Accept-Language da primeira solicitação), `webRequest` (endereços de servidor para regras de IP e se um carregamento de página pode ser reiniciado com segurança; apenas observação), `alarms` (verificação programada de atualizações, apenas se ativada), `storage`.
 

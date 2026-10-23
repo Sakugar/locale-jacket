@@ -97,6 +97,10 @@ default:
 
 Daher überstimmt `DOMAIN,accounts.google.com → SYSTEM` stets `DOMAIN-SUFFIX,google.com → en-US`, unabhängig von der Reihenfolge.
 
+## Regel-Abonnements
+
+*Optionen ▸ Abonnements* lädt Regeln aus JSON- oder YAML-Dateien im Internet (im Format von *Import / Export*) und hält sie aktuell: sofort nach dem Hinzufügen, danach täglich (oder wöchentlich, monatlich, nie), mit bedingten Anfragen. Links auf die Seite einer Datei bei GitHub (`github.com/…/blob/…`) oder auf einen Gist werden in die Rohdatei umgewandelt; eine Adresse, die eine Webseite liefert, wird mit einer Erklärung abgelehnt. Abonnement-Regeln werden getrennt von Ihren eigenen gespeichert und nur angezeigt: Ihre eigenen Regeln haben immer Vorrang, unter Abonnements gewinnt das höher stehende. Aus einer Datei wird nur `rules` gelesen; ungültige Einträge werden übersprungen. Brauchen Abonnement-Regeln GeoSite, GeoIP oder ASN und fehlt der Datensatz, wird er automatisch heruntergeladen – von der Adresse, die die Datei unter `datasets:` nennt, sonst von der Standardadresse.
+
 ## Datensätze und automatische Updates
 
 `GEOSITE`-, `GEOIP`-Länder- und `IP-ASN`-Regeln brauchen Datendateien. Es wird nichts heruntergeladen, solange Sie es nicht verlangen: unter *Optionen ▸ Datensätze* von einer editierbaren URL herunterladen oder eine lokale Datei importieren.
@@ -115,7 +119,7 @@ Die installierte Version steht neben dem Titel im Pop-up und unten in der Seiten
 
 ## Datenschutz und Berechtigungen
 
-Alles läuft lokal. Außer Datensatz-Downloads, die Sie unter *Datensätze* starten, und automatischen Updates, die Sie dort aktivieren (jeweils von der angezeigten URL), sowie Update-Prüfungen, die Sie unter *Updates* starten oder einschalten (nur an die angezeigte Release-Adresse), stellt die Erweiterung keine Netzwerkanfragen. Regeln liegen in `chrome.storage.local`; das Aktivitätsprotokoll existiert nur im Arbeitsspeicher und enthält nur Hostnamen.
+Alles läuft lokal. Außer Datensatz-Downloads, die Sie unter *Datensätze* starten, und automatischen Updates, die Sie dort aktivieren (jeweils von der angezeigten URL), Update-Prüfungen, die Sie unter *Updates* starten oder einschalten (nur an die angezeigte Release-Adresse), sowie den Abonnements, die Sie unter *Abonnements* hinzufügen (an deren Adressen, dazu die Datensätze, die ihre Regeln benötigen), stellt die Erweiterung keine Netzwerkanfragen. Regeln liegen in `chrome.storage.local`; das Aktivitätsprotokoll existiert nur im Arbeitsspeicher und enthält nur Hostnamen.
 
 Berechtigungen: `debugger` (die Emulation selbst), `webNavigation` und Hostzugriff, `declarativeNetRequestWithHostAccess` (Accept-Language der ersten Anfrage), `webRequest` (Serveradressen für IP-Regeln und ob ein Seitenaufruf gefahrlos neu gestartet werden kann; nur beobachtend), `alarms` (geplante Prüfung auf Datensatz- und Erweiterungs-Updates, nur wenn aktiviert), `storage`.
 
