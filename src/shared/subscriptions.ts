@@ -7,7 +7,8 @@
 import { parseConfigText, parseSubscriptionRules } from './config-io.js';
 import { INTERVAL_MS, type UpdateTrigger } from './dataset-schedule.js';
 import { DATASET_KINDS, DATASETS, type DatasetKind } from './dataset-store.js';
-import { requiredDatasets } from './rules.js';
+import { analysisBudget, REGEX_CHECK_VERSION } from './regex-safety.js';
+import { markRegexValidated, REGEX_BATCH_BUDGET_MS, requiredDatasets } from './rules.js';
 import { isHttpUrl } from './extension-update.js';
 import { fetchLimited, type NetLimits } from './net.js';
 import type { Rule, Settings, Subscription } from './types.js';
@@ -37,6 +38,11 @@ export interface SubscriptionData {
   ignored: string[];
   /** Data-set URLs named by the file (used when its rules need a data set that is missing). */
   datasets?: Partial<Record<DatasetKind, string>>;
+  /**
+   * REGEX_CHECK_VERSION of the regex check that accepted its DOMAIN-REGEX rules. Data with
+   * the current version is not checked again after a worker restart; anything else is.
+   */
+  regexCheck?: number;
   fetchedAt?: number;
   lastAttempt?: number;
   etag?: string;
@@ -93,16 +99,27 @@ function looksLikeHtml(text: string): boolean {
   return /^\s*(<!doctype html|<html[\s>]|<head[\s>]|<body[\s>])/i.test(text);
 }
 
-/** Parse a subscription file into rules with stable ids and the subscription as origin. */
-export function parseSubscription(text: string, sub: Subscription): Pick<SubscriptionData, 'rules' | 'skipped' | 'skippedCount' | 'ignored' | 'datasets'> {
+/**
+ * Parse a subscription file into rules with stable ids and the subscription as origin.
+ * Validation stops as soon as the file has more than MAX_SUBSCRIPTION_RULES valid rules,
+ * and all its regular expressions share one analysis budget (REGEX_BATCH_BUDGET_MS);
+ * patterns left over when it is spent are skipped like other invalid entries.
+ */
+export function parseSubscription(
+  text: string,
+  sub: Subscription,
+): Pick<SubscriptionData, 'rules' | 'skipped' | 'skippedCount' | 'ignored' | 'datasets' | 'regexCheck'> {
   if (looksLikeHtml(text)) {
     throw new Error('This address returned a web page, not a JSON or YAML file. Use a link to the file itself (on GitHub, the file page or its Raw link).');
   }
   const parsed = parseConfigText(text);
   if (parsed.error) throw new Error(parsed.error);
-  const { rules, skipped, ignored, datasets } = parseSubscriptionRules(parsed.value);
-  if (rules.length > MAX_SUBSCRIPTION_RULES) throw new Error(`The file has ${rules.length} rules; at most ${MAX_SUBSCRIPTION_RULES} are allowed per subscription.`);
+  const { rules, skipped, ignored, datasets } = parseSubscriptionRules(parsed.value, {
+    check: { budget: analysisBudget(REGEX_BATCH_BUDGET_MS) },
+    maxRules: MAX_SUBSCRIPTION_RULES,
+  });
   return {
+    regexCheck: REGEX_CHECK_VERSION,
     // Ids derive from the position, so a tab's matched rule stays recognisable across updates.
     rules: rules.map((r, i) => ({ ...r, id: `${sub.id}:${i}`, origin: { subscription: sub.id, name: subscriptionLabel(sub), layer: 0 } })),
     skipped: skipped.slice(0, 20),
@@ -126,7 +143,9 @@ export async function fetchSubscription(
   const url = rawUrl(sub.url);
   if (!isHttpUrl(url)) throw new Error('The address must start with https:// or http://.');
   const headers: Record<string, string> = { Accept: 'application/json, application/yaml, text/yaml, text/plain;q=0.9, */*;q=0.5' };
-  const same = previous && previous.url === url && previous.fetchedAt !== undefined;
+  // Rules checked by an older regex check are fetched in full (not conditionally) once, so
+  // they are parsed and checked again and the stored data gets the current marker.
+  const same = previous && previous.url === url && previous.fetchedAt !== undefined && previous.regexCheck === REGEX_CHECK_VERSION;
   if (same && previous.etag) headers['If-None-Match'] = previous.etag;
   if (same && previous.lastModified) headers['If-Modified-Since'] = previous.lastModified;
   // The byte cap is counted while the body streams in, so a file without content-length
@@ -187,6 +206,25 @@ export function markUnsaved(current: SubscriptionDataMap, reverted: Subscription
   }
 }
 
+/**
+ * After loading stored subscription data: the DOMAIN-REGEX sources of entries checked by
+ * the current REGEX_CHECK_VERSION are marked as checked, so the first navigation does not
+ * analyse them again. Entries without the marker (older data, or an older check) are left
+ * alone: compiledRegex checks each of their patterns before it is first used.
+ */
+export function trustCheckedSubscriptionData(data: SubscriptionDataMap): number {
+  let n = 0;
+  for (const d of Object.values(data)) {
+    if (d?.regexCheck !== REGEX_CHECK_VERSION || !Array.isArray(d.rules)) continue;
+    for (const r of d.rules) {
+      if (r?.type !== 'DOMAIN-REGEX' || typeof r.value !== 'string') continue;
+      markRegexValidated(r.value);
+      n++;
+    }
+  }
+  return n;
+}
+
 /** Rules last fetched for a subscription, if they belong to its current URL. */
 export function currentData(sub: Subscription, data: SubscriptionDataMap): SubscriptionData | undefined {
   const d = data[sub.id];
@@ -213,7 +251,8 @@ export function withSubscriptions(settings: Settings, data: SubscriptionDataMap)
  * Whether a subscription should be fetched now.
  * - manual: always;
  * - changed: when it has no rules for its current URL yet (just added, or the URL changed);
- * - startup / alarm: when its interval has passed, at most once per minimum gap.
+ * - startup / alarm: when its interval has passed, or its data was checked by another
+ *   REGEX_CHECK_VERSION, at most once per minimum gap; never when updates are off.
  */
 export function subscriptionDue(sub: Subscription, d: SubscriptionData | undefined, trigger: SubscriptionTrigger, now: number): boolean {
   if (trigger === 'manual') return true;
@@ -221,8 +260,13 @@ export function subscriptionDue(sub: Subscription, d: SubscriptionData | undefin
   const fresh = d === undefined || d.url !== rawUrl(sub.url);
   // A failed attempt for the current URL is not "fresh": it is retried by the schedule or a click.
   if (trigger === 'changed' || fresh) return fresh;
+  // With updates off nothing is fetched automatically, not even data an older regex check
+  // accepted: compiledRegex checks those patterns itself, within a bounded budget.
   if (sub.interval === 'off') return false;
   if (d.lastAttempt !== undefined && now - d.lastAttempt < MIN_SUBSCRIPTION_GAP_HOURS * HOUR) return false;
+  // Data checked by another REGEX_CHECK_VERSION is fetched again (in full, see
+  // fetchSubscription) at the next attempt the minimum gap allows, so it gets the marker.
+  if (d.regexCheck !== REGEX_CHECK_VERSION) return true;
   return now - (d.fetchedAt ?? 0) >= INTERVAL_MS[sub.interval];
 }
 

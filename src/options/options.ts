@@ -19,7 +19,7 @@ import { hostFromUrl, normalizeHost, toUnicode } from '../shared/domain.js';
 import { describeProfile, makeProfile } from '../shared/locale.js';
 import { send, type HostTest, type TabStatus, type VerifyResult } from '../shared/messages.js';
 import { defaultSettings, examplePresetRules, globalEnUsSettings } from '../shared/presets.js';
-import { analyzeRules, describeAction, displayDomain, resolveHost, ruleLabel, rulesInPrecedenceOrder, requiredDatasets } from '../shared/rules.js';
+import { analyzeRules, describeAction, displayDomain, resolveHost, ruleLabel, rulesInPrecedenceOrder, requiredDatasets, type RuleIssue } from '../shared/rules.js';
 import {
   currentData,
   rawUrl,
@@ -73,10 +73,21 @@ function showPage(): void {
 
 let filter = '';
 
+/** The checks for the current rules, recomputed only when the rules, default or UI language change. */
+let issuesMemo: { rules: Rule[]; defaultAction: Settings['defaultAction']; lang: string; issues: RuleIssue[] } | null = null;
+function currentIssues(): RuleIssue[] {
+  const lang = getLanguage();
+  const m = issuesMemo;
+  if (m && m.rules === settings.rules && m.defaultAction === settings.defaultAction && m.lang === lang) return m.issues;
+  const issues = analyzeRules(settings);
+  issuesMemo = { rules: settings.rules, defaultAction: settings.defaultAction, lang, issues };
+  return issues;
+}
+
 function renderRules(): void {
   const root = $('#rules');
   clear(root);
-  const issues = analyzeRules(settings);
+  const issues = currentIssues();
   const issueIds = new Map<string, 'error' | 'warning' | 'info'>();
   for (const i of issues) for (const id of i.ruleIds) if (issueIds.get(id) !== 'error') issueIds.set(id, i.level);
 

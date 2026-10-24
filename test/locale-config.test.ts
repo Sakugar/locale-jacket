@@ -6,12 +6,14 @@ import {
   acceptLanguageHeader,
   canonicalizeLocale,
   deriveLanguages,
+  isSupportedLocale,
+  isValidTimezone,
   makeProfile,
   normalizeProfile,
   parseAcceptLanguage,
 } from '../src/shared/locale.js';
 import { defaultSettings } from '../src/shared/presets.js';
-import { resolveHost } from '../src/shared/rules.js';
+import { refusedRegexes, resolveHost } from '../src/shared/rules.js';
 import type { Settings } from '../src/shared/types.js';
 import { parseYaml, stringifyYaml, YamlError, type YamlValue } from '../src/shared/yaml.js';
 
@@ -268,6 +270,49 @@ rules:
     assert.equal(r.problems.length, 1);
     assert.deepEqual(sanitizeStoredSettings(undefined, good), { settings: good, problems: [] });
     assert.equal(sanitizeStoredSettings('garbage', good).problems.length, 1);
+  });
+
+  it('keeps stored regex rules the spent settings budget left unchecked, and checks them before use', () => {
+    const rule = (id: string, value: string) => ({ id, type: 'DOMAIN-REGEX', value, action: 'PROFILE', profile: makeProfile('ja-JP'), enabled: true, priority: 0, note: '' });
+    const stored = { ...JSON.parse(JSON.stringify(defaultSettings())), rules: [rule('ok', '^sanitize-deferred-[a-z]+\\.example$'), rule('bad', '^(b+)+sanitizedeferred$')] };
+    // With a budget, the unsafe one is refused as before.
+    const checked = sanitizeStoredSettings(stored, defaultSettings());
+    assert.deepEqual(checked.settings.rules.map((r) => r.id), ['ok']);
+    assert.equal(checked.problems.length, 1);
+    // With the budget spent nothing is analysed and nothing is lost...
+    const deferred = sanitizeStoredSettings({ ...stored, rules: [rule('ok2', '^sanitize-deferred2-[a-z]+\\.example$'), rule('bad2', '^(c+)+sanitizedeferred$')] }, defaultSettings(), 0);
+    assert.deepEqual(deferred.settings.rules.map((r) => r.id), ['ok2', 'bad2']);
+    assert.deepEqual(deferred.problems, []);
+    // ...and the matcher checks each pattern itself: the unsafe one never runs.
+    assert.equal(resolveHost('sanitize-deferred2-abc.example', deferred.settings).profile?.locale, 'ja-JP');
+    assert.equal(resolveHost(`${'c'.repeat(30)}sanitizedeferred`, deferred.settings).source, 'default');
+    // Once checked, the refused one is reported (the worker lists it with the settings
+    // problems) and stays in the settings: a budget never deletes a rule.
+    assert.deepEqual(refusedRegexes(deferred.settings.rules).map((x) => x.rule.id), ['bad2']);
+  });
+});
+
+describe('Intl validation memo', () => {
+  it('gives the same answers as without it, on first and repeated calls', () => {
+    const tags = ['en-us', 'EN_us', 'zh-hant-tw', 'x-private', 'en-US-u-ca-buddhist', 'xx-YY', '', '  ', 'not a tag', '123', 'de'];
+    const first = tags.map((t) => [canonicalizeLocale(t), isSupportedLocale(t), t.trim() ? deriveLanguages(canonicalizeLocale(t) ?? 'en') : null]);
+    for (let k = 0; k < 3; k++) assert.deepEqual(tags.map((t) => [canonicalizeLocale(t), isSupportedLocale(t), t.trim() ? deriveLanguages(canonicalizeLocale(t) ?? 'en') : null]), first);
+    assert.equal(canonicalizeLocale('en_us'), 'en-US');
+    assert.equal(canonicalizeLocale('not a tag'), null);
+    assert.deepEqual(deriveLanguages('en-US'), ['en-US', 'en']);
+    // A returned list is the caller's own.
+    deriveLanguages('fr-FR').push('x');
+    assert.deepEqual(deriveLanguages('fr-FR'), ['fr-FR', 'fr']);
+    for (let k = 0; k < 2; k++) {
+      assert.equal(isValidTimezone('Asia/Tokyo'), true);
+      assert.equal(isValidTimezone('Mars/Olympus'), false);
+      assert.equal(isValidTimezone(''), false);
+    }
+  });
+
+  it('stays bounded', () => {
+    for (let i = 0; i < 5000; i++) canonicalizeLocale(`en-x-memo${i}`);
+    assert.equal(canonicalizeLocale('en-x-memo1'), 'en-x-memo1');
   });
 });
 

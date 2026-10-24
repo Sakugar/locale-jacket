@@ -10,7 +10,8 @@
 import { isUiLanguagePref, UI_LANGUAGES } from './i18n.js';
 import { normalizeProfile } from './locale.js';
 import { DEFAULT_OPTIONS } from './presets.js';
-import { newRuleId, normalizeRuleValue } from './rules.js';
+import { analysisBudget } from './regex-safety.js';
+import { newRuleId, normalizeRuleValue, REGEX_BATCH_BUDGET_MS, type RegexCheck } from './rules.js';
 import { MAX_UPDATE_GAP_HOURS, MIN_UPDATE_GAP_HOURS } from './dataset-schedule.js';
 import type { DatasetKind } from './dataset-store.js';
 import { isHttpUrl } from './extension-update.js';
@@ -64,7 +65,7 @@ export function importConfigText(text: string, base?: Settings): ImportResult {
  * Convert a parsed configuration object into validated Settings.
  * Missing top-level sections fall back to `base` (or defaults).
  */
-export function importConfigObject(raw: unknown, base?: Settings): ImportResult {
+export function importConfigObject(raw: unknown, base?: Settings, check?: RegexCheck): ImportResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const obj: Record<string, unknown> = Array.isArray(raw) ? { rules: raw } : isRecord(raw) ? raw : {};
@@ -81,7 +82,7 @@ export function importConfigObject(raw: unknown, base?: Settings): ImportResult 
     rawRules.forEach((r, i) => {
       const where = `rules[${i}]`;
       if (typeof r === 'string') {
-        const res = parseCompactRule(r, where);
+        const res = parseCompactRule(r, where, check);
         if (res.error) errors.push(res.error);
         warnings.push(...res.warnings);
         if (res.rule) rules.push(res.rule);
@@ -95,7 +96,7 @@ export function importConfigObject(raw: unknown, base?: Settings): ImportResult 
         errors.push(`${where}: each rule must be an object or a "TYPE,value,locale" string.`);
         return;
       }
-      const res = parseRuleObject(r, where);
+      const res = parseRuleObject(r, where, check);
       errors.push(...res.errors);
       warnings.push(...res.warnings);
       if (res.rule) rules.push(res.rule);
@@ -190,7 +191,10 @@ function parseSubscriptions(raw: unknown, errors: string[]): Subscription[] {
  * invalid entries are skipped and reported instead of rejecting the whole file, and
  * only "rules" is used: the file cannot change your default, options or subscriptions.
  */
-export function parseSubscriptionRules(raw: unknown): {
+export function parseSubscriptionRules(
+  raw: unknown,
+  opts: { check?: RegexCheck; maxRules?: number } = {},
+): {
   rules: Rule[];
   skipped: string[];
   ignored: string[];
@@ -210,24 +214,37 @@ export function parseSubscriptionRules(raw: unknown): {
       else if (u !== undefined) skipped.push(`datasets.${kind} must be an http(s) URL.`);
     }
   }
-  (obj.rules as unknown[]).forEach((r, i) => {
+  const list = obj.rules as unknown[];
+  const max = opts.maxRules ?? Infinity;
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
     const where = `rules[${i}]`;
     if (typeof r === 'string') {
-      const res = parseCompactRule(r, where);
+      const res = parseCompactRule(r, where, opts.check);
       if (res.error) skipped.push(res.error);
       else if (res.defaultAction) ignored.push(`${where} (MATCH)`);
       if (res.rule) rules.push(res.rule);
-      return;
-    }
-    if (!isRecord(r)) {
+    } else if (!isRecord(r)) {
       skipped.push(`${where}: each rule must be an object or a "TYPE,value,locale" string.`);
-      return;
+    } else {
+      const res = parseRuleObject(r, where, opts.check);
+      if (res.rule && !res.errors.length) rules.push(res.rule);
+      else skipped.push(...res.errors);
     }
-    const res = parseRuleObject(r, where);
-    if (res.rule && !res.errors.length) rules.push(res.rule);
-    else skipped.push(...res.errors);
-  });
+    // Stop as soon as the limit is passed: the file is refused anyway.
+    if (rules.length > max) throw new TooManyRules(list.length, max);
+  }
   return { rules, skipped, ignored, datasets };
+}
+
+/** A subscription file with more valid rules than allowed (`entries`: the length of its rules list). */
+export class TooManyRules extends Error {
+  constructor(
+    readonly entries: number,
+    readonly max: number,
+  ) {
+    super(`The file has more than ${max} rules (${entries} entries); at most ${max} are allowed per subscription.`);
+  }
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -271,7 +288,7 @@ function hasProfile(r: Record<string, unknown>): boolean {
   return isRecord(r.profile) || PROFILE_KEYS.some((k) => r[k] !== undefined && r[k] !== null);
 }
 
-function parseRuleObject(r: Record<string, unknown>, where: string): { rule: Rule | null; errors: string[]; warnings: string[] } {
+function parseRuleObject(r: Record<string, unknown>, where: string, check?: RegexCheck): { rule: Rule | null; errors: string[]; warnings: string[] } {
   const errors: string[] = [];
   const warnings: string[] = [];
   const type = parseType(r.type);
@@ -293,7 +310,7 @@ function parseRuleObject(r: Record<string, unknown>, where: string): { rule: Rul
     else if (!isIpRuleType(type)) warnings.push(`${where}: noResolve only applies to IP rules; ignored.`);
     else noResolve = nr;
   }
-  const v = normalizeRuleValue(type, rawValue);
+  const v = normalizeRuleValue(type, rawValue, check);
   if (!v.value) {
     errors.push(`${where}: ${v.error}`);
     return { rule: null, errors, warnings };
@@ -359,7 +376,7 @@ const VALUE_KEYS: Record<RuleType, string[]> = {
 };
 
 /** Parse "TYPE,value,LOCALE|SYSTEM[,no-resolve]" and "MATCH,LOCALE|SYSTEM". */
-function parseCompactRule(s: string, where: string): { rule?: Rule; defaultAction?: DefaultAction; error?: string; warnings: string[] } {
+function parseCompactRule(s: string, where: string, check?: RegexCheck): { rule?: Rule; defaultAction?: DefaultAction; error?: string; warnings: string[] } {
   const warnings: string[] = [];
   const parts = s.split(',').map((p) => p.trim());
   let noResolve = false;
@@ -384,7 +401,7 @@ function parseCompactRule(s: string, where: string): { rule?: Rule; defaultActio
   const target = parts.at(-1)!;
   const rawValue = type === 'DOMAIN-REGEX' ? parts.slice(1, -1).join(',') : parts[1]!;
   if (type !== 'DOMAIN-REGEX' && parts.length > 3) warnings.push(`${where}: extra fields before "${target}" ignored.`);
-  const v = normalizeRuleValue(type, rawValue);
+  const v = normalizeRuleValue(type, rawValue, check);
   if (!v.value) return { error: `${where}: ${v.error}`, warnings };
   warnings.push(...v.notes.map((n) => `${where}: ${n}`));
   if (noResolve && !isIpRuleType(type)) warnings.push(`${where}: no-resolve only applies to IP rules; ignored.`);
@@ -549,13 +566,19 @@ export function mergeRules(current: Settings, incoming: Settings): { settings: S
   return { settings: { ...current, rules }, added, skipped };
 }
 
-/** Validate settings read from storage; falls back to `fallback` when the stored value is unusable. */
-export function sanitizeStoredSettings(raw: unknown, fallback: Settings): { settings: Settings; problems: string[] } {
+/**
+ * Validate settings read from storage; falls back to `fallback` when the stored value is unusable.
+ * `regexBudgetMs`: analysis time shared by all stored regexes (REGEX_BATCH_BUDGET_MS).
+ */
+export function sanitizeStoredSettings(raw: unknown, fallback: Settings, regexBudgetMs = REGEX_BATCH_BUDGET_MS): { settings: Settings; problems: string[] } {
   if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.rules)) {
     return { settings: fallback, problems: raw === undefined ? [] : ['Stored settings were unreadable; defaults restored.'] };
   }
   const problems: string[] = [];
   const rules: Rule[] = [];
+  // One analysis budget for all stored regexes. Those it leaves unchecked are kept and
+  // checked before first use (see RegexCheck.defer), so no stored rule is lost to it.
+  const check: RegexCheck = { budget: analysisBudget(regexBudgetMs), defer: true };
   (raw.rules as unknown[]).forEach((r, i) => {
     const asConfig = isRecord(r)
       ? {
@@ -570,7 +593,7 @@ export function sanitizeStoredSettings(raw: unknown, fallback: Settings): { sett
           note: r.note,
         }
       : r;
-    const one = importConfigObject({ rules: [asConfig] });
+    const one = importConfigObject({ rules: [asConfig] }, undefined, check);
     const rule = one.settings?.rules[0];
     if (rule) rules.push(rule);
     else problems.push(`Stored rule #${i + 1} was invalid and has been skipped: ${one.errors.join(' ')}`);

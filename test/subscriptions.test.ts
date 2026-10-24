@@ -1,23 +1,26 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { exportConfig, importConfigText, MAX_SUBSCRIPTIONS, sanitizeStoredSettings } from '../src/shared/config-io.js';
+import { exportConfig, importConfigText, MAX_SUBSCRIPTIONS, parseSubscriptionRules, sanitizeStoredSettings, TooManyRules } from '../src/shared/config-io.js';
 import { DATASETS } from '../src/shared/dataset-store.js';
 import { makeProfile } from '../src/shared/locale.js';
 import { defaultSettings } from '../src/shared/presets.js';
 import { compileDnrRules, dropUnsupportedRegex } from '../src/shared/dnr.js';
 import type { GeositeList } from '../src/shared/geosite.js';
 import { parseIp } from '../src/shared/ip.js';
+import { analysisBudget, REGEX_CHECK_VERSION } from '../src/shared/regex-safety.js';
 import { normalizeRuleValue, precedenceTier, resolveHost, rulesInPrecedenceOrder, ruleLabel } from '../src/shared/rules.js';
 import {
   datasetDownloadDue,
   datasetsToDownload,
   fetchSubscription,
   markUnsaved,
+  MAX_SUBSCRIPTION_RULES,
   parseSubscription,
   rawUrl,
   revertUnsaved,
   staleDatasetRecords,
   subscriptionDue,
+  trustCheckedSubscriptionData,
   withSubscriptions,
   type SubscriptionData,
   type SubscriptionDataMap,
@@ -73,6 +76,91 @@ describe('parseSubscription', () => {
     const r = parseSubscription('datasets:\n  geosite: https://cdn.example/geosite.dat\n  geoip: ftp://nope\nrules:\n  - GEOSITE,google,en-US\n', s);
     assert.deepEqual(r.datasets, { geosite: 'https://cdn.example/geosite.dat' });
     assert.equal(r.skippedCount, 1, 'the bad data-set URL is reported');
+  });
+});
+
+describe('subscription limits and regex budget', () => {
+  const s = sub('lim', 'https://example.com/lim.json');
+  const lines = (n: number, f: (i: number) => string) => JSON.stringify({ rules: Array.from({ length: n }, (_, i) => f(i)) });
+
+  it('accepts exactly the limit, and counts only valid rules', () => {
+    assert.equal(parseSubscription(lines(MAX_SUBSCRIPTION_RULES, (i) => `DOMAIN,h${i}.example,en-US`), s).rules.length, MAX_SUBSCRIPTION_RULES);
+    // More entries than the limit, but the extra ones are invalid or MATCH lines: still accepted.
+    const mixed = lines(MAX_SUBSCRIPTION_RULES + 3, (i) => (i < 2 ? `BOGUS,${i},en-US` : i === 2 ? 'MATCH,en-US' : `DOMAIN,h${i}.example,en-US`));
+    const r = parseSubscription(mixed, s);
+    assert.equal(r.rules.length, MAX_SUBSCRIPTION_RULES);
+    assert.equal(r.skippedCount, 2);
+  });
+
+  it('refuses a file over the limit as soon as the limit is passed', () => {
+    const text = lines(20_000, (i) => `DOMAIN-SUFFIX,h${i}.example,${i % 2 ? 'en-US' : 'ja-JP'}`);
+    assert.throws(() => parseSubscription(text, s), (e: Error) => e instanceof TooManyRules && /more than 5000 rules \(20000 entries\)/.test(e.message));
+    let validated = 0;
+    const raw = { rules: new Proxy(Array.from({ length: 20_000 }, (_, i) => `DOMAIN,h${i}.example,en-US`), {
+      get: (t, k) => (typeof k === 'string' && /^\d+$/.test(k) ? (validated++, t[Number(k)]) : Reflect.get(t, k)),
+    }) };
+    assert.throws(() => parseSubscriptionRules(raw, { maxRules: MAX_SUBSCRIPTION_RULES }), TooManyRules);
+    assert.equal(validated, MAX_SUBSCRIPTION_RULES + 1, 'entries after the first one over the limit are not looked at');
+  });
+
+  it('regexes share one budget per file; those left when it is spent are skipped and listed', () => {
+    const raw = { rules: ['DOMAIN,plain.example,en-US', ...Array.from({ length: 4 }, (_, i) => `DOMAIN-REGEX,^sub-budget-${i}-[a-z]+\\.example$,en-US`)] };
+    const spent = parseSubscriptionRules(raw, { check: { budget: analysisBudget(0) } });
+    assert.deepEqual(spent.rules.map((r) => r.type), ['DOMAIN']);
+    assert.equal(spent.skipped.length, 4);
+    assert.match(spent.skipped[0]!, /rules\[1\]: This regular expression could take too long/);
+    assert.equal(parseSubscriptionRules(raw, { check: { budget: analysisBudget(1000) } }).rules.length, 5);
+  });
+
+  it('records the regex check version with the data', () => {
+    assert.equal(parseSubscription('rules:\n  - DOMAIN,a.example,en-US\n', s).regexCheck, REGEX_CHECK_VERSION);
+  });
+});
+
+describe('stored subscription regexes after a worker restart', () => {
+  const s = sub('re', 'https://example.com/re.yaml');
+  // Stored data as an older version (without the check, or with an older one) may have saved it.
+  const unsafe = (id: string, extra: Partial<SubscriptionData> = {}): SubscriptionDataMap => ({
+    [s.id]: {
+      url: rawUrl(s.url),
+      rules: [{ id: `${s.id}:0`, type: 'DOMAIN-REGEX', value: `^(a+)+${id}$`, action: 'PROFILE', profile: makeProfile('ja-JP'), enabled: true, priority: 0, note: '' }],
+      skipped: [],
+      skippedCount: 0,
+      ignored: [],
+      ...extra,
+    },
+  });
+
+  for (const [what, extra] of [['no marker', {}], ['an older check', { regexCheck: REGEX_CHECK_VERSION - 1 }]] as const) {
+    it(`data with ${what} is checked before use: an unsafe pattern never runs`, () => {
+      const map = unsafe(what.replace(/\W/g, ''), extra);
+      assert.equal(trustCheckedSubscriptionData(map), 0);
+      const all = withSubscriptions(settingsWith([s], { ...defaultSettings(), rules: [] }), map);
+      const host = `${'a'.repeat(30)}${what.replace(/\W/g, '')}`;
+      const res = resolveHost(host, all);
+      assert.equal(res.source, 'default', 'refused by the check, so it does not match');
+    });
+  }
+
+  it('data checked by the current version is trusted: its patterns are not analysed again', () => {
+    const map = data(s, 'rules:\n  - DOMAIN-REGEX,^trusted-[a-z]+\\.example$,de-DE\n');
+    assert.equal(trustCheckedSubscriptionData({ [s.id]: map }), 1);
+    const all = withSubscriptions(settingsWith([s], { ...defaultSettings(), rules: [] }), { [s.id]: map });
+    assert.equal(resolveHost('trusted-abc.example', all).profile?.locale, 'de-DE');
+  });
+
+  it('data from an older check is fetched in full once, not conditionally', async () => {
+    const calls: RequestInit[] = [];
+    const fn = (async (_url: string, init?: RequestInit) => {
+      calls.push(init ?? {});
+      return new Response('rules:\n  - DOMAIN,a.example,en-US\n', { status: 200, headers: { etag: '"v2"' } });
+    }) as typeof fetch;
+    const old: SubscriptionData = { ...data(s, 'rules:\n  - DOMAIN,a.example,en-US\n'), etag: '"v1"', regexCheck: undefined };
+    const r = await fetchSubscription(s, old, fn);
+    assert.equal((calls[0]!.headers as Record<string, string>)['If-None-Match'], undefined);
+    assert.ok(r.status === 'updated' && r.data.regexCheck === REGEX_CHECK_VERSION);
+    await fetchSubscription(s, r.status === 'updated' ? r.data : undefined, fn);
+    assert.equal((calls[1]!.headers as Record<string, string>)['If-None-Match'], '"v2"');
   });
 });
 
@@ -238,7 +326,7 @@ describe('saving subscription data that does not fit', () => {
 
 describe('subscriptionDue', () => {
   const s = sub('a', 'https://example.com/a.yaml');
-  const d = (extra: Partial<SubscriptionData>): SubscriptionData => ({ url: s.url, rules: [], skipped: [], skippedCount: 0, ignored: [], ...extra });
+  const d = (extra: Partial<SubscriptionData>): SubscriptionData => ({ url: s.url, rules: [], skipped: [], skippedCount: 0, ignored: [], regexCheck: REGEX_CHECK_VERSION, ...extra });
 
   it('fetches new or moved subscriptions right away, and only once on "changed"', () => {
     assert.equal(subscriptionDue(s, undefined, 'changed', NOW), true);
@@ -255,6 +343,21 @@ describe('subscriptionDue', () => {
     assert.equal(subscriptionDue({ ...s, interval: 'off' }, d({ fetchedAt: NOW - 90 * 24 * HOUR }), 'alarm', NOW), false);
     assert.equal(subscriptionDue({ ...s, enabled: false }, undefined, 'changed', NOW), false);
     assert.equal(subscriptionDue({ ...s, enabled: false, interval: 'off' }, d({ fetchedAt: NOW }), 'manual', NOW), true);
+  });
+
+  it('refetches data checked by an older regex check at the next allowed attempt, but not with updates off', () => {
+    const old = (extra: Partial<SubscriptionData>) => d({ regexCheck: undefined, ...extra });
+    for (const trigger of ['startup', 'alarm'] as const) {
+      assert.equal(subscriptionDue(s, old({ fetchedAt: NOW - 2 * HOUR, lastAttempt: NOW - 2 * HOUR }), trigger, NOW), true, 'before the interval');
+      assert.equal(subscriptionDue({ ...s, interval: 'weekly' }, d({ fetchedAt: NOW - 2 * HOUR, regexCheck: REGEX_CHECK_VERSION - 1 }), trigger, NOW), true);
+      // A failing URL is not hammered: the minimum gap still applies.
+      assert.equal(subscriptionDue(s, old({ fetchedAt: NOW - 30 * HOUR, lastAttempt: NOW - 10 * 60_000, error: 'x' }), trigger, NOW), false);
+      // Updates off: nothing goes over the network automatically.
+      assert.equal(subscriptionDue({ ...s, interval: 'off' }, old({ fetchedAt: NOW - 2 * HOUR }), trigger, NOW), false);
+      assert.equal(subscriptionDue({ ...s, enabled: false }, old({ fetchedAt: NOW - 2 * HOUR }), trigger, NOW), false);
+    }
+    assert.equal(subscriptionDue(s, old({ fetchedAt: NOW - 2 * HOUR }), 'changed', NOW), false, 'not on every settings change');
+    assert.equal(subscriptionDue(s, d({ fetchedAt: NOW - 2 * HOUR, lastAttempt: NOW - 2 * HOUR }), 'alarm', NOW), false, 'current data waits for its interval');
   });
 });
 

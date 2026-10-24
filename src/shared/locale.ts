@@ -3,36 +3,61 @@
 import { t } from './i18n.js';
 import type { Geolocation, LocaleProfile } from './types.js';
 
+// The Intl answers below depend only on their input and the browser's ICU data, and
+// constructing Intl objects is slow (it dominated validating thousands of rules), so they
+// are remembered per tag / time zone. Each map is bounded and starts over when full.
+const MEMO_LIMIT = 2000;
+
+function memo<V>(map: Map<string, V>, key: string, compute: () => V): V {
+  const known = map.get(key);
+  if (known !== undefined || map.has(key)) return known as V;
+  const v = compute();
+  if (map.size >= MEMO_LIMIT) map.clear();
+  map.set(key, v);
+  return v;
+}
+
+const canonicalMemo = new Map<string, string | null>();
+const supportedMemo = new Map<string, boolean>();
+const baseLanguageMemo = new Map<string, string | null>();
+const timezoneMemo = new Map<string, boolean>();
+
 /** Canonical BCP 47 form (e.g. `en-us` -> `en-US`), or null if the tag is invalid. */
 export function canonicalizeLocale(tag: string): string | null {
   const t = tag.trim().replace(/_/g, '-');
   if (!t) return null;
-  try {
-    const [c] = Intl.getCanonicalLocales(t);
-    return c ?? null;
-  } catch {
-    return null;
-  }
+  return memo(canonicalMemo, t, () => {
+    try {
+      const [c] = Intl.getCanonicalLocales(t);
+      return c ?? null;
+    } catch {
+      return null;
+    }
+  });
 }
 
 /** True if ICU has data for the tag (otherwise Intl silently falls back to a parent or default locale). */
 export function isSupportedLocale(tag: string): boolean {
-  try {
-    return Intl.DateTimeFormat.supportedLocalesOf([tag]).length > 0;
-  } catch {
-    return false;
-  }
+  return memo(supportedMemo, tag, () => {
+    try {
+      return Intl.DateTimeFormat.supportedLocalesOf([tag]).length > 0;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Default navigator.languages for a locale: the tag followed by its base language, e.g. en-US -> [en-US, en]. */
 export function deriveLanguages(locale: string): string[] {
   const out = [locale];
-  try {
-    const base = new Intl.Locale(locale).language;
-    if (base && base !== locale) out.push(base);
-  } catch {
-    /* keep just the tag */
-  }
+  const base = memo(baseLanguageMemo, locale, () => {
+    try {
+      return new Intl.Locale(locale).language || null;
+    } catch {
+      return null; /* keep just the tag */
+    }
+  });
+  if (base && base !== locale) out.push(base);
   return out;
 }
 
@@ -71,12 +96,14 @@ export function parseAcceptLanguage(value: string): string[] {
 
 export function isValidTimezone(tz: string): boolean {
   if (!tz) return false;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
+  return memo(timezoneMemo, tz, () => {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: tz });
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Build a complete profile from a locale tag with derived languages and header. Throws on invalid tags. */

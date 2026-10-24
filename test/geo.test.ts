@@ -171,6 +171,21 @@ describe('geosite.dat reader', () => {
   it('rejects non-geosite data', () => {
     assert.throws(() => indexGeosite(new TextEncoder().encode('hello world')));
   });
+
+  it('regexp entries share one analysis budget per category; when it is spent they are skipped', () => {
+    const many = indexGeosite(
+      encodeGeosite({
+        big: [[2, 'kept.example'], ...Array.from({ length: 5 }, (_, i): [number, string] => [1, `^geo-budget-${i}-[a-z]+\\.example$`])],
+      }),
+    );
+    const none = loadGeositeCategory(many, 'big', undefined, 0)!;
+    assert.equal(none.regexes.length, 0);
+    assert.equal(none.skipped, 5);
+    assert.ok(geositeMatches(none, 'kept.example'), 'other entries are kept');
+    const all = loadGeositeCategory(many, 'big')!;
+    assert.equal(all.regexes.length, 5);
+    assert.ok(geositeMatches(all, 'geo-budget-3-abc.example'));
+  });
 });
 
 // -------------------------------------------------------------------- rules

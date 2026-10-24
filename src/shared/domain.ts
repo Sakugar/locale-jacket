@@ -135,7 +135,10 @@ export function matchesSuffix(host: string, suffix: string): boolean {
 }
 
 export function labelCount(host: string): number {
-  return host.split('.').length;
+  // Same as host.split('.').length, without building the array.
+  let n = 1;
+  for (let i = host.indexOf('.'); i >= 0; i = host.indexOf('.', i + 1)) n++;
+  return n;
 }
 
 // ---------------------------------------------------------------------------

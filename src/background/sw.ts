@@ -37,7 +37,7 @@ import { hostFromUrl, normalizeHost } from '../shared/domain.js';
 import { setLanguage, t } from '../shared/i18n.js';
 import { parseIp } from '../shared/ip.js';
 import type { GlobalStatus, HostTest, LogEntry, Request, TabStatus } from '../shared/messages.js';
-import { describeAction, needsServerIp, requiredDatasets, resolveHost, ruleLabel } from '../shared/rules.js';
+import { describeAction, needsServerIp, precompileRegexes, refusedRegexes, requiredDatasets, resolveHost, ruleLabel, uncompiledRegexes } from '../shared/rules.js';
 import { defaultSettings } from '../shared/presets.js';
 import {
   datasetDownloadDue,
@@ -51,6 +51,7 @@ import {
   SUBSCRIPTION_DATA_KEY,
   subscriptionDue,
   subscriptionLabel,
+  trustCheckedSubscriptionData,
   withSubscriptions,
   type SubscriptionData,
   type SubscriptionDataMap,
@@ -81,6 +82,12 @@ function log(entry: LogEntry): void {
 const info = (msg: string) => log({ t: Date.now(), level: 'info', tabId: null, msg });
 
 let settingsProblems: string[] = [];
+/**
+ * Your DOMAIN-REGEX rules whose pattern the matcher's check refused after the settings were
+ * loaded (stored rules the settings budget left unchecked): kept, but they never match.
+ * Shown with settingsProblems, like the ones refused while loading.
+ */
+let regexProblems: string[] = [];
 const dnrState: GlobalStatus['dnr'] = { active: false, ruleCount: 0, skipped: [], error: null };
 
 /**
@@ -311,7 +318,40 @@ let ownSettings: Settings | null = null;
 let subscriptionData: SubscriptionDataMap = {};
 
 async function loadSubscriptionData(): Promise<SubscriptionDataMap> {
-  return ((await chrome.storage.local.get(SUBSCRIPTION_DATA_KEY))[SUBSCRIPTION_DATA_KEY] as SubscriptionDataMap | undefined) ?? {};
+  const data = ((await chrome.storage.local.get(SUBSCRIPTION_DATA_KEY))[SUBSCRIPTION_DATA_KEY] as SubscriptionDataMap | undefined) ?? {};
+  // Regexes the current check accepted when the data was fetched are not analysed again.
+  trustCheckedSubscriptionData(data);
+  return data;
+}
+
+let regexPrecompile: Promise<void> = Promise.resolve();
+const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/**
+ * Check and compile the regexes that still need the check (subscription data saved by an
+ * older check, stored rules the settings budget left unchecked) in short slices between
+ * other events, instead of all at once on the first navigation that needs them.
+ */
+function precompileStoredRegexes(s: Settings): void {
+  regexPrecompile = regexPrecompile
+    .then(async () => {
+      const todo = uncompiledRegexes(s.rules);
+      if (todo.length) {
+        const t0 = Date.now();
+        await precompileRegexes(todo, pause);
+        const ms = Date.now() - t0;
+        if (ms >= 50) info(`Checked and compiled ${todo.length} stored regular expression(s) in ${ms} ms.`);
+      }
+      const before = new Set(regexProblems);
+      regexProblems = refusedRegexes(s.rules)
+        .filter((x) => !x.rule.origin) // subscription rules: refused patterns were listed when fetched
+        .map(
+          (x) =>
+            `Stored rule DOMAIN-REGEX,${x.rule.value} is kept but never matches: this regular expression could take too long to match (${x.reason}). Use a simpler pattern, or delete the rule.`,
+        );
+      for (const p of regexProblems) if (!before.has(p)) log({ t: Date.now(), level: 'warn', tabId: null, msg: p });
+    })
+    .catch(() => undefined);
 }
 
 let applyChain: Promise<unknown> = Promise.resolve();
@@ -329,6 +369,7 @@ function applySettings(m: SessionManager, own: Settings, opts: { resetDatasets?:
     await datasets.ensure(requiredDatasets(s.rules));
     syncIpWatcher(s);
     await m.updateSettings(s);
+    precompileStoredRegexes(s);
     await syncDnr(s, m.isSuspended);
     await refreshGlobalBadge();
     return s;
@@ -551,6 +592,7 @@ const ready: Promise<SessionManager> = (async () => {
 /** The rest of start-up; event handlers do not wait for it. */
 const initialized: Promise<SessionManager> = ready.then(async (m) => {
   const settings = m.currentSettings;
+  precompileStoredRegexes(settings);
   await syncDnr(settings, m.isSuspended);
   await refreshGlobalBadge();
   await syncUpdateAlarm(settings).catch((e) => log({ t: Date.now(), level: 'warn', tabId: null, msg: `Update alarm: ${errorMessage(e)}` }));
@@ -669,7 +711,7 @@ function globalStatus(m: SessionManager): GlobalStatus {
     enabled: m.currentSettings.enabled,
     suspended: m.isSuspended,
     attachedTabs: m.attachedCount(),
-    settingsProblems,
+    settingsProblems: [...settingsProblems, ...regexProblems],
     dnr: { ...dnrState },
     datasets: { installed: datasets.meta, problems: datasets.missing, ipCacheSize: ipCache.size, watchingIps },
   };

@@ -9,7 +9,10 @@
 // The file is indexed once (category name → byte range); only categories that
 // rules reference are decoded into matchers.
 
-import { regexHazard } from './regex-safety.js';
+import { analysisBudget, regexHazard } from './regex-safety.js';
+
+/** Analysis time for the regexp: entries of one category (see REGEX_BATCH_BUDGET_MS in rules.ts). */
+export const GEOSITE_REGEX_BUDGET_MS = 750;
 
 const decoder = new TextDecoder();
 
@@ -106,14 +109,17 @@ export interface GeositeList {
 
 /**
  * Decode one category. `filter` is the part after "@": "cn" keeps entries with
- * attribute cn, "!cn" keeps entries without it.
+ * attribute cn, "!cn" keeps entries without it. `regexBudgetMs` is the analysis time all
+ * its regexp: entries share.
  */
-export function loadGeositeCategory(index: GeositeIndex, name: string, filter?: string): GeositeList | null {
+export function loadGeositeCategory(index: GeositeIndex, name: string, filter?: string, regexBudgetMs = GEOSITE_REGEX_BUDGET_MS): GeositeList | null {
   const range = index.categories.get(name.toLowerCase());
   if (!range) return null;
   const negate = filter?.startsWith('!') ?? false;
   const attr = filter ? filter.replace(/^!/, '').toLowerCase() : null;
   const list: GeositeList = { full: new Set(), suffix: new Set(), keywords: [], regexes: [], skipped: 0, size: 0 };
+  // One budget for all regexp: entries, so a hostile category cannot hold the worker for long.
+  const budget = analysisBudget(regexBudgetMs);
   const r = new Reader(index.buf, range[0], range[1]);
   while (!r.done) {
     const [f, w] = r.tag();
@@ -150,8 +156,9 @@ export function loadGeositeCategory(index: GeositeIndex, name: string, filter?: 
         break;
       case 1:
         try {
-          // Patterns that could backtrack for too long are skipped like invalid ones.
-          if (regexHazard(value)) throw new Error('unsafe');
+          // Patterns that could backtrack for too long (or that the spent budget leaves
+          // unchecked) are skipped like invalid ones.
+          if (regexHazard(value, budget)) throw new Error('unsafe');
           list.regexes.push(new RegExp(value, 'i'));
         } catch {
           list.skipped++;
