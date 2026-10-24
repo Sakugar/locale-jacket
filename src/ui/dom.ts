@@ -46,6 +46,50 @@ export function chip(text: string, kind: 'ok' | 'warn' | 'bad' | 'off' | 'accent
   return h('span', { class: `chip ${kind}` }, text);
 }
 
+/**
+ * Run `render`, which rebuilds the contents of `root`, and put keyboard focus back on the
+ * new element with the same `data-focus` key (if focus was on such an element inside `root`).
+ */
+export function preserveFocus(root: Element, render: () => void): void {
+  const active = document.activeElement;
+  const key = active instanceof HTMLElement && root.contains(active) ? active.dataset['focus'] : undefined;
+  render();
+  if (!key) return;
+  const next = root.querySelector<HTMLElement>(`[data-focus="${CSS.escape(key)}"]`);
+  if (next && next !== document.activeElement) next.focus({ preventScroll: true });
+}
+
+/**
+ * Keep the values typed into text fields (and selects) of `root` across a rebuild. Fields are
+ * matched by `data-keep`; only fields the user changed since they were built are restored.
+ */
+export function preserveInputs(root: Element, render: () => void): void {
+  const saved = new Map<string, string>();
+  for (const el of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('[data-keep]')) {
+    if (el.dataset['dirty'] === '1') saved.set(el.dataset['keep']!, el.value);
+  }
+  preserveFocus(root, render);
+  for (const el of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('[data-keep]')) {
+    const value = saved.get(el.dataset['keep']!);
+    if (value === undefined || value === el.value) continue;
+    if (el instanceof HTMLSelectElement && ![...el.options].some((o) => o.value === value)) continue;
+    el.value = value;
+    el.dataset['dirty'] = '1';
+    // Let listeners (validation, enabling buttons) see the restored value.
+    el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+  }
+}
+
+/** Mark a field so preserveInputs() keeps what the user types into it. */
+export function keep<T extends HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(el: T, key: string): T {
+  el.dataset['keep'] = key;
+  el.dataset['focus'] = key;
+  const mark = () => (el.dataset['dirty'] = '1');
+  el.addEventListener('input', mark);
+  el.addEventListener('change', mark);
+  return el;
+}
+
 export function debounce<A extends unknown[]>(fn: (...a: A) => void, ms: number): (...a: A) => void {
   let t: ReturnType<typeof setTimeout> | undefined;
   return (...a: A) => {

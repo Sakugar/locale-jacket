@@ -31,7 +31,7 @@ import {
   type SubscriptionDatasetState,
 } from '../shared/subscriptions.js';
 import type { DatasetUpdateOptions, ExtensionUpdateOptions, Options, Rule, Settings, Subscription } from '../shared/types.js';
-import { $, chip, clear, debounce, h, toggleSwitch } from '../ui/dom.js';
+import { $, chip, clear, debounce, h, keep, preserveInputs, toggleSwitch } from '../ui/dom.js';
 import { getLanguage, setLanguage, t, translateDocument, UI_LANGUAGES, type MessageKey, type UiLanguagePref } from '../shared/i18n.js';
 import { describeStatus } from '../ui/status.js';
 import { loadSettings, onSettingsChanged, saveSettings } from '../ui/store.js';
@@ -66,6 +66,7 @@ function showPage(): void {
   if (page === 'sessions') void renderSessions();
   if (page === 'data') void renderData();
   if (page === 'updates') void renderUpdates();
+  if (page === 'test' && verifyStale) void updateVerifyCard(true);
 }
 
 // ----------------------------------------------------------------------- rules
@@ -115,7 +116,7 @@ function renderRules(): void {
   );
 
   // Toolbar
-  const search = h('input', { type: 'search', placeholder: t('opt.rules.filter'), value: filter, 'aria-label': t('opt.rules.filter') });
+  const search = h('input', { type: 'search', placeholder: t('opt.rules.filter'), value: filter, 'aria-label': t('opt.rules.filter'), 'data-focus': 'ruleFilter' });
   search.addEventListener('input', debounce(() => {
     filter = search.value.trim().toLowerCase();
     renderRuleTable(tableSlot, issueIds);
@@ -229,9 +230,11 @@ function flash(text: string): void {
 
 function renderTest(): void {
   const root = $('#test');
-  clear(root);
-  const input = h('input', { type: 'text', placeholder: t('opt.test.hostPlaceholder'), style: 'flex:1', spellcheck: false, 'aria-label': t('opt.test.hostPlaceholder') });
-  const ipInput = h('input', { type: 'text', placeholder: t('opt.test.ipPlaceholder'), size: 18, spellcheck: false, 'aria-label': t('opt.test.ipPlaceholder') });
+  // The Verify card is kept (not rebuilt), so an open tab list, focus and its report survive.
+  const card = verifyCardElement();
+  for (const c of [...root.children]) if (c !== card) c.remove();
+  const input = keep(h('input', { type: 'text', placeholder: t('opt.test.hostPlaceholder'), style: 'flex:1', spellcheck: false, 'aria-label': t('opt.test.hostPlaceholder') }), 'testHost');
+  const ipInput = keep(h('input', { type: 'text', placeholder: t('opt.test.ipPlaceholder'), size: 18, spellcheck: false, 'aria-label': t('opt.test.ipPlaceholder') }), 'testIp');
   const out = h('div', { class: 'stack' });
   let token = 0;
   const run = async () => {
@@ -288,12 +291,12 @@ function renderTest(): void {
   const trigger = debounce(() => void run(), 150);
   input.addEventListener('input', trigger);
   ipInput.addEventListener('input', trigger);
-  root.append(
+  root.prepend(
     h('h1', {}, t('opt.test.title')),
     h('div', { class: 'card stack' }, h('h2', {}, t('opt.test.heading')), h('div', { class: 'row' }, input, ipInput), out),
   );
-  root.append(h('div', { class: 'card stack', id: 'verifyCard' }));
-  void renderVerifyCard();
+  if (!card.isConnected) root.append(card);
+  void updateVerifyCard(true);
 }
 
 function why(r: Rule): string {
@@ -322,42 +325,95 @@ function prio(r: Rule): string {
   return r.priority ? t('opt.why.priority', { priority: r.priority }) : '';
 }
 
-/** Tab whose report is shown on the Test page; the card re-reads it whenever tabs load or close. */
+/** Tab whose report is shown on the Test page; re-checked when that tab loads, navigates or closes. */
 let verifiedTab: number | null = null;
 
-async function renderVerifyCard(): Promise<void> {
-  const card = document.getElementById('verifyCard');
-  if (!card) return;
-  const tabs = (await chrome.tabs.query({})).filter((t) => t.id !== undefined && t.url && hostFromUrl(t.url));
-  if (!tabs.some((t) => t.id === verifiedTab)) verifiedTab = null;
-  const select = h('select', { 'aria-label': t('opt.verify.heading') }, ...tabs.map((t) => h('option', { value: String(t.id) }, `${hostFromUrl(t.url!)} — ${t.title ?? ''}`.slice(0, 90))));
-  // Keep what the user picked across re-renders.
-  const picked = card.querySelector('select')?.value;
-  if (verifiedTab !== null) select.value = String(verifiedTab);
-  else if (picked && tabs.some((t) => String(t.id) === picked)) select.value = picked;
+interface VerifyCard {
+  lang: string;
+  card: HTMLElement;
+  select: HTMLSelectElement;
+  row: HTMLElement;
+  noTabs: HTMLElement;
+  out: HTMLElement;
+}
+let verifyCard: VerifyCard | null = null;
+/** Something changed while the Test page was hidden; catch up when it is shown. */
+let verifyStale = true;
+/** Only the newest check may write its result. */
+let verifyToken = 0;
+
+/** The card is built once per UI language and kept across re-renders, so a selection, focus and the shown report survive. */
+function verifyCardElement(): HTMLElement {
+  const lang = settings.options.uiLanguage;
+  if (verifyCard?.lang === lang) return verifyCard.card;
+  const select = h('select', { 'aria-label': t('opt.verify.heading'), 'data-focus': 'verifyTab' });
   const out = h('div', { class: 'stack' });
-  const check = async (tabId: number) => {
-    if (!out.childElementCount) out.append(h('p', { class: 'muted' }, t('popup.checking')));
-    const [st, v] = await Promise.all([send({ type: 'getStatus', tabId }), send({ type: 'verify', tabId })]);
+  const row = h('div', { class: 'row' }, select, h('button', {
+    'data-focus': 'verifyButton',
+    onclick: () => {
+      if (!select.value) return;
+      verifiedTab = Number(select.value);
+      clear(out);
+      void checkVerifiedTab();
+    },
+  }, t('opt.verify.button')));
+  const noTabs = h('p', { class: 'muted' }, t('opt.verify.noTabs'));
+  const card = h('div', { class: 'card stack', id: 'verifyCard' }, h('h2', {}, t('opt.verify.heading')), h('p', { class: 'hint' }, t('opt.verify.hint')), row, noTabs, out);
+  verifyCard = { lang, card, select, row, noTabs, out };
+  verifyStale = true;
+  return card;
+}
+
+/** Update the tab list in place: options change only when the list did, and the selection is kept. */
+async function refreshVerifyTabs(): Promise<void> {
+  const tabs = (await chrome.tabs.query({})).filter((x) => x.id !== undefined && x.url && hostFromUrl(x.url));
+  if (!verifyCard) return;
+  const { select, row, noTabs, out } = verifyCard;
+  if (verifiedTab !== null && !tabs.some((x) => x.id === verifiedTab)) {
+    verifiedTab = null;
+    verifyToken++;
     clear(out);
-    out.append(renderVerification(st.status, v));
-  };
-  clear(card);
-  card.append(
-    h('h2', {}, t('opt.verify.heading')),
-    h('p', { class: 'hint' }, t('opt.verify.hint')),
-    tabs.length
-      ? h('div', { class: 'row' }, select, h('button', {
-          onclick: () => {
-            verifiedTab = Number(select.value);
-            clear(out);
-            void check(verifiedTab);
-          },
-        }, t('opt.verify.button')))
-      : h('p', { class: 'muted' }, t('opt.verify.noTabs')),
-    out,
-  );
-  if (verifiedTab !== null) await check(verifiedTab);
+  }
+  const wanted = tabs.map((x) => [String(x.id), `${hostFromUrl(x.url!)} — ${x.title ?? ''}`.slice(0, 90)] as const);
+  const have = [...select.options].map((o) => [o.value, o.textContent ?? ''] as const);
+  if (JSON.stringify(wanted) !== JSON.stringify(have)) {
+    const picked = verifiedTab !== null ? String(verifiedTab) : select.value;
+    clear(select);
+    select.append(...wanted.map(([value, label]) => h('option', { value }, label)));
+    if (wanted.some(([value]) => value === picked)) select.value = picked;
+  }
+  row.hidden = !tabs.length;
+  noTabs.hidden = !!tabs.length;
+}
+
+async function checkVerifiedTab(): Promise<void> {
+  if (!verifyCard || verifiedTab === null) return;
+  const { out } = verifyCard;
+  const tabId = verifiedTab;
+  const mine = ++verifyToken;
+  if (!out.childElementCount) out.append(h('p', { class: 'muted' }, t('popup.checking')));
+  let shown: HTMLElement;
+  try {
+    const [st, v] = await Promise.all([send({ type: 'getStatus', tabId }), send({ type: 'verify', tabId })]);
+    shown = renderVerification(st.status, v);
+  } catch (e) {
+    shown = h('div', { class: 'notice bad' }, t('opt.workerUnavailable', { error: (e as Error).message }));
+  }
+  if (mine !== verifyToken || tabId !== verifiedTab) return;
+  clear(out);
+  out.append(shown);
+}
+
+/** Bring the card up to date, but only while the Test page is visible; otherwise remember to do it later. */
+async function updateVerifyCard(recheck: boolean): Promise<void> {
+  if (currentPage() !== 'test' || !verifyCard?.card.isConnected) {
+    verifyStale = true;
+    return;
+  }
+  const catchUp = verifyStale;
+  verifyStale = false;
+  await refreshVerifyTabs();
+  if (recheck || catchUp) await checkVerifiedTab();
 }
 
 function renderVerification(status: TabStatus | null, v: VerifyResult): HTMLElement {
@@ -404,7 +460,7 @@ function renderVerification(status: TabStatus | null, v: VerifyResult): HTMLElem
 function renderIO(): void {
   const root = $('#io');
   clear(root);
-  const area = h('textarea', { class: 'config', spellcheck: false, 'aria-label': t('opt.io.title') });
+  const area = keep(h('textarea', { class: 'config', spellcheck: false, 'aria-label': t('opt.io.title') }), 'ioText');
   const msg = h('div', { class: 'stack' });
   const mode = h('select', { 'aria-label': t('opt.io.mode') }, h('option', { value: 'replace' }, t('opt.io.replace')), h('option', { value: 'merge' }, t('opt.io.merge')));
   const file = h('input', { type: 'file', accept: '.json,.yaml,.yml,.txt', 'aria-label': t('opt.io.file') });
@@ -847,8 +903,8 @@ function renderSubscriptions(): void {
   );
 
   // Add a subscription
-  const url = h('input', { type: 'url', placeholder: 'https://github.com/<owner>/<repo>/blob/main/rules.yaml', style: 'flex:1;min-width:280px', 'aria-label': t('opt.sub.url'), spellcheck: 'false' });
-  const name = h('input', { type: 'text', placeholder: t('opt.sub.namePlaceholder'), style: 'width:200px', 'aria-label': t('opt.sub.name') });
+  const url = keep(h('input', { type: 'url', placeholder: 'https://github.com/<owner>/<repo>/blob/main/rules.yaml', style: 'flex:1;min-width:280px', 'aria-label': t('opt.sub.url'), spellcheck: 'false' }), 'subAddUrl');
+  const name = keep(h('input', { type: 'text', placeholder: t('opt.sub.namePlaceholder'), style: 'width:200px', 'aria-label': t('opt.sub.name') }), 'subAddName');
   const addMsg = h('div', { class: 'small' });
   const add = h('button', {
     class: 'primary',
@@ -863,8 +919,11 @@ function renderSubscriptions(): void {
       updating.set(sub.id, Date.now());
       setTimeout(() => {
         updating.delete(sub.id);
-        renderSubscriptions();
+        preserveInputs($('#subs'), renderSubscriptions);
       }, 15_000);
+      // Added: empty the fields so the rebuild after the save does not bring the text back.
+      url.value = '';
+      name.value = '';
       await commit({ ...settings, subscriptions: [...subs, sub] });
     },
   }, t('opt.sub.add'));
@@ -1084,15 +1143,24 @@ function renderAbout(): void {
 
 // ------------------------------------------------------------------------ boot
 
+/** UI language the Import/export page was built in; it reads settings only when used, so it is rebuilt only for a new language. */
+let ioLanguage: string | null = null;
+
 function renderAll(): void {
   setLanguage(settings.options.uiLanguage);
   translateDocument();
-  renderRules();
-  renderSubscriptions();
-  renderTest();
-  renderIO();
-  renderSettings();
-  renderAbout();
+  // Typed text (hostname tester, new subscription, import box) and focus survive the rebuild.
+  preserveInputs(document.body, () => {
+    renderRules();
+    renderSubscriptions();
+    renderTest();
+    if (ioLanguage !== settings.options.uiLanguage) {
+      ioLanguage = settings.options.uiLanguage;
+      renderIO();
+    }
+    renderSettings();
+    renderAbout();
+  });
   if (currentPage() === 'sessions') void renderSessions();
   if (currentPage() === 'data') void renderData();
   if (currentPage() === 'updates') void renderUpdates();
@@ -1107,19 +1175,24 @@ async function main(): Promise<void> {
   renderAll();
   showPage();
   window.addEventListener('hashchange', showPage);
-  const refreshVerifyCard = debounce(() => void renderVerifyCard(), 300);
-  chrome.tabs.onCreated.addListener(refreshVerifyCard);
-  chrome.tabs.onRemoved.addListener(refreshVerifyCard);
-  chrome.tabs.onUpdated.addListener((_id, change) => {
-    if (change.status === 'complete') refreshVerifyCard();
+  // The tab list follows tabs opening, closing and changing; only the checked tab is re-checked.
+  const refreshTabList = debounce(() => void updateVerifyCard(false), 300);
+  const recheck = debounce(() => void updateVerifyCard(true), 300);
+  chrome.tabs.onCreated.addListener(refreshTabList);
+  chrome.tabs.onRemoved.addListener((id) => (id === verifiedTab ? recheck : refreshTabList)());
+  chrome.tabs.onUpdated.addListener((id, change) => {
+    if (id === verifiedTab && (change.status === 'complete' || change.url)) recheck();
+    else if (change.url || change.title || change.status === 'complete') refreshTabList();
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || (!changes[SUBSCRIPTION_DATA_KEY] && !changes[SUBSCRIPTION_DATASET_STATE_KEY])) return;
     if (changes[SUBSCRIPTION_DATA_KEY]) subData = (changes[SUBSCRIPTION_DATA_KEY].newValue as SubscriptionDataMap | undefined) ?? {};
     if (changes[SUBSCRIPTION_DATASET_STATE_KEY]) subDatasetState = (changes[SUBSCRIPTION_DATASET_STATE_KEY].newValue as SubscriptionDatasetState | undefined) ?? {};
     settleUpdating();
-    renderRules();
-    renderSubscriptions();
+    preserveInputs(document.body, () => {
+      renderRules();
+      renderSubscriptions();
+    });
     if (currentPage() === 'data') void renderData();
   });
   chrome.storage.onChanged.addListener((changes, area) => {

@@ -468,6 +468,47 @@ try {
     await until(() => evaluate(cdp, b.popup.s, `!!document.querySelector('.verify table') && !document.querySelector('.verify table').dataset.stale`), { message: 'report re-read after reload' });
   });
 
+  await test('popup keeps its controls across status polls, and a navigation drops the old page check', async () => {
+    const site = await openTab(u('www.google.localhost', '/plain.html'));
+    await report(site);
+    const popup = await openTab(`chrome-extension://${extId}/popup/popup.html?tabId=${site.tabId}`);
+    const checkButton = `[...document.querySelectorAll('#tabCard button')].find((x) => x.textContent === 'Check what the page sees')`;
+    await until(() => evaluate(cdp, popup.s, `!!document.querySelector('#globalToggle input') && !!document.querySelector('#siteCard select') && !!${checkButton}`), { message: 'popup rendered' });
+    if (await evaluate(cdp, popup.s, `document.querySelector('#tabCard').hasAttribute('aria-live') || !document.querySelector('#tabCard [aria-live]')`)) {
+      throw new Error('aria-live should be on the status chip and detail, not the whole card');
+    }
+    // Let the first poll settle, mark the controls, then wait two more polls (1.5 s each): nothing changed, so nothing is rebuilt.
+    await sleep(1600);
+    await evaluate(cdp, popup.s, `(() => {
+      document.querySelector('#globalToggle input').dataset.mark = '1';
+      document.querySelector('#siteCard select').dataset.mark = '1';
+      ${checkButton}.dataset.mark = '1';
+      document.querySelector('#globalToggle input').focus();
+    })()`);
+    await sleep(3500);
+    const rebuilt = await evaluate(cdp, popup.s, `(() => {
+      const out = [];
+      if (document.querySelector('#globalToggle input').dataset.mark !== '1') out.push('toggle');
+      if (document.querySelector('#siteCard select').dataset.mark !== '1') out.push('site card');
+      if (${checkButton}?.dataset.mark !== '1') out.push('check button');
+      if (document.activeElement !== document.querySelector('#globalToggle input')) out.push('focus');
+      return out;
+    })()`);
+    if (rebuilt.length) throw new Error(`changed although nothing happened: ${rebuilt.join(', ')}`);
+    // Check the page, then navigate to a ja-JP site: the en-US report is dropped and read again for the new page.
+    await evaluate(cdp, popup.s, `${checkButton}.click()`);
+    const languageNow = () => evaluate(cdp, popup.s, `(() => { const r = [...(document.querySelector('.verify table')?.rows ?? [])].find((x) => x.cells[0].textContent === 'navigator.language'); return r ? r.cells[r.cells.length - 1].textContent : null; })()`);
+    await until(async () => ((await languageNow()) === 'en-US') || null, { message: 'en-US report' });
+    await cdp.send('Page.navigate', { url: u('www.apple.localhost', '/plain.html') }, site.s);
+    let stale = false;
+    await until(async () => {
+      const v = await languageNow();
+      if (v === 'en-US' && (await evaluate(cdp, popup.s, `document.querySelector('#tabCard .host')?.textContent`)) === 'www.apple.localhost') stale = true;
+      return v === 'ja-JP' || null;
+    }, { message: 'report re-read for the new page', intervalMs: 50 });
+    if (stale) throw new Error('the en-US report of the previous page was shown under the new host');
+  });
+
   await test('version tip and Updates page: nothing checked until asked; a newer release shows only a tip (release page link, no update steps)', async () => {
     const version = await sw('chrome.runtime.getManifest().version');
     const releaseUrl = (q) => u('localhost', `/api/release?${q}`);
