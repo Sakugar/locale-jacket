@@ -12,6 +12,12 @@ Security follow-up to 1.3.1.
   - A repeated group must be unambiguous: it may not be able to match the same text in more than one way.
   - Every pattern gets a worked-out upper bound on its matching work for a 253-character hostname (the longest there is), and is refused above a budget of about 40 ms on the browser's slowest, first run.
   - Refused patterns are handled as in 1.3.1 (rejected with a reason, or skipped and listed). Common hostname patterns are still accepted, and the default GeoSite data still loses only the one entry refused in 1.3.1.
+- **The new check itself is bounded.** As first rewritten in this release, the check could be made slow instead of the match: a crafted 107-character pattern took 0.3–0.5 s to analyse, so a subscription with thousands of them could block the service worker for many minutes. Now:
+  - Every step of the analysis is counted. A pattern that needs more than about 0.6 ms of analysis is refused as *too complex to check* (the crafted pattern above: 0.14 ms).
+  - All the regexes of one subscription file, one GeoSite category or one settings load share a budget of about 750 ms. Patterns left over when it is spent are skipped (*too many complex regular expressions in this list*). The outcome depends only on the file: a verdict remembered from an earlier check is charged what it originally cost.
+  - Fetched subscription rules record which version of the check accepted them, so they are not checked again each time the service worker wakes. Rules fetched with an older check are fetched again in full at the next automatic update the minimum gap allows (never for a subscription that is switched off or whose updates are off); until then, each of their patterns is checked before it is first used.
+  - While a page waits, at most 50 ms per service-worker life goes to checking stored patterns that have not been checked yet. The rest are checked in short slices between other events, and a pattern that has not been checked never runs: it counts as no match until then.
+  - Your own `DOMAIN-REGEX` rules are never dropped because a budget ran out. Rules the settings load left unchecked are kept and checked later; one that is refused then never matches and is listed with the other settings problems.
 - **MaxMind (`.mmdb`) data sets** are decoded with limits on the number of values, the nesting depth and the bytes of text per record. Pointers to pointers are refused and every read is bounds-checked. Before, a tiny crafted file (a data set can come from an address a subscription names) could keep the service worker busy for seconds to minutes or crash it. A downloaded or imported file must also decode a few sample records; a corrupt record found later counts as no match.
 - **Downloads have limits**: an overall time limit, a limit on how long the server may stop sending, and a size cap counted while the data arrives.
 
@@ -37,6 +43,19 @@ Security follow-up to 1.3.1.
 - Options: the page-check card on *Test & verify* updates in place, reacts only to the tab you chose, and shows an error instead of staying on *Checking…*. Text typed into the hostname tester, the new-subscription fields and the import box survives settings changes.
 
 ### Changed
+- **Faster with large rule lists.** Matching looks up `DOMAIN` and `DOMAIN-SUFFIX` rules by the host's labels, finds `DOMAIN-KEYWORD` rules and `DOMAIN-REGEX` rules with a fixed piece of text (3+ characters) through an index, ranks only the rules that match, and remembers each host's hostname-rule matches (`GEOSITE` and IP rules are still evaluated every time). Results are the same as before. Locale and time-zone validation is remembered, and a subscription file over the 5,000-rule limit is refused as soon as its 5,001st valid rule is read (*more than 5000 rules (N entries)*). Measured in Node with 5,000 rules:
+
+  | | Before | After |
+  |---|---|---|
+  | Matching a host, per navigation | 4.3 ms | 0.009 ms |
+  | First match after the service worker wakes | 109 ms | 7 ms |
+  | … with 5,000 hostile regexes from an older check | 3.4 s | 61 ms |
+  | Loading the settings | 375 ms | 130 ms |
+  | Parsing a 2 MB subscription file | 456 ms | 168 ms |
+  | Refusing a 20,000-rule file | 1.44 s | 0.14 s |
+  | Rule checks on *Options ▸ Rules* | 5.7 s | 38 ms |
+  | Analysing the slowest accepted regex | 142–208 ms | 0.47 ms |
+
 - Development:
   - `npm run diff-pack` takes the previous release only from `release/v<version>/locale-jacket-<version>.zip`; loose zips in `release/` are ignored.
   - The release scripts' zip reader checks signatures, sizes and CRC-32 of every entry. The release scripts have unit tests.
