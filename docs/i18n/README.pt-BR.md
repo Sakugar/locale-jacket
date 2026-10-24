@@ -32,7 +32,7 @@ Ela automatiza o que **Ferramentas para desenvolvedores ▸ Sensores ▸ Localid
 
 **Arquivo `.crx`:** assinado com a mesma chave (ID `jenefdmhnbfepiohiplfobageceacokb`), mas o Chrome e o Edge só instalam `.crx` de fora das lojas quando uma política empresarial permite. Para uso pessoal, use **Carregar sem compactação**.
 
-**A partir do código-fonte:** requer Node.js 20+. Execute `npm install` e `npm run build` e carregue a pasta `dist/` gerada. Compatível com Chrome / Edge 125 ou mais recente (desenvolvido e testado no 155).
+**A partir do código-fonte:** requer Node.js 20.15+ ou 22.2+ (por causa de `zlib.crc32`). Execute `npm install` e `npm run build` e carregue a pasta `dist/` gerada. Compatível com Chrome / Edge 125 ou mais recente (desenvolvido e testado no 155).
 
 **Regras da primeira execução:** numa instalação nova, a extensão lê `presets/default-rules.yaml` da própria pasta (mesmo formato de *Importar / exportar*). Edite esse arquivo antes de carregar a pasta para começar com suas próprias regras. O `.crx` não contém esse arquivo e gera a mesma predefinição de exemplo por conta própria.
 
@@ -99,7 +99,7 @@ Por isso `DOMAIN,accounts.google.com → SYSTEM` sempre prevalece sobre `DOMAIN-
 
 ## Assinaturas de regras
 
-*Opções ▸ Assinaturas* busca regras em arquivos JSON ou YAML na internet (no formato de *Importar / exportar*) e as mantém atualizadas: logo ao adicionar e depois todo dia (ou toda semana, todo mês ou nunca), com solicitações condicionais. Links para a página de um arquivo no GitHub (`github.com/…/blob/…`) ou para um gist são convertidos no arquivo bruto; um endereço que devolve uma página web é recusado com uma explicação. As regras de assinatura ficam guardadas à parte das suas e só são exibidas: ordem: suas regras, as de assinatura, suas regras especiais (GEOSITE e regras de IP) e as especiais das assinaturas; entre assinaturas, vence a que está mais acima. De um arquivo só se lê `rules`; itens inválidos são ignorados. Se as regras de uma assinatura precisam de GeoSite, GeoIP ou ASN e esse conjunto de dados não está instalado, ele é baixado automaticamente do endereço que o arquivo indica em `datasets:` ou, se não houver, do endereço padrão.
+*Opções ▸ Assinaturas* busca regras em arquivos JSON ou YAML na internet (no formato de *Importar / exportar*) e as mantém atualizadas: logo ao adicionar e depois todo dia (ou toda semana, todo mês ou nunca), com solicitações condicionais. Links para a página de um arquivo no GitHub (`github.com/…/blob/…`) ou para um gist são convertidos no arquivo bruto; um endereço que devolve uma página web é recusado com uma explicação. As regras de assinatura ficam guardadas à parte das suas e só são exibidas: ordem: suas regras, as de assinatura, suas regras especiais (GEOSITE e regras de IP) e as especiais das assinaturas; entre assinaturas, vence a que está mais acima. De um arquivo só se lê `rules`; itens inválidos são ignorados. Se as regras de uma assinatura precisam de GeoSite, GeoIP ou ASN e esse conjunto de dados não está instalado, ele é baixado automaticamente do endereço que o arquivo indica em `datasets:` ou, se não houver, do endereço padrão. Um conjunto de dados que você excluir em *Conjuntos de dados* não é baixado de novo do mesmo endereço enquanto uma assinatura precisar dele.
 
 ## Conjuntos de dados e atualizações automáticas
 

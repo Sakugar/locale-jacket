@@ -32,7 +32,7 @@ Elle automatise ce que fait **Outils de développement ▸ Capteurs ▸ Paramèt
 
 **Fichier `.crx` :** signé avec la même clé (ID `jenefdmhnbfepiohiplfobageceacokb`), mais Chrome et Edge n’installent un `.crx` hors de leur boutique que si une stratégie d’entreprise l’autorise. Pour un usage personnel, utilisez **Charger l’extension non empaquetée**.
 
-**Depuis les sources :** Node.js 20+ requis. Lancez `npm install` puis `npm run build`, et chargez le dossier `dist/` généré. Compatible Chrome / Edge 125 et plus (développé et testé sur 155).
+**Depuis les sources :** Node.js 20.15+ ou 22.2+ requis (pour `zlib.crc32`). Lancez `npm install` puis `npm run build`, et chargez le dossier `dist/` généré. Compatible Chrome / Edge 125 et plus (développé et testé sur 155).
 
 **Règles au premier lancement :** lors d’une nouvelle installation, l’extension lit `presets/default-rules.yaml` dans son dossier (même format que *Importer / exporter*). Modifiez ce fichier avant de charger le dossier pour démarrer avec vos propres règles. Le `.crx` ne contient pas ce fichier et génère lui-même le même préréglage d’exemple.
 
@@ -99,7 +99,7 @@ Ainsi `DOMAIN,accounts.google.com → SYSTEM` l’emporte toujours sur `DOMAIN-S
 
 ## Abonnements de règles
 
-*Options ▸ Abonnements* récupère des règles dans des fichiers JSON ou YAML sur Internet (au format d’*Importer / exporter*) et les tient à jour : dès l’ajout, puis chaque jour (ou chaque semaine, chaque mois, jamais), avec des requêtes conditionnelles. Les liens vers la page d’un fichier sur GitHub (`github.com/…/blob/…`) ou vers un gist sont convertis en fichier brut ; une adresse qui renvoie une page web est refusée avec une explication. Les règles d’abonnement sont stockées à part des vôtres et seulement affichées : ordre : vos règles, celles des abonnements, vos règles spéciales (GEOSITE et règles IP), puis les règles spéciales des abonnements ; entre abonnements, celui placé plus haut l’emporte. Seul `rules` est lu dans un fichier ; les entrées invalides sont ignorées. Si les règles d’un abonnement ont besoin de GeoSite, GeoIP ou ASN et que ce jeu de données manque, il est téléchargé automatiquement depuis l’adresse indiquée par le fichier sous `datasets:`, sinon depuis l’adresse par défaut.
+*Options ▸ Abonnements* récupère des règles dans des fichiers JSON ou YAML sur Internet (au format d’*Importer / exporter*) et les tient à jour : dès l’ajout, puis chaque jour (ou chaque semaine, chaque mois, jamais), avec des requêtes conditionnelles. Les liens vers la page d’un fichier sur GitHub (`github.com/…/blob/…`) ou vers un gist sont convertis en fichier brut ; une adresse qui renvoie une page web est refusée avec une explication. Les règles d’abonnement sont stockées à part des vôtres et seulement affichées : ordre : vos règles, celles des abonnements, vos règles spéciales (GEOSITE et règles IP), puis les règles spéciales des abonnements ; entre abonnements, celui placé plus haut l’emporte. Seul `rules` est lu dans un fichier ; les entrées invalides sont ignorées. Si les règles d’un abonnement ont besoin de GeoSite, GeoIP ou ASN et que ce jeu de données manque, il est téléchargé automatiquement depuis l’adresse indiquée par le fichier sous `datasets:`, sinon depuis l’adresse par défaut. Un jeu de données que vous supprimez dans *Jeux de données* n’est pas retéléchargé depuis la même adresse tant qu’un abonnement en a besoin.
 
 ## Jeux de données et mises à jour automatiques
 

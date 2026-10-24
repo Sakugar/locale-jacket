@@ -4,6 +4,45 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+Security follow-up to 1.3.1.
+
+### Security
+- **The regex check from 1.3.1 could be bypassed.** Inline modifier groups such as `(?i:a+)+$` were misread, and chains of repetitions outside a repeated group (`.*.*.*.*!`, eight `\w{0,9}` in a row) were never checked. Such a `DOMAIN-REGEX` rule or GeoSite `regexp:` entry, from a subscription or a data set, could still stall every spoofed tab for seconds to minutes. The check is rewritten:
+  - Regex syntax it does not fully understand is refused.
+  - A repeated group must be unambiguous: it may not be able to match the same text in more than one way.
+  - Every pattern gets a worked-out upper bound on its matching work for a 253-character hostname (the longest there is), and is refused above a budget of about 40 ms on the browser's slowest, first run.
+  - Refused patterns are handled as in 1.3.1 (rejected with a reason, or skipped and listed). Common hostname patterns are still accepted, and the default GeoSite data still loses only the one entry refused in 1.3.1.
+- **MaxMind (`.mmdb`) data sets** are decoded with limits on the number of values, the nesting depth and the bytes of text per record. Pointers to pointers are refused and every read is bounds-checked. Before, a tiny crafted file (a data set can come from an address a subscription names) could keep the service worker busy for seconds to minutes or crash it. A downloaded or imported file must also decode a few sample records; a corrupt record found later counts as no match.
+- **Downloads have limits**: an overall time limit, a limit on how long the server may stop sending, and a size cap counted while the data arrives.
+
+  | Download | Size | Overall time | No data for |
+  |---|---|---|---|
+  | Subscription file | 2 MB | 1 min | 20 s |
+  | Data set | 128 MB | 15 min | 1 min |
+  | Update check | 5 MB | 30 s | 15 s |
+
+  A server that answered and then stopped sending used to block every later run (including *Update now*). The subscription size limit now counts bytes (it counted characters), and a file sent without a length is no longer read in full before it is checked.
+
+### Fixed
+- Turning spoofing off (or leaving a spoofed site) now always detaches the debugger. A session whose command was cut off, for example by a renderer swap, or whose attach timed out could be forgotten while Chrome still held it, so the spoofed locale and the debugging banner stayed.
+- Settings saved quickly one after another could be applied out of order. They are now applied one at a time, always with the latest settings.
+- One invalid stored setting no longer resets your subscriptions, default action and on/off switch. Only the invalid part is reset, and it is listed with the other settings problems.
+- A data set you deleted is no longer downloaded again automatically because a subscription needs it. It is downloaded again once a subscription needs it after none did, or if the address changes.
+- When the browser storage is full, saving fetched subscription rules shows an error on the subscription and keeps the previous rules, instead of failing silently with the rules in use and the saved ones out of step.
+- First-request header (DNR) rules that Chrome cannot use are skipped and listed, instead of making Chrome reject the whole update. If an update still fails, the old header rules are removed rather than left in force. `DOMAIN-KEYWORD` values are limited to 253 characters.
+- The data-set update schedule counts a manual download as a fresh check.
+- *Check what the page sees* no longer marks values red while spoofing is off or paused, and gives the right expectation for a tab the extension has not tracked yet.
+- Cancelling Chrome's debugging banner stops new attaches at once, so a navigation at that moment cannot bring the banner back. A tab whose debugger is already held by another client now counts towards the attach-failure limit instead of being retried without end.
+- Popup: the cards are rebuilt only when what they show changes, not every 1.5 s, so clicks and focus are no longer lost and screen readers no longer repeat the status. A navigation drops the previous page check, and the *Saved* note stays.
+- Options: the page-check card on *Test & verify* updates in place, reacts only to the tab you chose, and shows an error instead of staying on *Checking…*. Text typed into the hostname tester, the new-subscription fields and the import box survives settings changes.
+
+### Changed
+- Development:
+  - `npm run diff-pack` takes the previous release only from `release/v<version>/locale-jacket-<version>.zip`; loose zips in `release/` are ignored.
+  - The release scripts' zip reader checks signatures, sizes and CRC-32 of every entry. The release scripts have unit tests.
+  - The verification server (`npm run serve:verify`) listens on the loopback address only.
+  - Building needs Node.js 20.15+ or 22.2+ (`engines` in `package.json`).
+
 ## [1.3.2] - 2026-10-23
 
 ### Fixed

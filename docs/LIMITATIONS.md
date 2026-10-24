@@ -57,6 +57,7 @@ Everything below was observed in Chrome 155 / Edge 155 on Windows 11 (see `resea
   - The address cache is cleared when the browser or the service worker restarts.
 - **Data sets are snapshots.** `GEOSITE`, `GEOIP` country and `IP-ASN` rules only match with an installed data set, and only as current as the file. Update them from *Options ▸ Data sets*, or turn on automatic updates there (browser start and/or a daily, weekly or monthly interval, with a minimum gap between attempts). Imported files are not updated automatically.
   - GeoSite regex entries use RE2 syntax; the few that JavaScript cannot compile are skipped and counted.
+- **Regex rules are screened for slow matching.** `DOMAIN-REGEX` rules and GeoSite `regexp:` entries are refused (or, from subscriptions and data sets, skipped) when the extension cannot prove they finish quickly on any hostname: unknown syntax, back-references, repeated groups that can match the same text in more than one way, or a worked-out bound on the matching work above its budget. The check is conservative, so a pattern that is in fact fast can be refused; a form like `^([a-z0-9-]+\.)*example\.com$` or a `DOMAIN-SUFFIX` rule works instead. One entry of the default GeoSite data is refused.
 - **First-request header.** `GEOSITE` lists larger than 20,000 domains, regex rules and IP rules are not mirrored into declarativeNetRequest; they apply through the debugger session. When IP rules exist, a spoofing default action is not mirrored either, because an IP rule might override it.
 
 ## Coverage gaps

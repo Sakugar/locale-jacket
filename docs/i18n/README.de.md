@@ -32,7 +32,7 @@ Sie automatisiert, was **DevTools ▸ Sensoren ▸ Gebietsschema** tut, und wend
 
 **`.crx`-Datei:** mit demselben Schlüssel signiert (ID `jenefdmhnbfepiohiplfobageceacokb`). Chrome und Edge installieren `.crx`-Dateien außerhalb ihrer Stores jedoch nur, wenn eine Unternehmensrichtlinie es erlaubt. Für den privaten Gebrauch ist **Entpackte Erweiterung laden** der richtige Weg.
 
-**Aus dem Quellcode:** Node.js 20+ wird benötigt. `npm install` und `npm run build` ausführen und den erzeugten Ordner `dist/` laden. Unterstützt Chrome/Edge ab 125 (entwickelt und getestet mit 155).
+**Aus dem Quellcode:** Node.js 20.15+ oder 22.2+ wird benötigt (wegen `zlib.crc32`). `npm install` und `npm run build` ausführen und den erzeugten Ordner `dist/` laden. Unterstützt Chrome/Edge ab 125 (entwickelt und getestet mit 155).
 
 **Regeln beim ersten Start:** Bei einer Neuinstallation liest die Erweiterung `presets/default-rules.yaml` aus ihrem Ordner (gleiches Format wie *Import / Export*). Bearbeiten Sie die Datei vor dem Laden, um mit eigenen Regeln zu beginnen. Die `.crx` enthält diese Datei nicht und erzeugt dieselbe Beispielvorgabe selbst.
 
@@ -99,7 +99,7 @@ Daher überstimmt `DOMAIN,accounts.google.com → SYSTEM` stets `DOMAIN-SUFFIX,g
 
 ## Regel-Abonnements
 
-*Optionen ▸ Abonnements* lädt Regeln aus JSON- oder YAML-Dateien im Internet (im Format von *Import / Export*) und hält sie aktuell: sofort nach dem Hinzufügen, danach täglich (oder wöchentlich, monatlich, nie), mit bedingten Anfragen. Links auf die Seite einer Datei bei GitHub (`github.com/…/blob/…`) oder auf einen Gist werden in die Rohdatei umgewandelt; eine Adresse, die eine Webseite liefert, wird mit einer Erklärung abgelehnt. Abonnement-Regeln werden getrennt von Ihren eigenen gespeichert und nur angezeigt: Reihenfolge: Ihre Regeln, Abonnement-Regeln, Ihre Sonderregeln (GEOSITE und IP-Regeln), Sonderregeln aus Abonnements; unter Abonnements gewinnt das höher stehende. Aus einer Datei wird nur `rules` gelesen; ungültige Einträge werden übersprungen. Brauchen Abonnement-Regeln GeoSite, GeoIP oder ASN und fehlt der Datensatz, wird er automatisch heruntergeladen – von der Adresse, die die Datei unter `datasets:` nennt, sonst von der Standardadresse.
+*Optionen ▸ Abonnements* lädt Regeln aus JSON- oder YAML-Dateien im Internet (im Format von *Import / Export*) und hält sie aktuell: sofort nach dem Hinzufügen, danach täglich (oder wöchentlich, monatlich, nie), mit bedingten Anfragen. Links auf die Seite einer Datei bei GitHub (`github.com/…/blob/…`) oder auf einen Gist werden in die Rohdatei umgewandelt; eine Adresse, die eine Webseite liefert, wird mit einer Erklärung abgelehnt. Abonnement-Regeln werden getrennt von Ihren eigenen gespeichert und nur angezeigt: Reihenfolge: Ihre Regeln, Abonnement-Regeln, Ihre Sonderregeln (GEOSITE und IP-Regeln), Sonderregeln aus Abonnements; unter Abonnements gewinnt das höher stehende. Aus einer Datei wird nur `rules` gelesen; ungültige Einträge werden übersprungen. Brauchen Abonnement-Regeln GeoSite, GeoIP oder ASN und fehlt der Datensatz, wird er automatisch heruntergeladen – von der Adresse, die die Datei unter `datasets:` nennt, sonst von der Standardadresse. Einen Datensatz, den Sie unter *Datensätze* löschen, lädt sie für dieselbe Adresse nicht erneut, solange ein Abonnement ihn braucht.
 
 ## Datensätze und automatische Updates
 

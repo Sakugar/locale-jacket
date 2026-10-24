@@ -22,7 +22,7 @@ No JavaScript APIs are monkey-patched. Everything was checked against real Chrom
 
 ## Install
 
-Requirements: Node.js 20+ (only to build), and Chrome or Edge 125 or later (developed and tested on 155).
+Requirements: Node.js 20.15+ or 22.2+ (only to build; `zlib.crc32` needs it), and Chrome or Edge 125 or later (developed and tested on 155).
 
 ```sh
 npm install
@@ -141,7 +141,7 @@ To add a language: copy `src/shared/i18n/en.ts` to a new catalog, register it in
   - Each subscription can be switched off without removing it.
 - **What is used from a file:** only `rules`. A file cannot change your default action, options or subscriptions. Entries that are not valid rules are skipped and listed, without rejecting the file.
 - **Data sets:**
-  - If a subscription has `GEOSITE`, `GEOIP` or `IP-ASN` rules and that data set is not installed, it is downloaded automatically. This is the option *Download the data sets subscriptions need*, on by default.
+  - If a subscription has `GEOSITE`, `GEOIP` or `IP-ASN` rules and that data set is not installed, it is downloaded automatically. This is the option *Download the data sets subscriptions need*, on by default. A data set you delete in *Data sets* is not downloaded again for the same address while a subscription still needs it.
   - The file may name where to get each one; otherwise the default address from *Data sets* is used:
 
     ```yaml

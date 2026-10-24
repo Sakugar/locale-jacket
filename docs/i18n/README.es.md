@@ -32,7 +32,7 @@ Automatiza lo que hace **Herramientas para desarrolladores ▸ Sensores ▸ Conf
 
 **Archivo `.crx`:** firmado con la misma clave (ID `jenefdmhnbfepiohiplfobageceacokb`), pero Chrome y Edge solo instalan `.crx` fuera de sus tiendas cuando una política empresarial lo permite. Para uso personal, usa **Cargar descomprimida**.
 
-**Desde el código fuente:** requiere Node.js 20+. Ejecuta `npm install` y `npm run build`, y carga la carpeta `dist/` generada. Compatible con Chrome / Edge 125 o posterior (desarrollado y probado en 155).
+**Desde el código fuente:** requiere Node.js 20.15+ o 22.2+ (por `zlib.crc32`). Ejecuta `npm install` y `npm run build`, y carga la carpeta `dist/` generada. Compatible con Chrome / Edge 125 o posterior (desarrollado y probado en 155).
 
 **Reglas del primer inicio:** en una instalación nueva, la extensión lee `presets/default-rules.yaml` de su carpeta (mismo formato que *Importar / exportar*). Edita ese archivo antes de cargar la carpeta para empezar con tus propias reglas. El `.crx` no contiene este archivo y genera por sí mismo el mismo ajuste de ejemplo.
 
@@ -99,7 +99,7 @@ Por eso `DOMAIN,accounts.google.com → SYSTEM` siempre prevalece sobre `DOMAIN-
 
 ## Suscripciones de reglas
 
-*Opciones ▸ Suscripciones* toma reglas de archivos JSON o YAML en internet (con el formato de *Importar / exportar*) y las mantiene al día: al añadirlas y después cada día (o cada semana, cada mes o nunca), con solicitudes condicionales. Los enlaces a la página de un archivo en GitHub (`github.com/…/blob/…`) o a un gist se convierten en el archivo sin procesar; una dirección que devuelve una página web se rechaza con una explicación. Las reglas de suscripción se guardan aparte de las tuyas y solo se muestran: orden: tus reglas, las de suscripción, tus reglas especiales (GEOSITE y reglas IP) y las especiales de las suscripciones; entre suscripciones gana la que está más arriba. De un archivo solo se lee `rules`; las entradas no válidas se omiten. Si las reglas de una suscripción necesitan GeoSite, GeoIP o ASN y falta ese conjunto de datos, se descarga automáticamente desde la dirección que indica el archivo en `datasets:` o, si no, desde la predeterminada.
+*Opciones ▸ Suscripciones* toma reglas de archivos JSON o YAML en internet (con el formato de *Importar / exportar*) y las mantiene al día: al añadirlas y después cada día (o cada semana, cada mes o nunca), con solicitudes condicionales. Los enlaces a la página de un archivo en GitHub (`github.com/…/blob/…`) o a un gist se convierten en el archivo sin procesar; una dirección que devuelve una página web se rechaza con una explicación. Las reglas de suscripción se guardan aparte de las tuyas y solo se muestran: orden: tus reglas, las de suscripción, tus reglas especiales (GEOSITE y reglas IP) y las especiales de las suscripciones; entre suscripciones gana la que está más arriba. De un archivo solo se lee `rules`; las entradas no válidas se omiten. Si las reglas de una suscripción necesitan GeoSite, GeoIP o ASN y falta ese conjunto de datos, se descarga automáticamente desde la dirección que indica el archivo en `datasets:` o, si no, desde la predeterminada. Un conjunto de datos que borres en *Conjuntos de datos* no se vuelve a descargar de la misma dirección mientras una suscripción lo necesite.
 
 ## Conjuntos de datos y actualizaciones automáticas
 
