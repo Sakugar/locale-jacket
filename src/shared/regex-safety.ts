@@ -29,8 +29,21 @@
 //     pattern whose bound exceeds MAX_STEPS is refused. So .*.*! and six \w{0,9} in a row
 //     are refused, while ^(.+\.)?example\.com$ needs about 2,600 steps.
 // The check is conservative: it may refuse a pattern that is actually fast.
+//
+// The check's own work is bounded as well, since a crafted pattern could make the analysis
+// slow instead of the match. Every phase (parsing, the loop checks, the position automaton
+// and its pair walk, the step bound) counts units of work against one limit per pattern
+// (MAX_ANALYSIS, under a millisecond); a pattern that needs more is refused as too complex to
+// check. Checks of many patterns in one go can share an AnalysisBudget, and verdicts are
+// remembered by source with what they cost, so the same pattern is analysed once (a batch
+// is still charged that cost: what fits in it depends only on its patterns).
 
 export const MAX_REGEX_LENGTH = 512;
+/**
+ * Increased whenever the rules for what is accepted change, so stored data that was checked
+ * by the same version need not be checked again.
+ */
+export const REGEX_CHECK_VERSION = 2;
 /** Hostnames are at most this long; the cost bound is computed for this input length. */
 const MAX_INPUT = 253;
 /**
@@ -50,15 +63,52 @@ const COUNTED = 3;
 const CAPTURE = 2;
 /** Highest polynomial degree the bound tracks. */
 const DEGREE = 6;
-/** Analysis steps before a pattern counts as too complex to check. */
-const MAX_WORK = 20000;
 
 const BACKREF = 'back-references are not allowed';
 const SAME_TEXT = 'a repeated group can match the same text in more than one way; a form like ^([a-z0-9-]+\\.)*example\\.com$ works';
 const SAME_START = 'alternatives (|) in a repeated group can start with the same character';
 const TOO_MANY = 'parts of it can match the same text in too many ways';
+const COMPLEX = 'too complex to check';
+const SPENT = 'too many complex regular expressions in this list';
 
-class Unsafe extends Error {}
+/**
+ * Thrown with the reason a pattern is refused. Not an Error: capturing a stack trace would
+ * cost more than most checks.
+ */
+class Unsafe {
+  constructor(readonly message: string) {}
+}
+
+// ---- Analysis work --------------------------------------------------------------------
+// One unit is about one elementary step of the checker (a set comparison, a mask operation,
+// a few array writes); building a Poly costs POLY units.
+
+/**
+ * Units of analysis work for one pattern: about 0.6 ms in warm node (15-30 ns a unit), and
+ * 5-10 ms as the very first check in a fresh process. The hostname patterns in GeoSite need
+ * at most about 3,000; 512-character alternations of domains 13,000-15,000.
+ */
+const MAX_ANALYSIS = 30000;
+/** Units per millisecond for a batch: node does 40,000-75,000 warm, depending on the patterns. */
+const UNITS_PER_MS = 30000;
+/** Units for building or combining a Poly (DEGREE + 1 numbers). */
+const POLY = 8;
+/** Units for setting up one analysis. */
+const SETUP = 80;
+/** Verdicts remembered by source. */
+const MEMO_SIZE = 4096;
+
+/** The current check ran out of work (its own limit, or the batch's). */
+class OutOfWork {}
+
+/** Work used by the current check, and the most it may use (checks never run nested). */
+let used = 0;
+let allowed = 0;
+
+function work(units: number): void {
+  used += units;
+  if (used > allowed) throw new OutOfWork();
+}
 
 // ---- Character sets -------------------------------------------------------------------
 // Sets of UTF-16 code units, exact for ASCII (four 32-bit words). With the i flag but no u
@@ -94,16 +144,9 @@ function span(lo: number, hi: number): Chars {
   return { w0: bits(lo, hi, 0), w1: bits(lo, hi, 32), w2: w2 | letters, w3: w3 | letters, rest };
 }
 
-function union(...sets: Chars[]): Chars {
-  const u = { ...NONE };
-  for (const s of sets) {
-    u.w0 |= s.w0;
-    u.w1 |= s.w1;
-    u.w2 |= s.w2;
-    u.w3 |= s.w3;
-    if (s.rest > u.rest) u.rest = s.rest;
-  }
-  return u;
+function union(a: Chars, b: Chars): Chars {
+  const rest = a.rest > b.rest ? a.rest : b.rest;
+  return { w0: a.w0 | b.w0, w1: a.w1 | b.w1, w2: a.w2 | b.w2, w3: a.w3 | b.w3, rest };
 }
 
 function overlaps(a: Chars, b: Chars): boolean {
@@ -115,8 +158,8 @@ function complement(s: Chars): Chars {
 }
 
 const DIGIT = span(48, 57);
-const WORD = union(DIGIT, span(65, 90), span(95, 95));
-const SPACE = union(span(9, 13), span(32, 32), { ...NONE, rest: 1 });
+const WORD = union(union(DIGIT, span(65, 90)), span(95, 95));
+const SPACE = union(union(span(9, 13), span(32, 32)), { ...NONE, rest: 1 });
 
 // ---- Syntax tree ----------------------------------------------------------------------
 
@@ -198,6 +241,7 @@ function makeTerm(node: Node, min: number, max: number): Term {
   } else if (node.kind === 'group' || node.kind === 'look') {
     lo = Infinity;
     for (const alt of node.alts) {
+      work(1 + 6 * alt.length);
       lo = Math.min(lo, seqMin(alt));
       hi = Math.max(hi, seqMax(alt));
       first = union(first, seqFirst(alt, NONE));
@@ -232,6 +276,7 @@ const exit = (t: Term): number => 1 + (t.node.kind === 'group' && t.node.capture
  * that fails on the next character takes (`afterSkip` once past the end).
  */
 function follows(terms: Term[], after: Chars, afterSkip = 0): { next: Chars[]; skip: number[] } {
+  work(1 + 2 * terms.length);
   const next: Chars[] = [];
   const skip: number[] = [];
   let acc = after;
@@ -261,6 +306,8 @@ interface Atom {
 
 const one = (code: number): Atom => ({ set: span(code, code), code });
 const BRACES = /^\{(\d+)(,(\d*))?\}/;
+const HEX2 = /^[0-9a-f]{2}/i;
+const HEX4 = /^[0-9a-f]{4}/i;
 
 class Parser {
   private i = 0;
@@ -286,6 +333,7 @@ class Parser {
   private sequence(): Term[] {
     const terms: Term[] = [];
     while (this.i < this.src.length && this.src[this.i] !== '|' && this.src[this.i] !== ')') {
+      work(6);
       const node = this.atom();
       const q = this.quantifier();
       if (q && node.kind !== 'char' && node.kind !== 'group') throw new Unsafe('a repeated assertion or lookaround');
@@ -325,6 +373,7 @@ class Parser {
   }
 
   private group(): Node {
+    work(16);
     const outer = this.multiline;
     let behind: boolean | null = null;
     let capture = this.src[this.i] !== '?';
@@ -360,8 +409,8 @@ class Parser {
     const c = this.src[this.i++];
     if (c === undefined) throw new Unsafe('trailing backslash');
     const next = this.src[this.i] ?? '';
-    const hex = (digits: number): Atom => {
-      const m = new RegExp(`^[0-9a-f]{${digits}}`, 'i').exec(this.src.slice(this.i));
+    const hex = (digits: 2 | 4): Atom => {
+      const m = (digits === 2 ? HEX2 : HEX4).exec(this.src.slice(this.i));
       if (!m) return one(c.charCodeAt(0)); // \x or \u without enough hex digits is the letter itself
       this.i += digits;
       return one(parseInt(m[0], 16));
@@ -418,6 +467,7 @@ class Parser {
     if (negate) this.i++;
     let set = NONE;
     for (;;) {
+      work(2);
       if (this.i >= this.src.length) throw new Unsafe('unterminated character class');
       if (this.src[this.i] === ']') {
         this.i++;
@@ -428,7 +478,7 @@ class Parser {
         this.i++;
         const b = this.classAtom();
         // Annex B: a range with a class escape at either end, like [\d-z], is \d, "-" and z.
-        if (a.code === null || b.code === null) set = union(set, a.set, b.set, span(45, 45));
+        if (a.code === null || b.code === null) set = union(union(set, a.set), union(b.set, span(45, 45)));
         else if (a.code > b.code) throw new Unsafe('range out of order in character class');
         else set = union(set, span(a.code, b.code));
       } else set = union(set, a.set);
@@ -470,11 +520,22 @@ function validModifiers(add: string, remove: string): boolean {
 
 // ---- Deterministic loops --------------------------------------------------------------
 
+// The checks below depend only on the loop, so their results are kept per Term: the step
+// bound reaches a loop once per copy of each group around it that is repeated up to UNROLL
+// times, and again when it bounds the loops around it.
+const loopProblems = new WeakMap<Term, string | null>();
+const terminatedBodies = new WeakMap<Term, Term[][] | null>();
+
 /** Why repeating group `t` could split one stretch of text into iterations in more than one way. */
 function loopProblem(t: Term): string | null {
-  const alts = (t.node as GroupNode).alts;
-  if (alts.some((alt) => seqMin(alt) === 0)) return SAME_TEXT;
-  return altsProblem(alts, t.first);
+  let p = loopProblems.get(t);
+  if (p === undefined) {
+    const alts = (t.node as GroupNode).alts;
+    work(alts.length);
+    p = alts.some((alt) => seqMin(alt) === 0) ? SAME_TEXT : altsProblem(alts, t.first);
+    loopProblems.set(t, p);
+  }
+  return p;
 }
 
 /** `after`: the characters that can be consumed after the group (cyclically, inside a loop). */
@@ -482,6 +543,7 @@ function altsProblem(alts: Term[][], after: Chars): string | null {
   if (alts.length > 1) {
     const firsts = alts.map((alt) => seqFirst(alt, NONE));
     for (let i = 0; i < alts.length; i++) {
+      work(2 + i);
       if (seqMin(alts[i]!) === 0) return SAME_TEXT;
       for (let j = 0; j < i; j++) if (overlaps(firsts[i]!, firsts[j]!)) return SAME_START;
     }
@@ -499,6 +561,7 @@ function sequenceProblem(terms: Term[], after: Chars): string | null {
   for (let i = 0; i < terms.length; i++) {
     const t = terms[i]!;
     const n = t.node;
+    work(2);
     if (n.kind === 'look') return 'a lookaround inside a repeated group';
     if (n.kind === 'char' && t.min !== t.max && overlaps(n.set, next[i]!)) return SAME_TEXT;
     if (n.kind !== 'group') continue;
@@ -533,38 +596,77 @@ function sequenceProblem(terms: Term[], after: Chars): string | null {
 //      superadditive: over at most n + 1 disjoint spans totalling at most n characters the sum
 //      is at most sum c[d] * (C(n + d, d) + n + 1) = total(body) + (n + 1) * sum c[d].
 // Ambiguity is checked on the body's position (Glushkov) automaton: two paths over the same
-// text are a transition or empty match made in two ways, or a pair of different positions
-// that the same text reaches together from the start and that can reach the end together.
-// Bounded repetitions over 3 count as unbounded there, which only adds paths.
-
-/** Positions of the automaton that a part of the body can start and end on, and its ways to match nothing (2: more than one). */
-interface Frag {
-  first: number[];
-  last: number[];
-  empty: number;
-}
+// text are a transition or empty match made in two ways, or two paths that the same text
+// takes from the start, that part (are on different positions after some character) and
+// that can then reach the end together. Bounded repetitions over 3 count as unbounded there,
+// which only adds paths.
 
 /** At most this many positions are checked. */
 const MAX_POSITIONS = 48;
+/** A set of positions: bit p % 32 of word p >> 5, in WORDS 32-bit words. */
+type Mask = number[];
+const WORDS = (MAX_POSITIONS + 31) >> 5;
+const EMPTY: readonly number[] = new Array<number>(WORDS).fill(0);
+const noPositions = (): Mask => EMPTY.slice();
+
+/** The lowest bit set in a non-zero word (iterate with `for (let m = word; m; m &= m - 1)`). */
+const lowest = (m: number): number => 31 - Math.clz32(m & -m);
+
+function or(a: Mask, b: Mask): Mask {
+  const r = a.slice();
+  for (let w = 0; w < WORDS; w++) r[w]! |= b[w]!;
+  return r;
+}
+
+function meet(a: Mask, b: Mask): boolean {
+  for (let w = 0; w < WORDS; w++) if (a[w]! & b[w]!) return true;
+  return false;
+}
+
+const has = (m: Mask, p: number): boolean => (m[p >> 5]! & (1 << (p & 31))) !== 0;
+
+/**
+ * Positions of the automaton that a part of the body can start and end on, and its ways to
+ * match nothing (2: more than one).
+ */
+interface Frag {
+  first: Mask;
+  last: Mask;
+  empty: number;
+}
+
+/** Masks in a Frag are never changed in place, so they can be shared. */
+const NOTHING: Frag = { first: noPositions(), last: noPositions(), empty: 1 };
 
 class Positions {
   sets: Chars[] = [];
-  follow: Set<number>[] = [];
+  /** follow[p]: the positions that can come right after position p. */
+  follow: Mask[] = [];
   /** Some text matches in two ways (or the body is too big to check). */
   ambiguous = false;
 
   alternatives(alts: Term[][]): Frag {
-    const frags = alts.map((alt) => alt.reduce((f, t) => this.concat(f, this.term(t)), { first: [], last: [], empty: 1 } as Frag));
-    const empty = frags.reduce((s, f) => s + f.empty, 0);
+    let first = NOTHING.first;
+    let last = NOTHING.last;
+    let empty = 0;
+    for (const alt of alts) {
+      work(2);
+      let f = NOTHING;
+      for (const t of alt) f = this.concat(f, this.term(t));
+      first = or(first, f.first);
+      last = or(last, f.last);
+      empty += f.empty;
+    }
     if (empty > 1) this.ambiguous = true;
-    return { first: frags.flatMap((f) => f.first), last: frags.flatMap((f) => f.last), empty: Math.min(empty, 2) };
+    return { first, last, empty: Math.min(empty, 2) };
   }
 
   private term(t: Term): Frag {
+    work(2);
     const n = t.node;
-    if (this.ambiguous || (n.kind !== 'char' && n.kind !== 'group')) return { first: [], last: [], empty: 1 };
+    if (this.ambiguous || (n.kind !== 'char' && n.kind !== 'group')) return NOTHING;
     const copy = (): Frag => (n.kind === 'char' ? this.position(n.set) : this.alternatives(n.alts));
-    let f: Frag = { first: [], last: [], empty: 1 };
+    let f = NOTHING;
     for (let k = 0; k < t.min && !this.ambiguous; k++) f = this.concat(f, copy());
     if (t.max - t.min > UNROLL) {
       const body = copy();
@@ -584,28 +686,35 @@ class Positions {
   }
 
   private position(set: Chars): Frag {
-    if (this.sets.length >= MAX_POSITIONS) this.ambiguous = true;
+    const p = this.sets.length;
+    if (p >= MAX_POSITIONS) {
+      this.ambiguous = true;
+      return NOTHING;
+    }
     this.sets.push(set);
-    this.follow.push(new Set());
-    const p = this.sets.length - 1;
-    return { first: [p], last: [p], empty: 0 };
+    this.follow.push(noPositions());
+    const m = noPositions();
+    m[p >> 5] = 1 << (p & 31);
+    return { first: m, last: m, empty: 0 };
   }
 
   private concat(a: Frag, b: Frag): Frag {
     this.link(a.last, b.first);
     return {
-      first: a.empty ? [...a.first, ...b.first] : a.first,
-      last: b.empty ? [...a.last, ...b.last] : b.last,
+      first: a.empty ? or(a.first, b.first) : a.first,
+      last: b.empty ? or(a.last, b.last) : b.last,
       empty: Math.min(a.empty * b.empty, 2),
     };
   }
 
-  private link(from: number[], to: number[]): void {
-    for (const a of from) {
-      const f = this.follow[a]!;
-      for (const b of to) {
-        if (f.has(b)) this.ambiguous = true;
-        f.add(b);
+  private link(from: Mask, to: Mask): void {
+    work(2);
+    for (let w = 0; w < WORDS; w++) {
+      for (let m = from[w]!; m; m &= m - 1) {
+        work(2);
+        const f = this.follow[w * 32 + lowest(m)]!;
+        if (meet(f, to)) this.ambiguous = true;
+        for (let v = 0; v < WORDS; v++) f[v]! |= to[v]!;
       }
     }
   }
@@ -617,49 +726,93 @@ function unambiguous(alts: Term[][]): boolean {
   const body = g.alternatives(alts);
   if (g.ambiguous || body.empty) return false;
   const n = g.sets.length;
-  // Pairs of positions that the same text reaches together, with where they were reached from.
-  const from = new Map<number, number[]>();
-  const queue: number[] = [];
-  const visit = (a: number, b: number, prev: number): void => {
-    if (!overlaps(g.sets[a]!, g.sets[b]!)) return;
-    const k = a * n + b;
-    const list = from.get(k);
-    if (list) list.push(prev);
-    else {
-      from.set(k, [prev]);
-      queue.push(k);
-    }
-  };
-  for (const a of body.first) for (const b of body.first) visit(a, b, -1);
-  for (let i = 0; i < queue.length; i++) {
-    const k = queue[i]!;
-    for (const a of g.follow[Math.floor(k / n)]!) for (const b of g.follow[k % n]!) visit(a, b, k);
+  const { follow } = g;
+  // meets[a]: the positions whose characters overlap those of a.
+  const meets: Mask[] = [];
+  for (let a = 0; a < n; a++) {
+    work(n);
+    const m = noPositions();
+    for (let b = 0; b < n; b++) if (overlaps(g.sets[a]!, g.sets[b]!)) m[b >> 5]! |= 1 << (b & 31);
+    meets.push(m);
   }
-  // Of those, the pairs that can reach the end together.
-  const ends = new Set(body.last);
-  const live = queue.filter((k) => ends.has(Math.floor(k / n)) && ends.has(k % n));
-  const seen = new Set(live);
-  for (let i = 0; i < live.length; i++) {
-    for (const p of from.get(live[i]!)!) {
-      if (p >= 0 && !seen.has(p)) {
-        seen.add(p);
-        live.push(p);
+  const finals = body.last;
+  // Two paths that have not parted are on the same position: `alone` holds the positions the
+  // same text reaches that way. parted[a] has b: after parting, the two paths can be on a and b.
+  const alone = noPositions();
+  const parted = Array.from({ length: n }, noPositions);
+  const singles: number[] = [];
+  const pairs: number[] = []; // a * MAX_POSITIONS + b
+  const others = noPositions();
+  const fresh = noPositions();
+  // Paths that have parted, one on a and the other on any of `others`; false when two can end together.
+  const part = (a: number): boolean => {
+    const seen = parted[a]!;
+    let any = 0;
+    for (let w = 0; w < WORDS; w++) any |= fresh[w] = others[w]! & ~seen[w]!;
+    if (!any) return true;
+    if (has(finals, a) && meet(fresh, finals)) return false;
+    for (let w = 0; w < WORDS; w++) {
+      work(1);
+      seen[w]! |= fresh[w]!;
+      for (let m = fresh[w]!; m; m &= m - 1) pairs.push(a * MAX_POSITIONS + w * 32 + lowest(m));
+    }
+    return true;
+  };
+  // Both paths take a character from the positions they can be on: `next` for the first, `second` for the other.
+  const step = (next: Mask, second: Mask, together: boolean): boolean => {
+    for (let w = 0; w < WORDS; w++) {
+      for (let m = next[w]!; m; m &= m - 1) {
+        work(3);
+        const c = w * 32 + lowest(m);
+        const bit = 1 << (c & 31);
+        const near = meets[c]!;
+        if (together && near[w]! & bit && !(alone[w]! & bit)) {
+          alone[w]! |= bit;
+          singles.push(c);
+        }
+        for (let v = 0; v < WORDS; v++) others[v] = second[v]! & near[v]!;
+        if (together) others[w]! &= ~bit;
+        if (!part(c)) return false;
       }
     }
+    return true;
+  };
+  if (!step(body.first, body.first, true)) return false;
+  for (let i = 0, j = 0; i < singles.length || j < pairs.length; ) {
+    work(1);
+    if (i < singles.length) {
+      const a = singles[i++]!;
+      if (!step(follow[a]!, follow[a]!, true)) return false;
+    } else {
+      const k = pairs[j++]!;
+      if (!step(follow[Math.floor(k / MAX_POSITIONS)]!, follow[k % MAX_POSITIONS]!, false)) return false;
+    }
   }
-  return live.every((k) => Math.floor(k / n) === k % n);
+  return true;
 }
 
 /** The body of loop `t` when every alternative ends with a character nothing else in the body can match, or null. */
 function terminated(t: Term): Term[][] | null {
-  const alts = (t.node as GroupNode).alts;
+  let body = terminatedBodies.get(t);
+  if (body === undefined) {
+    body = terminatedBody((t.node as GroupNode).alts);
+    terminatedBodies.set(t, body);
+  }
+  return body;
+}
+
+function terminatedBody(alts: Term[][]): Term[][] | null {
   let end = NONE;
   for (const alt of alts) {
+    work(2);
     const last = alt[alt.length - 1];
     if (!last || last.node.kind !== 'char' || last.min !== 1 || last.max !== 1) return null;
     end = union(end, last.node.set);
   }
-  for (const alt of alts) for (const u of alt.slice(0, -1)) if (overlaps(u.chars, end)) return null;
+  for (const alt of alts) {
+    work(1 + alt.length);
+    for (const u of alt.slice(0, -1)) if (overlaps(u.chars, end)) return null;
+  }
   return unambiguous(alts) ? alts : null;
 }
 
@@ -681,12 +834,34 @@ interface Paths {
 const BIN: number[] = [1];
 for (let d = 1; d <= DEGREE + 1; d++) BIN.push((BIN[d - 1]! * (MAX_INPUT + d)) / d);
 
-const zero = (): Poly => new Array<number>(DEGREE + 1).fill(0);
-const unit = (): Poly => [1, ...new Array<number>(DEGREE).fill(0)];
-const add = (a: Poly, b: Poly): Poly => a.map((x, d) => x + b[d]!);
-const sub = (a: Poly, b: Poly): Poly => a.map((x, d) => x - b[d]!);
-const scale = (a: Poly, k: number): Poly => a.map((x) => x * k);
-const total = (a: Poly): number => a.reduce((s, x, d) => s + x * BIN[d]!, 0);
+// Plain loops: these run for every term of every path through the pattern.
+const ZERO: readonly number[] = new Array<number>(DEGREE + 1).fill(0);
+const zero = (): Poly => ZERO.slice();
+const unit = (): Poly => {
+  const p = zero();
+  p[0] = 1;
+  return p;
+};
+const add = (a: Poly, b: Poly): Poly => {
+  const r = a.slice();
+  for (let d = 0; d <= DEGREE; d++) r[d]! += b[d]!;
+  return r;
+};
+const sub = (a: Poly, b: Poly): Poly => {
+  const r = a.slice();
+  for (let d = 0; d <= DEGREE; d++) r[d]! -= b[d]!;
+  return r;
+};
+const scale = (a: Poly, k: number): Poly => {
+  const r = a.slice();
+  for (let d = 0; d <= DEGREE; d++) r[d]! *= k;
+  return r;
+};
+const total = (a: Poly): number => {
+  let s = 0;
+  for (let d = 0; d <= DEGREE; d++) s += a[d]! * BIN[d]!;
+  return s;
+};
 const none = (): Paths => ({ all: zero(), fresh: zero() });
 
 /**
@@ -699,8 +874,9 @@ const none = (): Paths => ({ all: zero(), fresh: zero() });
 function ends(p: Poly, spread: number, guarded = false, points = false): { out: Poly; moved: Poly } {
   const out = zero();
   const moved = zero();
-  p.forEach((c, d) => {
-    if (!c) return;
+  for (let d = 0; d <= DEGREE; d++) {
+    const c = p[d]!;
+    if (!c) continue;
     const factor = (spread + 1) * BIN[d]!;
     const point = d < DEGREE ? BIN[d + 1]! : Infinity;
     const shared = guarded && d > 0 ? 2 * (MAX_INPUT + 1) * BIN[d - 1]! : Infinity;
@@ -709,22 +885,30 @@ function ends(p: Poly, spread: number, guarded = false, points = false): { out: 
       out[d + 1]! += c;
       moved[d + 1]! += c;
     } else out[d]! += c * (spread + 1);
-  });
+  }
   return { out, moved };
 }
 
 /**
  * q[k - 1]: the smallest shift at which the first k characters of `run` could overlap
- * themselves (k if none). It never decreases with k.
+ * themselves (k if none). It never decreases with k. Past MAX_INPUT + 1 characters (more
+ * than a hostname) it is not computed but kept, which only makes the bound larger.
  */
 function periods(run: Chars[]): number[] {
   const out: number[] = [];
   let q = 1;
+  work(run.length);
   for (let k = 1; k <= run.length; k++) {
-    for (; q < k; q++) {
-      let fits = true;
-      for (let i = 0; i + q < k && fits; i++) fits = overlaps(run[i]!, run[i + q]!);
-      if (fits) break;
+    // q fits the first k - 1 characters (q = k - 1 always does), so only the new pair is
+    // checked for it; larger shifts are checked in full.
+    if (q < k && k <= MAX_INPUT + 1 && !overlaps(run[k - 1 - q]!, run[k - 1]!)) {
+      for (q++; q < k; q++) {
+        let fits = true;
+        let i = 0;
+        for (; i + q < k && fits; i++) fits = overlaps(run[i]!, run[i + q]!);
+        work(1 + i);
+        if (fits) break;
+      }
     }
     out.push(q);
   }
@@ -736,32 +920,39 @@ function located(f: Poly, q: number): { kept: Poly; used: Poly } {
   const kept = zero();
   const used = zero();
   const spots = MAX_INPUT / q + 1;
-  f.forEach((c, d) => {
+  for (let d = 0; d <= DEGREE; d++) {
+    const c = f[d]!;
     if (d > 0 && spots * BIN[d - 1]! < BIN[d]!) used[d - 1]! += c * spots;
     else kept[d]! += c;
-  });
+  }
   return { kept, used };
 }
 
 /** Whether a term matches a fixed number (at most 16) of characters from one set. */
 const isRun = (t: Term): t is Term & { node: CharNode } => t.node.kind === 'char' && t.min === t.max && t.min <= 16;
 
+// Lookaround bodies and terminated loop bodies are bounded on their own, from fixed inputs,
+// so the results are kept per node: a lookaround's steps without and with split points only
+// (see loopEntrySteps), and a loop's steps per entry or why it is refused.
+const lookSteps = new WeakMap<LookNode, [number?, number?]>();
+const loopEntries = new WeakMap<Term[][], number | Unsafe>();
+
 class Bound {
   cost = zero();
-  private work = 0;
   /** Always use split points (see loopEntrySteps). */
   private points = false;
 
   charge(p: Poly): void {
+    work(2 * POLY);
     this.cost = add(this.cost, p);
     if (total(this.cost) > MAX_STEPS) throw new Unsafe(TOO_MANY);
-    if (++this.work > MAX_WORK) throw new Unsafe('too complex to check');
   }
 
   /** Paths that come out of `alts`, given the paths `x` going in. */
   alternatives(alts: Term[][], x: Paths, after: Chars, afterSkip: number, prev: Chars): Paths {
     const out = none();
     for (const alt of alts) {
+      work(2 * POLY);
       const y = this.sequence(alt, x, after, afterSkip, prev);
       out.all = add(out.all, y.all);
       out.fresh = add(out.fresh, y.fresh);
@@ -779,6 +970,7 @@ class Bound {
       const run: Chars[] = [];
       const steps: number[] = [];
       for (let t = terms[i]; t && isRun(t); t = terms[++i]) {
+        work(1 + t.min);
         for (let k = 0; k < t.min; k++) {
           run.push(t.node.set);
           steps.push(t.size);
@@ -801,12 +993,29 @@ class Bound {
   private literal(run: Chars[], steps: number[], { all, fresh }: Paths): Paths {
     const stale = sub(all, fresh);
     const q = periods(run);
-    let cost = scale(add(stale, fresh), steps[0]!);
+    // Character k costs steps[k] for every stale path and for the fresh paths that matched the
+    // k before it, located(fresh, q[k - 1]). Summed per degree: `keep[d]` for the fresh paths
+    // of degree d that keep it, `drop[d]` for those that drop to d - 1 (see located).
+    let rest = 0;
+    const keep = zero();
+    const drop = zero();
+    work(2 * run.length);
     for (let k = 1; k < run.length; k++) {
-      // Fresh paths that get to character k matched the k before it.
-      const { kept, used } = located(fresh, q[k - 1]!);
-      cost = add(cost, scale(add(stale, add(kept, used)), steps[k]!));
+      const s = steps[k]!;
+      const spots = MAX_INPUT / q[k - 1]! + 1;
+      rest += s;
+      keep[0]! += s;
+      for (let d = 1; d <= DEGREE; d++) {
+        if (spots * BIN[d - 1]! < BIN[d]!) drop[d]! += s * spots;
+        else keep[d]! += s;
+      }
     }
+    const cost = add(scale(add(stale, fresh), steps[0]!), scale(stale, rest));
+    for (let d = 0; d <= DEGREE; d++) {
+      cost[d]! += fresh[d]! * keep[d]!;
+      if (d > 0) cost[d - 1]! += fresh[d]! * drop[d]!;
+    }
+    work(4 * POLY);
     this.charge(cost);
     const { kept, used } = located(fresh, q[run.length - 1]!);
     return { all: add(stale, add(kept, used)), fresh: kept };
@@ -824,11 +1033,16 @@ class Bound {
       case 'look': {
         // V8 matches a lookbehind backwards; only allow ones without choices of length.
         if (n.behind && !t.exact) throw new Unsafe('a lookbehind of variable length');
-        const outer = this.cost;
-        this.cost = zero();
-        this.alternatives(n.alts, { all: unit(), fresh: zero() }, NONE, 0, ANY);
-        const inner = total(this.cost);
-        this.cost = outer;
+        let memo = lookSteps.get(n);
+        if (!memo) lookSteps.set(n, (memo = []));
+        let inner = memo[+this.points];
+        if (inner === undefined) {
+          const outer = this.cost;
+          this.cost = zero();
+          this.alternatives(n.alts, { all: unit(), fresh: zero() }, NONE, 0, ANY);
+          inner = memo[+this.points] = total(this.cost);
+          this.cost = outer;
+        }
         this.charge(scale(x.all, 1 + inner));
         return x;
       }
@@ -853,6 +1067,7 @@ class Bound {
         const out = t.min === 0 ? { ...x } : none();
         const steps = skip + exit(t) + (t.max > 1 ? entry(t) : 0);
         let cur = x;
+        work(4 * POLY);
         for (let k = 1; k <= t.max; k++) {
           this.charge(scale(cur.all, entry(t)));
           cur = this.alternatives(n.alts, cur, after, steps, inPrev);
@@ -867,31 +1082,31 @@ class Bound {
     }
   }
 
-  /** A part that reaches each of its possible ends in at most one way (t.size steps per character). */
   /**
    * A part that reaches each of its possible ends in at most one way: t.size steps per
    * character, or `entrySteps` per entry for a loop that ends on a terminator.
    */
   private variable(t: Term, x: Paths, next: Chars, skip: number, prev: Chars, entrySteps?: number): Paths {
-    const work = entrySteps === undefined ? t.size : 0;
+    const perChar = entrySteps === undefined ? t.size : 0;
     if (t.minLen > MAX_INPUT) {
-      this.charge(scale(x.all, entrySteps ?? (MAX_INPUT + 1) * work));
+      this.charge(scale(x.all, entrySteps ?? (MAX_INPUT + 1) * perChar));
       return none();
     }
+    work(6 * POLY);
     const spread = Math.min(t.maxLen, MAX_INPUT) - t.minLen;
-    this.charge(scale(x.all, entrySteps ?? t.minLen * work)); // the characters it must match
+    this.charge(scale(x.all, entrySteps ?? t.minLen * perChar)); // the characters it must match
     if (overlaps(t.chars, next)) {
       // The next part can start inside this one: every end goes on. Fresh paths stay fresh;
       // the others become fresh where they get a new split point.
       const stale = ends(sub(x.all, x.fresh), spread, false, this.points);
       const fresh = ends(x.fresh, spread, false, this.points).out;
       const all = add(stale.out, fresh);
-      this.charge(scale(all, work));
+      this.charge(scale(all, perChar));
       return { all, fresh: add(stale.moved, fresh) };
     }
     // Only the end followed by a character this part cannot match goes on; the others fail
     // after `skip` more steps.
-    this.charge(scale(ends(x.all, spread, !overlaps(prev, t.chars), this.points).out, Math.max(work, 1) + skip));
+    this.charge(scale(ends(x.all, spread, !overlaps(prev, t.chars), this.points).out, Math.max(perChar, 1) + skip));
     return { all: x.all, fresh: zero() };
   }
 
@@ -902,33 +1117,39 @@ class Bound {
    * points only, and the smaller result is used.
    */
   private loopEntrySteps(body: Term[][]): number {
-    const outer = { cost: this.cost, points: this.points };
-    let best = Infinity;
-    let failure: unknown = null;
-    for (const points of [false, true]) {
-      this.cost = zero();
-      this.points = points;
+    let steps = loopEntries.get(body);
+    if (steps === undefined) {
+      const outer = { cost: this.cost, points: this.points };
+      let best = Infinity;
+      let failure: Unsafe | null = null;
       try {
-        this.alternatives(body, { all: unit(), fresh: zero() }, ANY, 0, ANY);
-        best = Math.min(best, total(this.cost) + (MAX_INPUT + 1) * this.cost.reduce((s, c) => s + c, 0));
-      } catch (e) {
-        failure = e;
+        for (const points of [false, true]) {
+          this.cost = zero();
+          this.points = points;
+          try {
+            this.alternatives(body, { all: unit(), fresh: zero() }, ANY, 0, ANY);
+            best = Math.min(best, total(this.cost) + (MAX_INPUT + 1) * this.cost.reduce((s, c) => s + c, 0));
+          } catch (e) {
+            if (!(e instanceof Unsafe)) throw e; // out of work, or a bug
+            failure = e;
+          }
+        }
+      } finally {
+        this.cost = outer.cost;
+        this.points = outer.points;
       }
+      steps = best === Infinity ? failure! : best;
+      loopEntries.set(body, steps);
     }
-    this.cost = outer.cost;
-    this.points = outer.points;
-    if (best === Infinity) throw failure;
-    return best;
+    if (steps instanceof Unsafe) throw steps;
+    return steps;
   }
 }
 
-/**
- * Why this pattern could take too long to match, or null if it looks safe.
- * The pattern must already compile with `new RegExp(source, 'i')`.
- */
-export function regexHazard(source: string): string | null {
-  if (source.length > MAX_REGEX_LENGTH) return `longer than ${MAX_REGEX_LENGTH} characters`;
+/** Why `source` could take too long to match, or null; throws OutOfWork past `allowed` units. */
+function analyze(source: string): string | null {
   try {
+    work(SETUP);
     const bound = new Bound();
     const start = [0, 1, ...zero().slice(2)]; // unanchored: every start position
     for (const alt of new Parser(source).parse()) {
@@ -944,4 +1165,78 @@ export function regexHazard(source: string): string | null {
     if (e instanceof Unsafe) return e.message;
     throw e;
   }
+}
+
+/**
+ * A remembered verdict, and the units its analysis used (more than MAX_ANALYSIS for one
+ * that was too complex to check).
+ */
+interface Verdict {
+  reason: string | null;
+  cost: number;
+}
+
+/** Verdicts by source, least recently used first. */
+const verdicts = new Map<string, Verdict>();
+
+export interface AnalysisBudget {
+  remaining: number;
+}
+
+/**
+ * A budget for checking many patterns in one go (one subscription file, one GeoSite category,
+ * one settings load); roughly `ms` of analysis in total.
+ */
+export function analysisBudget(ms: number): AnalysisBudget {
+  return { remaining: ms > 0 ? ms * UNITS_PER_MS : 0 };
+}
+
+/**
+ * Why this pattern could take too long to match, or null if it looks safe.
+ * The pattern must already compile with `new RegExp(source, 'i')`.
+ *
+ * The analysis stops at MAX_ANALYSIS units (the pattern is then too complex to check). With a
+ * `budget`, the units used are taken from it, and once it is spent the remaining patterns are
+ * refused without being analysed; that refusal depends on the batch, so it is not remembered.
+ * A remembered verdict is answered from memory: for free without a budget, and with one for
+ * the units its analysis used, exactly as if it were analysed again, so which patterns of a
+ * batch fit in its budget does not depend on what earlier checks remembered.
+ */
+export function regexHazard(source: string, budget?: AnalysisBudget): string | null {
+  if (source.length > MAX_REGEX_LENGTH) return `longer than ${MAX_REGEX_LENGTH} characters`;
+  const known = verdicts.get(source);
+  if (known !== undefined) {
+    verdicts.delete(source); // now the most recently used
+    verdicts.set(source, known);
+    if (!budget) return known.reason;
+  }
+  // `!(x > 0)` also catches NaN.
+  if (budget && !(budget.remaining > 0)) return SPENT;
+  const batch = budget !== undefined && budget.remaining < MAX_ANALYSIS;
+  allowed = batch ? budget.remaining : MAX_ANALYSIS;
+  if (known !== undefined) {
+    // Only reached with a budget: charged what analysing it again would use, which stops
+    // once it passes `allowed`.
+    budget!.remaining -= Math.min(known.cost, allowed);
+    return batch && known.cost > allowed ? SPENT : known.reason;
+  }
+  used = 0;
+  let verdict: string | null;
+  try {
+    verdict = analyze(source);
+  } catch (e) {
+    if (!(e instanceof OutOfWork)) throw e;
+    if (batch) return SPENT; // the budget is now spent (below)
+    verdict = COMPLEX;
+  } finally {
+    if (budget) budget.remaining -= Math.min(used, allowed);
+  }
+  if (verdicts.size >= MEMO_SIZE) verdicts.delete(verdicts.keys().next().value!);
+  verdicts.set(source, { reason: verdict, cost: used });
+  return verdict;
+}
+
+/** Forgets every remembered verdict (for tests and benchmarks). */
+export function clearRegexVerdicts(): void {
+  verdicts.clear();
 }
