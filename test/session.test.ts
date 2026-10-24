@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import type { DebuggerPort, Target } from '../src/background/cdp.js';
+import { CommandTimeoutError, type DebuggerPort, type Target } from '../src/background/cdp.js';
 import { SessionManager } from '../src/background/manager.js';
 import { TabSession, type TabContext } from '../src/background/tab-session.js';
 import { parseIp } from '../src/shared/ip.js';
@@ -529,6 +529,107 @@ describe('TabSession lifecycle', () => {
     const ctx2 = makeCtx(p2, settings);
     await new TabSession(2, ctx2).onCommitted({ url: GOOGLE, transitionType: 'typed', timeStamp: ctx2.now() });
     assert.deepEqual(ctx2.reloads, [], 'nothing would improve: no reload');
+  });
+
+  it('a command cut off during apply keeps the session and re-sends the field', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    port.failures.set('main:Emulation.setLocaleOverride', 'Detached while handling command.');
+    settings.rules[0]!.profile = makeProfile('en-GB');
+    await t.onSettingsChanged();
+    await flush();
+    assert.equal(t.status().session, 'attached', 'not treated as a detach');
+    assert.deepEqual(port.detachCalls, []);
+    assert.deepEqual(t.status().warnings, []);
+    port.failures.clear();
+    port.clear();
+    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
+    assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'en-GB' }, 'unknown field re-sent');
+    assert.equal(port.last('Emulation.setUserAgentOverride'), undefined, 'confirmed fields are not');
+  });
+
+  it('a lost session is detached in Chrome too, so turning spoofing off leaves nothing behind', async () => {
+    let active = true;
+    const ctx = makeCtx(port, settings, { active: () => active });
+    const t = new TabSession(1, ctx);
+    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
+    // A command reports "not attached" although Chrome still holds the session.
+    port.failures.set('main:Emulation.setLocaleOverride', 'Debugger is not attached to the tab with id: 1.');
+    settings.rules[0]!.profile = makeProfile('en-GB');
+    await t.onSettingsChanged();
+    await flush();
+    assert.equal(t.status().session, 'none');
+    assert.deepEqual(port.detachCalls, [1]);
+    assert.equal(port.attached.size, 0);
+    active = false;
+    await t.onSettingsChanged();
+    assert.equal(port.attached.size, 0);
+  });
+
+  it('an attach that timed out but completed later is still detached when spoofing is turned off', async () => {
+    let active = true;
+    const ctx = makeCtx(port, settings, { active: () => active });
+    port.attach = async (tabId) => {
+      port.attachCalls++;
+      port.attached.add(tabId); // Chrome finished the attach after the timeout
+      throw new CommandTimeoutError('attach');
+    };
+    const t = new TabSession(1, ctx);
+    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
+    assert.equal(t.status().session, 'failed');
+    assert.equal(t.holdsSession, true);
+    active = false;
+    await t.onSettingsChanged();
+    assert.deepEqual(port.detachCalls, [1]);
+    assert.equal(port.attached.size, 0);
+    assert.equal(t.holdsSession, false);
+  });
+
+  it('ignores answers from a session that has since ended', async () => {
+    const ctx = makeCtx(port, settings);
+    const t = new TabSession(1, ctx);
+    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
+    let reject!: (e: Error) => void;
+    const send = port.send.bind(port);
+    port.send = (async (target: Target, method: string, params?: object) => {
+      if (method === 'Emulation.setLocaleOverride') {
+        port.calls.push({ target, method, params: (params ?? {}) as Record<string, unknown> });
+        return new Promise((_, r) => (reject = r));
+      }
+      return send(target, method, params);
+    }) as FakePort['send'];
+    t.onRequestPaused(paused(APPLE, 'MAIN', {}, 'POST')); // best-effort apply, not queued
+    t.onDebuggerDetached('target_closed'); // the session ends with the command in flight
+    port.attached.clear();
+    port.send = send;
+    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' }); // a new session
+    assert.equal(t.status().session, 'attached');
+    reject(new Error('Debugger is not attached to the tab with id: 1.'));
+    await flush();
+    assert.equal(t.status().session, 'attached', 'the stale error does not end the new session');
+    assert.deepEqual(port.detachCalls, []);
+  });
+
+  it('records a failure when an adopted session cannot be set up, so it is not retried forever', async () => {
+    port.attached.add(1); // "already attached", but the session is not ours
+    port.failures.set('main:Fetch.enable', 'Debugger is not attached to the tab with id: 1.');
+    const t = new TabSession(1, makeCtx(port, settings));
+    for (let i = 0; i < 10; i++) {
+      await t.onCommitted({ url: GOOGLE });
+      port.attached.add(1);
+    }
+    assert.equal(port.attachCalls, 3);
+    assert.equal(t.status().session, 'failed');
+  });
+
+  it('reports the failed status after a session cannot be set up, so the badge is current', async () => {
+    port.failures.set('main:Fetch.enable', 'Debugger is not attached to the tab with id: 1.');
+    const ctx = makeCtx(port, settings);
+    const seen: string[] = [];
+    const t = new TabSession(1, ctx);
+    ctx.changed = () => seen.push(t.status().session);
+    await t.onCommitted({ url: GOOGLE });
+    assert.equal(t.status().session, 'failed');
+    assert.equal(seen.at(-1), 'failed', 'the last change notification carries the failed status');
   });
 
   it('a failed navigation reverts to the committed page’s profile', async () => {

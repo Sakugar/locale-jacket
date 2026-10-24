@@ -14,7 +14,7 @@
 // commit). chrome.debugger delivers commands to a session in order, so sending
 // them before Fetch.continueRequest is what guarantees they apply first.
 
-import { isDetachedError, isProcessLockError, isUnsupportedError, protocolMessage, type DebuggerPort, type Target } from './cdp.js';
+import { isCommandCutOff, isDetachedError, isProcessLockError, isUnsupportedError, protocolMessage, type DebuggerPort, type Target } from './cdp.js';
 import { t, type MessageKey } from '../shared/i18n.js';
 import type { LocaleProfile } from '../shared/types.js';
 
@@ -119,7 +119,11 @@ export function applyState(port: DebuggerPort, target: Target, current: AppliedS
     for (const { field, value, error } of outcomes) {
       if (error === undefined) continue;
       const [method] = commandFor(field, value);
-      if (isDetachedError(error)) {
+      if (isCommandCutOff(error)) {
+        // Cut off by a renderer swap: the session stays, the outcome is unknown, so the
+        // field is re-sent next time. (A session that really ended fires onDetach.)
+        result.failed.push({ field, value });
+      } else if (isDetachedError(error)) {
         result.detached = true;
       } else if (isProcessLockError(error)) {
         // Another session in the same renderer process (another tab, DevTools, or a

@@ -116,7 +116,8 @@ export class SessionManager {
   }
 
   async detachAll(reason: string): Promise<number> {
-    const attached = [...this.tabs.values()].filter((t) => t.isAttached);
+    // Includes sessions Chrome may hold that the tab does not count as attached.
+    const attached = [...this.tabs.values()].filter((t) => t.holdsSession);
     await Promise.all(attached.map((t) => t.detach(reason)));
     return attached.length;
   }

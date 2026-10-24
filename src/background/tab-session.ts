@@ -19,13 +19,14 @@
 // Attach/detach transitions and bookkeeping run in a per-tab serial queue.
 
 import {
+  CommandTimeoutError,
   errorMessage,
   withTimeout,
   isAlreadyAttachedError,
   isAttachableUrl,
-  isCommandCutOff,
   isDetachedError,
   isRestrictedError,
+  isSessionGone,
   type DebuggerPort,
 } from './cdp.js';
 import { applyState, CLEAN_STATE, desiredFor, fixAcceptLanguage, UNKNOWN_STATE, type AppliedState, type TargetKind } from './overrides.js';
@@ -171,6 +172,13 @@ export class TabSession {
   /** Last main-frame navigation start reported by Page.frameStartedNavigating (tells history traversals apart). */
   private lastStart: { url: string; type: string } | null = null;
   private attachFailures: number[] = [];
+  /**
+   * Chrome may hold a session for this tab although `state` is 'detached' (an attach
+   * that timed out can still complete). Detach paths must not skip such a session.
+   */
+  private mayHoldSession = false;
+  /** Bumped whenever the session ends; answers from an older session are ignored. */
+  private generation = 0;
   private closed = false;
   private readonly queue = new SerialQueue();
 
@@ -211,6 +219,7 @@ export class TabSession {
   }
 
   private resetSessionState(): void {
+    this.generation++;
     this.state = 'detached';
     this.mainFrameId = null;
     this.mainState = CLEAN_STATE;
@@ -225,9 +234,21 @@ export class TabSession {
   private lostSession(where: string): void {
     if (this.state === 'detached') return;
     this.log('warn', `Debugger session lost during ${where}.`);
+    // A command saying "not attached" does not prove Chrome let go of the session (Fetch,
+    // auto-attach and overrides would stay in place), so end it on our side as well.
+    this.releaseSession();
     this.resetSessionState();
     this.sessionStatus = 'none';
     this.ctx.changed(this.tabId);
+  }
+
+  /**
+   * Best-effort detach, not awaited. chrome.debugger.detach is called synchronously, so it
+   * reaches Chrome before any later attach and cannot end a newer session.
+   */
+  private releaseSession(): void {
+    this.mayHoldSession = false;
+    void this.ctx.port.detach(this.tabId).catch(() => undefined);
   }
 
   // ---------------------------------------------------------------- attach
@@ -249,6 +270,8 @@ export class TabSession {
 
     this.state = 'attaching';
     this.sessionStatus = 'attaching';
+    this.mayHoldSession = true;
+    const gen = this.generation;
     let adopted = false;
     try {
       await this.ctx.port.attach(this.tabId);
@@ -258,6 +281,8 @@ export class TabSession {
         adopted = true;
       } else {
         this.state = 'detached';
+        // An attach that timed out may still complete in Chrome.
+        this.mayHoldSession = e instanceof CommandTimeoutError;
         this.error = errorMessage(e);
         if (isRestrictedError(e)) {
           this.sessionStatus = 'restricted';
@@ -278,14 +303,16 @@ export class TabSession {
     // pending; the renderer-side Page commands below may wait for that commit.
     this.mainFrameId = await this.ctx.port.targetIdForTab(this.tabId).catch(() => null);
     if (this.closed) {
+      this.mayHoldSession = false;
       await this.ctx.port.detach(this.tabId).catch(() => undefined);
       this.resetSessionState();
       return false;
     }
+    // Chrome ended the session meanwhile; onDebuggerDetached recorded why.
+    if (gen !== this.generation) return false;
     this.state = 'attached';
     this.sessionStatus = 'attached';
     this.error = null;
-    this.attachFailures = [];
     this.mainState = adopted ? { ...UNKNOWN_STATE } : { ...CLEAN_STATE };
     this.appliedKey = null;
     try {
@@ -296,13 +323,22 @@ export class TabSession {
       }
       await send(t, 'Target.setAutoAttach', AUTO_ATTACH_PARAMS);
     } catch (e) {
-      if (isDetachedError(e)) {
+      if (isSessionGone(e)) {
+        if (gen !== this.generation) return false;
         this.lostSession('setup');
+        // Counts as a failed attach, so a session that cannot be set up (e.g. an "already
+        // attached" one that belongs to another client) is not retried forever.
+        this.attachFailures.push(now);
+        this.sessionStatus = 'failed';
+        this.error = errorMessage(e);
+        // lostSession reported the status before it became 'failed'; refresh the badge.
+        this.ctx.changed(this.tabId);
         return false;
       }
       // Overrides still work without the gate or auto-attach; report it.
       this.log('warn', `Navigation gate / frame auto-attach unavailable: ${errorMessage(e)}`);
     }
+    this.attachFailures = [];
     if (!this.mainFrameId) {
       void send<{ frameTree: { frame: { id: string } } }>(t, 'Page.getFrameTree')
         .then((tree) => {
@@ -321,7 +357,8 @@ export class TabSession {
   }
 
   private async detachInternal(reason: string): Promise<void> {
-    if (this.state === 'detached') return;
+    if (this.state === 'detached' && !this.mayHoldSession) return;
+    this.mayHoldSession = false;
     await this.ctx.port.detach(this.tabId).catch(() => undefined);
     this.resetSessionState();
     this.sessionStatus = 'none';
@@ -342,7 +379,9 @@ export class TabSession {
     this.appliedKey = profileKey(res.profile);
     const childrenDone = withChildren ? this.applyChildren() : Promise.resolve();
     if (!ticket.sent) return childrenDone;
+    const gen = this.generation;
     const done = ticket.done.then((r) => {
+      if (gen !== this.generation) return; // an answer from a session that has since ended
       if (r.detached) return this.lostSession('apply');
       for (const f of r.failed) {
         if (this.mainState[f.field] === f.value) {
@@ -375,7 +414,9 @@ export class TabSession {
     const ticket = applyState(this.ctx.port, { tabId: this.tabId, sessionId: child.sessionId }, child.state, desiredFor(profile, kind), kind);
     child.state = ticket.state;
     if (!ticket.sent) return Promise.resolve();
+    const gen = this.generation;
     return ticket.done.then((r) => {
+      if (gen !== this.generation) return;
       if (r.detached) {
         this.children.delete(child.sessionId);
         return;
@@ -463,7 +504,7 @@ export class TabSession {
       await this.ctx.port.send(t, 'Page.stopLoading');
     } catch (e) {
       giveBack();
-      if (isDetachedError(e) && !isCommandCutOff(e)) {
+      if (isSessionGone(e)) {
         this.log('debug', `Page.stopLoading: ${errorMessage(e)}`);
         this.lostSession('restart');
       } else {
@@ -762,6 +803,8 @@ export class TabSession {
         await this.applyMain(res, true);
         this.markLate(res.action === 'PROFILE' ? t('bg.late.alreadyLoaded') : null, null);
       } else if (!this.needsSession(res)) {
+        // A session Chrome may still hold (an attach that timed out) must go too.
+        if (this.mayHoldSession) await this.detachInternal(this.ctx.spoofingActive() ? 'not needed on this site' : 'spoofing turned off');
         this.sessionStatus = 'none';
         this.markLate(null, null);
       }
@@ -822,6 +865,7 @@ export class TabSession {
 
   /** chrome.debugger.onDetach: Chrome ended the session. */
   onDebuggerDetached(reason: string): void {
+    this.mayHoldSession = false;
     this.resetSessionState();
     this.sessionStatus = 'none';
     this.error = reason === 'canceled_by_user' ? null : `Chrome ended the debugging session (${reason}).`;
@@ -838,7 +882,7 @@ export class TabSession {
 
   close(): void {
     this.closed = true;
-    if (this.state !== 'detached') void this.ctx.port.detach(this.tabId).catch(() => undefined);
+    if (this.state !== 'detached' || this.mayHoldSession) this.releaseSession();
     this.resetSessionState();
   }
 
@@ -921,5 +965,10 @@ export class TabSession {
 
   get isAttached(): boolean {
     return this.state === 'attached';
+  }
+
+  /** Chrome may hold a debugger session for this tab (attached, attaching, or unconfirmed). */
+  get holdsSession(): boolean {
+    return this.state !== 'detached' || this.mayHoldSession;
   }
 }

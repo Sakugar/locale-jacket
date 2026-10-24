@@ -79,16 +79,29 @@ export function protocolMessage(e: unknown): string {
   return m;
 }
 
-/** The session is gone (tab closed, navigated to a restricted page, user cancelled). */
+/**
+ * The command failed because the session is gone (tab closed, navigated to a restricted
+ * page, user cancelled) or was cut off (see isCommandCutOff). Good for quieting logs; use
+ * isSessionGone to decide whether the session was lost.
+ */
 export function isDetachedError(e: unknown): boolean {
   return /not attached|Detached while handling command|No tab with given id|Target closed|No target with given id|Session with given id not found/i.test(
     errorMessage(e),
   );
 }
 
-/** A command cut off by a renderer swap; the session itself is still attached. */
+/**
+ * A command cut off by a renderer swap; the session itself is still attached. Chrome uses
+ * the same text when the session really ends, but then it also fires
+ * chrome.debugger.onDetach, so that event (not this error) decides.
+ */
 export function isCommandCutOff(e: unknown): boolean {
   return /Detached while handling command/i.test(errorMessage(e));
+}
+
+/** The session itself is gone, not just one command cut off. */
+export function isSessionGone(e: unknown): boolean {
+  return isDetachedError(e) && !isCommandCutOff(e);
 }
 
 export function isAlreadyAttachedError(e: unknown): boolean {
