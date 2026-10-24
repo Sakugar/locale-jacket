@@ -4,7 +4,9 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 
 ## [Unreleased]
 
-Security follow-up to 1.3.1.
+## [1.3.3] - 2026-10-24
+
+**Hotfix**: security follow-up to 1.3.1.
 
 ### Security
 - **The regex check from 1.3.1 could be bypassed.** Inline modifier groups such as `(?i:a+)+$` were misread, and chains of repetitions outside a repeated group (`.*.*.*.*!`, eight `\w{0,9}` in a row) were never checked. Such a `DOMAIN-REGEX` rule or GeoSite `regexp:` entry, from a subscription or a data set, could still stall every spoofed tab for seconds to minutes. The check is rewritten:
@@ -184,7 +186,8 @@ Security follow-up to 1.3.1.
 - The `Intl` locale is per renderer process, so a conflicting profile in a shared process is reported as *Partial*.
 - Service workers, shared workers and restricted pages are not spoofed. POST navigations that change profile are flagged *Reload needed*.
 
-[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.3.2...HEAD
+[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/Sakugar/locale-jacket/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/Sakugar/locale-jacket/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Sakugar/locale-jacket/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Sakugar/locale-jacket/compare/v1.2.2...v1.3.0

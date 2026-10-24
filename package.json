@@ -1,6 +1,6 @@
 {
   "name": "locale-jacket",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "private": true,
   "description": "Chrome/Edge MV3 extension: per-domain browser locale spoofing via the Chrome DevTools Protocol.",
   "type": "module",
