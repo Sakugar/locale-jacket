@@ -21,8 +21,12 @@ export function validateDataset(kind: DatasetKind, data: ArrayBuffer | Uint8Arra
   }
   const reader = new MmdbReader(data);
   const m = reader.metadata;
-  const built = Number.isFinite(m.build_epoch) ? new Date(m.build_epoch * 1000).toISOString().slice(0, 10) : 'unknown date';
-  const probe = reader.lookup(parseIp('8.8.8.8')!).record;
+  const date = new Date(typeof m.build_epoch === 'number' ? m.build_epoch * 1000 : NaN);
+  const built = Number.isNaN(date.getTime()) ? 'unknown date' : date.toISOString().slice(0, 10);
+  // Strict lookups, so a corrupt file is refused here instead of reading as "no match" later.
+  // The extra probes only check that those records decode.
+  const probe = reader.lookupStrict(parseIp('8.8.8.8')!).record;
+  for (const extra of ['1.1.1.1', '2001:4860:4860::8888']) reader.lookupStrict(parseIp(extra)!);
   if (kind === 'geoip' && !countryOf(probe) && !/country|geo/i.test(m.database_type)) {
     throw new Error(`This looks like a "${m.database_type}" database, not a country database.`);
   }

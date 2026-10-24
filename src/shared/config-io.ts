@@ -575,20 +575,39 @@ export function sanitizeStoredSettings(raw: unknown, fallback: Settings): { sett
     if (rule) rules.push(rule);
     else problems.push(`Stored rule #${i + 1} was invalid and has been skipped: ${one.errors.join(' ')}`);
   });
-  const res = importConfigObject(
-    {
-      enabled: raw.enabled,
-      rules: [],
-      default: isRecord(raw.defaultAction)
-        ? raw.defaultAction.action === 'PROFILE'
-          ? { mode: 'PROFILE', profile: raw.defaultAction.profile }
-          : { mode: 'SYSTEM' }
-        : undefined,
-      options: raw.options,
-      ...(Array.isArray(raw.subscriptions) ? { subscriptions: raw.subscriptions } : {}),
-    },
-    fallback,
-  );
-  if (!res.settings) return { settings: { ...fallback, rules }, problems: [...problems, ...res.errors] };
-  return { settings: { ...res.settings, rules }, problems };
+  // Each section is checked on its own, so one bad value (say, an option from another
+  // version) resets only itself and never the rest of the user's settings.
+  let enabled = fallback.enabled;
+  if (typeof raw.enabled === 'boolean') enabled = raw.enabled;
+  else if (raw.enabled !== undefined) problems.push('Stored "enabled" switch was invalid and has been reset.');
+
+  let defaultAction = fallback.defaultAction;
+  const d = raw.defaultAction;
+  if (d !== undefined) {
+    const parsed =
+      isRecord(d) && d.action === 'SYSTEM'
+        ? parseDefault({ mode: 'SYSTEM' })
+        : isRecord(d) && d.action === 'PROFILE'
+          ? parseDefault({ mode: 'PROFILE', profile: d.profile })
+          : { value: null, errors: ['the action must be SYSTEM or PROFILE.'] };
+    if (parsed.value) defaultAction = parsed.value;
+    else problems.push(`Stored default action was invalid and has been reset: ${parsed.errors.join(' ')}`);
+  }
+
+  // parseOptions keeps every valid field and leaves invalid ones at the fallback value.
+  const optionErrors: string[] = [];
+  const options = parseOptions(raw.options, fallback.options, optionErrors);
+  for (const e of optionErrors) problems.push(`Stored option was invalid and has been reset: ${e}`);
+
+  let subscriptions = fallback.subscriptions;
+  if (Array.isArray(raw.subscriptions)) {
+    // parseSubscriptions skips invalid entries and fills invalid fields with defaults.
+    const subErrors: string[] = [];
+    subscriptions = parseSubscriptions(raw.subscriptions, subErrors).slice(0, MAX_SUBSCRIPTIONS);
+    for (const e of subErrors) problems.push(`Stored subscription was invalid and has been reset or skipped: ${e}`);
+  } else if (raw.subscriptions !== undefined) {
+    problems.push('Stored subscriptions were not a list and have been reset.');
+  }
+
+  return { settings: { schemaVersion: 1, enabled, rules, subscriptions, defaultAction, options }, problems };
 }
