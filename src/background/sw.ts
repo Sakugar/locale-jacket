@@ -17,7 +17,7 @@
 import { chromeDebuggerPort, errorMessage } from './cdp.js';
 import { SessionManager, spoofingPossible } from './manager.js';
 import { importConfigText, sanitizeStoredSettings } from '../shared/config-io.js';
-import { compileDnrRules } from '../shared/dnr.js';
+import { compileDnrRules, dropUnsupportedRegex } from '../shared/dnr.js';
 import { DatasetRuntime } from './datasets.js';
 import { DatasetUpdater } from './dataset-updater.js';
 import { downloadDataset } from '../shared/dataset-download.js';
@@ -43,7 +43,10 @@ import {
   datasetDownloadDue,
   datasetsToDownload,
   fetchSubscription,
+  markUnsaved,
   rawUrl,
+  revertUnsaved,
+  staleDatasetRecords,
   SUBSCRIPTION_DATASET_STATE_KEY,
   SUBSCRIPTION_DATA_KEY,
   subscriptionDue,
@@ -121,21 +124,49 @@ async function loadSettings(): Promise<Settings> {
 
 // ------------------------------------------------------------------ DNR sync
 
+/** isRegexSupported answers depend only on the pattern; remembered for this worker's life. */
+const dnrRegexVerdicts = new Map<string, { isSupported: boolean; reason?: string }>();
+async function checkDnrRegex(regex: string): Promise<{ isSupported: boolean; reason?: string }> {
+  const known = dnrRegexVerdicts.get(regex);
+  if (known) return known;
+  if (typeof chrome.declarativeNetRequest.isRegexSupported !== 'function') return { isSupported: true };
+  const v = await chrome.declarativeNetRequest.isRegexSupported({ regex, isCaseSensitive: false });
+  if (dnrRegexVerdicts.size > 5000) dnrRegexVerdicts.clear();
+  dnrRegexVerdicts.set(regex, { isSupported: v.isSupported, ...(v.reason ? { reason: v.reason } : {}) });
+  return dnrRegexVerdicts.get(regex)!;
+}
+
 let dnrChain: Promise<void> = Promise.resolve();
 function syncDnr(settings: Settings, suspended: boolean): Promise<void> {
   dnrChain = dnrChain.then(async () => {
     try {
       const existing = await chrome.declarativeNetRequest.getDynamicRules();
       const want = settings.options.dnrHeaders && !suspended && spoofingPossible(settings);
-      const compiled = want ? compileDnrRules(settings, { geosite: (v) => datasets.context(null).geosite?.(v) }) : { rules: [], skipped: [] };
-      await chrome.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds: existing.map((r) => r.id),
-        addRules: compiled.rules as unknown as chrome.declarativeNetRequest.Rule[],
-      });
-      dnrState.active = want;
-      dnrState.ruleCount = compiled.rules.length;
+      const compiled = want
+        ? await dropUnsupportedRegex(compileDnrRules(settings, { geosite: (v) => datasets.context(null).geosite?.(v) }), checkDnrRegex)
+        : { rules: [], sources: [], skipped: [] };
       dnrState.skipped = compiled.skipped.map((s) => `${s.rule.type},${s.rule.value}: ${s.reason}`);
-      dnrState.error = null;
+      try {
+        await chrome.declarativeNetRequest.updateDynamicRules({
+          removeRuleIds: existing.map((r) => r.id),
+          addRules: compiled.rules as unknown as chrome.declarativeNetRequest.Rule[],
+        });
+        dnrState.active = want;
+        dnrState.ruleCount = compiled.rules.length;
+        dnrState.error = null;
+      } catch (e) {
+        // Chrome rejects the whole update for one bad rule and keeps the old ones, which
+        // would go on setting headers for rules that changed. Remove them on their own.
+        dnrState.active = false;
+        dnrState.ruleCount = 0;
+        dnrState.error = errorMessage(e);
+        log({ t: Date.now(), level: 'error', tabId: null, msg: `declarativeNetRequest update failed: ${dnrState.error}` });
+        if (existing.length) {
+          await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: existing.map((r) => r.id) }).catch((e2) => {
+            log({ t: Date.now(), level: 'error', tabId: null, msg: `Removing the previous declarativeNetRequest rules failed: ${errorMessage(e2)}` });
+          });
+        }
+      }
     } catch (e) {
       dnrState.error = errorMessage(e);
       log({ t: Date.now(), level: 'error', tabId: null, msg: `declarativeNetRequest update failed: ${dnrState.error}` });
@@ -231,11 +262,8 @@ let startedAt: number | null = null;
 
 /** Re-read the data sets after they were downloaded, replaced or deleted. */
 async function reloadDatasets(m: SessionManager): Promise<void> {
-  datasets.reset();
-  await datasets.ensure(requiredDatasets(m.currentSettings.rules));
-  await m.updateSettings(m.currentSettings);
-  await syncDnr(m.currentSettings, m.isSuspended);
-  await refreshGlobalBadge();
+  // Through the settings chain, so it cannot re-apply settings that a newer save replaced.
+  await applySettings(m, ownSettings!, { resetDatasets: true });
 }
 
 const updater = new DatasetUpdater({
@@ -286,15 +314,27 @@ async function loadSubscriptionData(): Promise<SubscriptionDataMap> {
   return ((await chrome.storage.local.get(SUBSCRIPTION_DATA_KEY))[SUBSCRIPTION_DATA_KEY] as SubscriptionDataMap | undefined) ?? {};
 }
 
-/** Apply settings (or new subscription rules) everywhere: data sets, IP watcher, tabs, DNR, badge. */
-async function applySettings(m: SessionManager, own: Settings): Promise<Settings> {
-  const s = withSubscriptions(own, subscriptionData);
-  await datasets.ensure(requiredDatasets(s.rules));
-  syncIpWatcher(s);
-  await m.updateSettings(s);
-  await syncDnr(s, m.isSuspended);
-  await refreshGlobalBadge();
-  return s;
+let applyChain: Promise<unknown> = Promise.resolve();
+
+/**
+ * Apply settings (or new subscription rules) everywhere: data sets, IP watcher, tabs, DNR, badge.
+ * Calls run one at a time, and each applies the settings current when it runs (`ownSettings`
+ * and `subscriptionData`; `own` only before they are loaded), so an older call never applies
+ * last. `resetDatasets` re-reads the data sets first (after a download, replace or delete).
+ */
+function applySettings(m: SessionManager, own: Settings, opts: { resetDatasets?: boolean } = {}): Promise<Settings> {
+  const run = applyChain.then(async () => {
+    if (opts.resetDatasets) datasets.reset();
+    const s = withSubscriptions(ownSettings ?? own, subscriptionData);
+    await datasets.ensure(requiredDatasets(s.rules));
+    syncIpWatcher(s);
+    await m.updateSettings(s);
+    await syncDnr(s, m.isSuspended);
+    await refreshGlobalBadge();
+    return s;
+  });
+  applyChain = run.catch(() => undefined);
+  return run;
 }
 
 let subscriptionRuns: Promise<unknown> = Promise.resolve();
@@ -306,10 +346,37 @@ function runSubscriptions(trigger: SubscriptionTrigger, ids?: string[]): Promise
   return run;
 }
 
+/** For runs nobody awaits: a rejection is logged instead of going unhandled. */
+function subscriptionRunFailed(e: unknown): void {
+  log({ t: Date.now(), level: 'error', tabId: null, msg: `Subscription update failed: ${errorMessage(e)}` });
+}
+
 async function updateSubscriptions(trigger: SubscriptionTrigger, ids?: string[]): Promise<SubscriptionOutcome[]> {
   const m = await ready;
   const own = ownSettings!;
-  const persist = () => chrome.storage.local.set({ [SUBSCRIPTION_DATA_KEY]: subscriptionData });
+  // What storage holds (entries are replaced, never changed in place, so a shallow copy is a snapshot).
+  let stored: SubscriptionDataMap = { ...subscriptionData };
+  const persist = async (): Promise<void> => {
+    const write = () => chrome.storage.local.set({ [SUBSCRIPTION_DATA_KEY]: subscriptionData });
+    try {
+      await write();
+    } catch (e) {
+      // Usually the 10 MB quota of chrome.storage.local. Keep what storage has, and say why.
+      const error = `Could not save the subscription data (${errorMessage(e)}); the previous rules stay in use.`;
+      log({ t: Date.now(), level: 'error', tabId: null, msg: error });
+      const ids = revertUnsaved(subscriptionData, stored, error);
+      try {
+        await write();
+      } catch {
+        // Not even that fits: keep memory equal to what storage has, but keep the
+        // reverted entries marked as failed so the run does not report them as updated.
+        const reverted: SubscriptionDataMap = Object.fromEntries(ids.map((id) => [id, subscriptionData[id]!]));
+        subscriptionData = await loadSubscriptionData().catch(() => ({ ...stored }));
+        markUnsaved(subscriptionData, reverted, error);
+      }
+    }
+    stored = { ...subscriptionData };
+  };
   let rulesChanged = false;
   // Forget what was fetched for subscriptions that were removed.
   for (const id of Object.keys(subscriptionData)) {
@@ -336,7 +403,8 @@ async function updateSubscriptions(trigger: SubscriptionTrigger, ids?: string[])
     try {
       const r = await fetchSubscription(sub, base.fetchedAt !== undefined ? base : undefined);
       if (r.status === 'unchanged') {
-        const { error: _old, ...rest } = subscriptionData[sub.id]!;
+        // The entry can be missing if the attempt time could not be saved for a new subscription.
+        const { error: _old, ...rest } = subscriptionData[sub.id] ?? base;
         subscriptionData[sub.id] = { ...rest, fetchedAt: Date.now() };
         outcomes.push({ id: sub.id, result: 'unchanged', count: rest.rules.length });
         info(`Subscription "${name}" is unchanged.`);
@@ -348,12 +416,17 @@ async function updateSubscriptions(trigger: SubscriptionTrigger, ids?: string[])
       }
     } catch (e) {
       const error = errorMessage(e);
-      subscriptionData[sub.id] = { ...subscriptionData[sub.id]!, error };
+      subscriptionData[sub.id] = { ...(subscriptionData[sub.id] ?? base), error };
       outcomes.push({ id: sub.id, result: 'failed', error });
       log({ t: Date.now(), level: 'warn', tabId: null, msg: `Subscription "${name}" failed: ${error}` });
     }
   }
   await persist();
+  // A fetch whose result could not be saved was reverted with an error: report it as failed.
+  for (const o of outcomes) {
+    const error = subscriptionData[o.id]?.error;
+    if (error && (o.result === 'updated' || o.result === 'unchanged')) Object.assign(o, { result: 'failed', error });
+  }
   if (rulesChanged && ownSettings) await applySettings(m, ownSettings);
   await downloadSubscriptionDatasets(m);
   return outcomes;
@@ -369,8 +442,13 @@ async function downloadSubscriptionDatasets(m: SessionManager): Promise<void> {
   if (!own?.options.subscriptionDatasets) return;
   const installed = (await listDatasets()).map((x) => x.kind);
   const todo = datasetsToDownload(own, subscriptionData, installed);
-  if (!todo.length) return;
   const state = ((await chrome.storage.local.get(SUBSCRIPTION_DATASET_STATE_KEY))[SUBSCRIPTION_DATASET_STATE_KEY] as SubscriptionDatasetState | undefined) ?? {};
+  // A data set you deleted is not downloaded again while its record stays; the record goes
+  // once no enabled subscription needs that data set, so a later one that does gets it again.
+  const stale = staleDatasetRecords(own, subscriptionData, state);
+  for (const kind of stale) delete state[kind];
+  if (stale.length) await chrome.storage.local.set({ [SUBSCRIPTION_DATASET_STATE_KEY]: state });
+  if (!todo.length) return;
   let saved = false;
   for (const job of todo) {
     if (!datasetDownloadDue(state[job.kind], job.url, Date.now())) continue;
@@ -478,7 +556,7 @@ const initialized: Promise<SessionManager> = ready.then(async (m) => {
   await syncUpdateAlarm(settings).catch((e) => log({ t: Date.now(), level: 'warn', tabId: null, msg: `Update alarm: ${errorMessage(e)}` }));
   info(`Service worker ready (${settings.rules.length} rules, ${settings.enabled ? 'enabled' : 'disabled'}${m.isSuspended ? ', paused' : ''}).`);
   // Fetch subscriptions that have no rules yet (for example added by an import while the worker slept).
-  void runSubscriptions('changed');
+  runSubscriptions('changed').catch(subscriptionRunFailed);
   return m;
 });
 
@@ -543,8 +621,11 @@ chrome.debugger.onDetach.addListener((source, reason) =>
       // The user dismissed Chrome's "started debugging this browser" banner. Respect it:
       // stop spoofing until they resume from the popup. No automatic re-attach.
       info('Debugging was canceled from Chrome’s banner; spoofing paused.');
+      // suspend() marks the manager suspended synchronously, so a navigation while the
+      // flag is being stored cannot attach again and bring the banner back.
+      const detached = m.suspend();
       await chrome.storage.session.set({ [SUSPENDED_KEY]: true });
-      await m.suspend();
+      await detached;
       await syncDnr(m.currentSettings, true);
       await refreshGlobalBadge();
     }
@@ -562,7 +643,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     await syncUpdateAlarm(settings).catch(() => undefined);
     info(`Settings updated (${settings.rules.length} rules, ${settings.enabled ? 'enabled' : 'disabled'}).`);
     // A subscription that was just added, or whose URL changed, is fetched right away.
-    void runSubscriptions('changed');
+    runSubscriptions('changed').catch(subscriptionRunFailed);
   });
 });
 
@@ -616,6 +697,17 @@ function testHost(m: SessionManager, input: string, ipInput?: string): HostTest 
   };
 }
 
+/** The locale a tab without a debugger session should report; null = whatever is native (spoofing off or paused). */
+async function expectedLocale(m: SessionManager, tabId: number): Promise<string | null> {
+  if (m.isSuspended || !spoofingPossible(m.currentSettings)) return null;
+  const status = m.status(tabId);
+  if (status) return status.resolution.profile?.locale ?? null;
+  // Not tracked yet: resolve its URL with the current rules.
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const host = hostFromUrl(tab?.url ?? '');
+  return resolveHost(host, m.currentSettings, datasets.context(host ? ipCache.get(host) : null)).profile?.locale ?? null;
+}
+
 chrome.runtime.onMessage.addListener((msg: Request, sender, sendResponse) => {
   // Only our own extension pages may talk to the worker.
   if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(''))) return false;
@@ -630,7 +722,7 @@ chrome.runtime.onMessage.addListener((msg: Request, sender, sendResponse) => {
           const r = await m.verify(msg.tabId);
           if (r.attached) return r;
           // No debugger session (e.g. a site left at the system language): read the live values another way.
-          return verifyWithScripting(msg.tabId, m.status(msg.tabId)?.resolution.profile?.locale ?? null);
+          return verifyWithScripting(msg.tabId, await expectedLocale(m, msg.tabId));
         }
         case 'reloadTab':
           await chrome.tabs.reload(msg.tabId);

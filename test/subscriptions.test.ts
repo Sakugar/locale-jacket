@@ -4,16 +4,19 @@ import { exportConfig, importConfigText, MAX_SUBSCRIPTIONS, sanitizeStoredSettin
 import { DATASETS } from '../src/shared/dataset-store.js';
 import { makeProfile } from '../src/shared/locale.js';
 import { defaultSettings } from '../src/shared/presets.js';
-import { compileDnrRules } from '../src/shared/dnr.js';
+import { compileDnrRules, dropUnsupportedRegex } from '../src/shared/dnr.js';
 import type { GeositeList } from '../src/shared/geosite.js';
 import { parseIp } from '../src/shared/ip.js';
-import { precedenceTier, resolveHost, rulesInPrecedenceOrder, ruleLabel } from '../src/shared/rules.js';
+import { normalizeRuleValue, precedenceTier, resolveHost, rulesInPrecedenceOrder, ruleLabel } from '../src/shared/rules.js';
 import {
   datasetDownloadDue,
   datasetsToDownload,
   fetchSubscription,
+  markUnsaved,
   parseSubscription,
   rawUrl,
+  revertUnsaved,
+  staleDatasetRecords,
   subscriptionDue,
   withSubscriptions,
   type SubscriptionData,
@@ -170,6 +173,67 @@ describe('fetchSubscription', () => {
     await assert.rejects(fetchSubscription(s, undefined, respond(404, 'Not Found').fn), /private GitHub repository/);
     await assert.rejects(fetchSubscription(s, undefined, respond(200, '<!doctype html><title>x</title>', { 'content-type': 'text/html' }).fn), /web page/);
   });
+
+  it('caps the size in bytes, also without content-length', async () => {
+    const stream = (text: string) => (async () => new Response(new Blob([text]).stream())) as typeof fetch;
+    const rules = 'rules:\n  - DOMAIN-SUFFIX,a.example,en-US\n';
+    // 60 characters but 120 bytes: a character count would let it through.
+    const wide = `# ${'é'.repeat(60)}\n${rules}`;
+    await assert.rejects(fetchSubscription(s, undefined, stream(wide), () => NOW, { maxBytes: 100 }), /larger than 100 bytes/);
+    await assert.rejects(fetchSubscription(s, undefined, respond(200, rules, { 'content-length': '5000000' }).fn), /larger than 2 MB/);
+    const ok = await fetchSubscription(s, undefined, stream(`\uFEFF${rules}`), () => NOW, { maxBytes: 100 });
+    assert.ok(ok.status === 'updated' && ok.data.rules.length === 1, 'a byte-order mark is dropped, as Response.text() does');
+  });
+
+  it('times out on a server that never answers or stops sending', async () => {
+    const never = (() => new Promise<Response>(() => undefined)) as typeof fetch;
+    await assert.rejects(fetchSubscription(s, undefined, never, () => NOW, { stallMs: 20 }), /did not answer within 0\.02 s/);
+    const stalled = (async () => new Response(new ReadableStream<Uint8Array>({ start: (c) => c.enqueue(new TextEncoder().encode('rules:\n')) }))) as typeof fetch;
+    await assert.rejects(fetchSubscription(s, undefined, stalled, () => NOW, { stallMs: 20 }), /stopped sending data/);
+  });
+});
+
+describe('saving subscription data that does not fit', () => {
+  const a = sub('a', 'https://example.com/a.yaml');
+  const b = sub('b', 'https://example.com/b.yaml');
+
+  it('puts back what storage has for changed entries and records the error', () => {
+    const oldA = data(a, 'rules:\n  - DOMAIN-SUFFIX,a.example,en-US\n');
+    const oldB = data(b, 'rules:\n  - DOMAIN-SUFFIX,b.example,en-US\n');
+    const stored: SubscriptionDataMap = { a: oldA, b: oldB };
+    const newA = data(a, 'rules:\n  - DOMAIN-SUFFIX,a.example,en-US\n  - DOMAIN-SUFFIX,a2.example,en-US\n', { lastAttempt: NOW });
+    const c = sub('c', 'https://example.com/c.yaml');
+    const current: SubscriptionDataMap = { a: newA, b: oldB, c: data(c, 'rules:\n  - DOMAIN,c.example,en-US\n', { lastAttempt: NOW }) };
+    const ids = revertUnsaved(current, stored, 'Could not save');
+    assert.deepEqual(ids.sort(), ['a', 'c']);
+    assert.deepEqual(current.a, { ...oldA, lastAttempt: NOW, error: 'Could not save' }, 'previous rules, new attempt time');
+    assert.equal(current.b, oldB, 'unchanged entries are left alone');
+    assert.deepEqual(current.c!.rules, [], 'a new subscription keeps no unsaved rules');
+    assert.equal(current.c!.error, 'Could not save');
+    assert.equal(subscriptionDue(c, current.c, 'changed', NOW), false, 'not refetched on every settings change');
+  });
+
+  it('keeps reverted entries failed when even the revert could not be saved', () => {
+    const oldA = data(a, 'rules:\n  - DOMAIN-SUFFIX,a.example,en-US\n');
+    const oldB = data(b, 'rules:\n  - DOMAIN-SUFFIX,b.example,en-US\n');
+    const c = sub('c', 'https://example.com/c.yaml');
+    const current: SubscriptionDataMap = {
+      a: data(a, 'rules:\n  - DOMAIN,a2.example,en-US\n', { lastAttempt: NOW }),
+      b: oldB,
+      c: data(c, 'rules:\n  - DOMAIN,c.example,en-US\n', { lastAttempt: NOW }),
+    };
+    const ids = revertUnsaved(current, { a: oldA, b: oldB }, 'Could not save');
+    const reverted: SubscriptionDataMap = Object.fromEntries(ids.map((id) => [id, current[id]!]));
+    // Memory reloaded from storage, which never got c.
+    const reloaded: SubscriptionDataMap = { a: oldA, b: oldB };
+    markUnsaved(reloaded, reverted, 'Could not save');
+    assert.deepEqual(reloaded.a, { ...oldA, lastAttempt: NOW, error: 'Could not save' }, 'stored rules, marked failed');
+    assert.equal(reloaded.b, oldB, 'entries that were not reverted are left alone');
+    assert.equal(reloaded.c!.url, rawUrl(c.url));
+    assert.deepEqual(reloaded.c!.rules, []);
+    assert.equal(reloaded.c!.error, 'Could not save');
+    assert.equal(subscriptionDue(c, reloaded.c, 'changed', NOW), false);
+  });
 });
 
 describe('subscriptionDue', () => {
@@ -219,6 +283,55 @@ describe('data sets for subscriptions', () => {
     assert.equal(datasetDownloadDue(failed, 'v', NOW), true);
     assert.equal(datasetDownloadDue({ ...failed, at: NOW - 2 * HOUR }, 'u', NOW), true);
     assert.equal(datasetDownloadDue(undefined, 'u', NOW), true);
+  });
+
+  it('does not download again a data set you deleted, unless its URL changes', () => {
+    const done = { url: 'u', for: 'A', at: NOW - 30 * 24 * HOUR, ok: true };
+    assert.equal(datasetDownloadDue(done, 'u', NOW), false);
+    assert.equal(datasetDownloadDue(done, 'v', NOW), true);
+  });
+
+  it('forgets the record once no enabled subscription needs the data set', () => {
+    const state = {
+      geosite: { url: 'https://mirror.example/geosite.dat', for: 'B', at: NOW, ok: true },
+      asn: { url: DATASETS.asn.defaultUrl, for: 'B', at: NOW, ok: true },
+    };
+    assert.deepEqual(staleDatasetRecords(settingsWith([a, b]), map, state), []);
+    // Without B, nothing needs the ASN data set: adding a subscription that does downloads it again.
+    assert.deepEqual(staleDatasetRecords(settingsWith([a]), map, state), ['asn']);
+    assert.deepEqual(staleDatasetRecords(settingsWith([a, { ...b, enabled: false }]), map, state), ['asn']);
+    assert.deepEqual(staleDatasetRecords(settingsWith([]), map, state), ['geosite', 'asn']);
+  });
+});
+
+describe('DNR safety', () => {
+  it('caps DOMAIN-KEYWORD at the length of a hostname', () => {
+    assert.equal(normalizeRuleValue('DOMAIN-KEYWORD', 'a'.repeat(253)).value, 'a'.repeat(253));
+    const long = normalizeRuleValue('DOMAIN-KEYWORD', 'a'.repeat(254));
+    assert.equal(long.value, null);
+    assert.match(long.error!, /too long \(254 characters/);
+    const r = parseSubscription(`rules:\n  - DOMAIN-KEYWORD,${'k'.repeat(5000)},en-US\n  - DOMAIN-KEYWORD,ok,en-US\n`, sub('x', 'https://example.com/x.yaml'));
+    assert.equal(r.rules.length, 1);
+    assert.equal(r.skippedCount, 1);
+  });
+
+  it('drops regex rules Chrome does not support and records them as skipped', async () => {
+    const s = importConfigText('rules:\n  - DOMAIN-KEYWORD,good,en-US\n  - DOMAIN-KEYWORD,bad,ja-JP\n  - DOMAIN-SUFFIX,plain.example,fr-FR\ndefault:\n  mode: PROFILE\n  locale: en-GB\n').settings!;
+    const compiled = compileDnrRules(s);
+    assert.equal(compiled.rules.length, 4);
+    assert.equal(compiled.sources.length, 4);
+    const checked: string[] = [];
+    const out = await dropUnsupportedRegex(compiled, async (re) => {
+      checked.push(re);
+      return re.includes('bad') ? { isSupported: false, reason: 'memoryLimitExceeded' } : { isSupported: true };
+    });
+    assert.equal(checked.length, 2, 'only regex rules are checked');
+    assert.equal(out.rules.length, 3);
+    assert.ok(out.rules.every((r) => !r.condition.regexFilter?.includes('bad')));
+    assert.equal(new Set(out.rules.map((r) => r.id)).size, 3);
+    assert.match(out.skipped.map((x) => `${x.rule.value}: ${x.reason}`).join('\n'), /bad: Chrome cannot use this pattern .*memoryLimitExceeded/);
+    // A check that fails leaves the decision to Chrome.
+    assert.equal((await dropUnsupportedRegex(compiled, async () => Promise.reject(new Error('x')))).rules.length, 4);
   });
 });
 

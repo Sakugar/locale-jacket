@@ -19,7 +19,7 @@ export interface UpdaterDeps {
   onUpdated: () => Promise<void>;
   log: (level: 'info' | 'warn', msg: string) => void;
   download?: typeof downloadDataset;
-  downloadOptions?: Pick<DownloadOptions, 'fetch' | 'store'>;
+  downloadOptions?: Pick<DownloadOptions, 'fetch' | 'store' | 'limits'>;
   /** Keeps the service worker alive during long downloads. */
   keepAlive?: () => () => void;
 }

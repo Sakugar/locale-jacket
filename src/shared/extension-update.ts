@@ -6,6 +6,7 @@
 // store and policy installs).
 
 import { INTERVAL_MS } from './dataset-schedule.js';
+import { fetchLimited, type NetLimits } from './net.js';
 import type { ExtensionUpdateOptions } from './types.js';
 
 export const DEFAULT_RELEASE_SOURCE = 'https://api.github.com/repos/Sakugar/locale-jacket/releases/latest';
@@ -14,6 +15,8 @@ export const EXTENSION_UPDATE_STATE_KEY = 'extensionUpdateState';
 export const MIN_CHECK_GAP_HOURS = 12;
 const HOUR = 3_600_000;
 const NOTES_LIMIT = 20_000;
+/** A release object is a few KB; a /releases list with long notes stays well below 5 MB. */
+export const RELEASE_LIMITS: NetLimits = { totalMs: 30_000, stallMs: 15_000, maxBytes: 5 * 1024 * 1024 };
 
 export interface ReleaseAsset {
   name: string;
@@ -96,12 +99,18 @@ export function parseRelease(json: unknown): ReleaseInfo {
 }
 
 /** Ask the release address for the latest release. */
-export async function fetchLatestRelease(source: string, fetchFn: typeof fetch = fetch): Promise<ReleaseInfo> {
+export async function fetchLatestRelease(source: string, fetchFn: typeof fetch = fetch, limits: Partial<NetLimits> = {}): Promise<ReleaseInfo> {
   if (!isHttpUrl(source)) throw new Error('The release address must start with https:// or http://.');
-  const res = await fetchFn(source, { cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } });
+  const { res, body } = await fetchLimited(fetchFn, source, { cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } }, { ...RELEASE_LIMITS, ...limits });
   if (res.status === 404) throw new Error('No release found at this address (404). A private GitHub repository does not answer without signing in.');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return parseRelease(await res.json());
+  if (!res.ok || !body) throw new Error(`HTTP ${res.status}`);
+  let json: unknown;
+  try {
+    json = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    throw new Error('The answer is not a GitHub release.');
+  }
+  return parseRelease(json);
 }
 
 /** The newer release from the last check, if there is one. */

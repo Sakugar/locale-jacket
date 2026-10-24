@@ -240,6 +240,9 @@ export function normalizeRuleValue(type: RuleType, input: string): RuleValueResu
     case 'DOMAIN-KEYWORD': {
       const k = raw.normalize('NFC').toLowerCase();
       if (!k) return { value: null, notes: [], error: 'Keyword is empty.' };
+      // A hostname has at most 253 characters, so a longer keyword can never match (and
+      // would make a needlessly large DNR regex).
+      if (k.length > 253) return { value: null, notes: [], error: `Keyword is too long (${k.length} characters; a hostname has at most 253).` };
       if (/[\s/\\?#@:]/.test(k)) return { value: null, notes: [], error: 'Keywords cannot contain spaces or URL delimiters (/ \\ ? # @ :).' };
       const notes = isAsciiKeyword(k) ? [] : ['Non-ASCII keyword: matched against the Unicode form of IDN hostnames.'];
       return { value: k, notes };

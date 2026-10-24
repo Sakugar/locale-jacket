@@ -90,7 +90,9 @@ export function planUpdates(p: {
     if (trigger === 'manual') return { kind: meta.kind, due: true, notBefore };
     if (!autoUpdatesEnabled(opts)) return skip('disabled');
     if (now < notBefore) return skip('too-soon');
-    const overdue = period !== null && now - (rec?.lastChecked ?? meta.savedAt) >= period;
+    // Measured from the later of the last check and when the file was saved, so a manual
+    // download (which saves the file but writes no record) also counts as fresh.
+    const overdue = period !== null && now - Math.max(rec?.lastChecked ?? 0, meta.savedAt) >= period;
     if (trigger === 'startup' && (opts.onStartup || overdue)) return { kind: meta.kind, due: true, notBefore };
     if (trigger === 'alarm' && overdue) return { kind: meta.kind, due: true, notBefore };
     return skip('not-due');

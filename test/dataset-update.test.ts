@@ -15,7 +15,7 @@ const NOW = Date.UTC(2026, 9, 21, 12);
 const URL_ = 'https://cdn.example/geosite.dat';
 
 const opts = (o: Partial<DatasetUpdateOptions> = {}): DatasetUpdateOptions => ({ onStartup: false, interval: 'off', minIntervalHours: 24, onlyNeeded: true, ...o });
-const meta = (kind: DatasetMeta['kind'], o: Partial<DatasetMeta> = {}): DatasetMeta => ({ kind, source: URL_, size: 1, savedAt: NOW - 2 * DAY, summary: 'x', ...o });
+const meta = (kind: DatasetMeta['kind'], o: Partial<DatasetMeta> = {}): DatasetMeta => ({ kind, source: URL_, size: 1, savedAt: NOW - 60 * DAY, summary: 'x', ...o });
 const ALL: Needed = { geosite: true, geoip: true, asn: true };
 
 function due(p: { trigger: 'startup' | 'alarm' | 'manual'; o?: Partial<DatasetUpdateOptions>; metas?: DatasetMeta[]; state?: DatasetUpdateState; needed?: Needed; now?: number }) {
@@ -81,6 +81,16 @@ describe('data-set update schedule', () => {
     assert.deepEqual(due({ trigger: 'manual', metas, state, needed: { geosite: false, geoip: false, asn: false } }), ['geosite', 'asn']);
   });
 
+  it('a manual download (newer file, no record) counts as fresh', () => {
+    // Checked 8 days ago by the updater, then downloaded by hand yesterday.
+    const state = { geosite: { lastAttempt: NOW - 8 * DAY, lastChecked: NOW - 8 * DAY, lastResult: 'unchanged' as const } };
+    const fresh = [meta('geosite', { savedAt: NOW - DAY })];
+    assert.deepEqual(due({ trigger: 'alarm', o: { interval: 'weekly' }, metas: fresh, state }), []);
+    assert.deepEqual(due({ trigger: 'startup', o: { interval: 'weekly' }, metas: fresh, state }), []);
+    assert.deepEqual(due({ trigger: 'alarm', o: { interval: 'weekly' }, metas: [meta('geosite', { savedAt: NOW - 9 * DAY })], state }), ['geosite']);
+    assert.deepEqual(due({ trigger: 'alarm', o: { interval: 'weekly' }, now: NOW + 7 * DAY, metas: fresh, state }), ['geosite']);
+  });
+
   it('clamps the minimum gap to at least one hour', () => {
     const state = { geosite: { lastAttempt: NOW - 30 * 60_000 } };
     assert.deepEqual(due({ trigger: 'startup', o: { onStartup: true, minIntervalHours: 0 }, state }), []);
@@ -113,6 +123,15 @@ function fakeFetch(handler: (url: string, headers: Record<string, string>) => Re
   return { f, calls };
 }
 
+function chunked(parts: Uint8Array[]): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(c) {
+      for (const p of parts) c.enqueue(p);
+      c.close();
+    },
+  });
+}
+
 describe('downloadDataset', () => {
   it('stores a validated file with its HTTP validators', async () => {
     const { f, calls } = fakeFetch(() => new Response(GEOSITE, { headers: { etag: '"v1"', 'last-modified': 'Tue, 20 Oct 2026 00:00:00 GMT' } }));
@@ -131,6 +150,57 @@ describe('downloadDataset', () => {
     assert.deepEqual(r, { status: 'unchanged' });
     assert.deepEqual(calls[0]!.headers, { 'If-None-Match': '"v1"', 'If-Modified-Since': 'x' });
     assert.equal(calls[0]!.cache, 'no-cache');
+  });
+
+  it('stores exactly the bytes received, with and without content-length', async () => {
+    const sizes: number[] = [];
+    const store = async (m: DatasetMeta, data: ArrayBuffer) => void sizes.push(m.size, data.byteLength);
+    await downloadDataset('geosite', URL_, { fetch: fakeFetch(() => new Response(GEOSITE, { headers: { 'content-length': String(GEOSITE.byteLength) } })).f, store });
+    await downloadDataset('geosite', URL_, { fetch: fakeFetch(() => new Response(chunked([new Uint8Array(GEOSITE)]))).f, store });
+    assert.deepEqual(sizes, [GEOSITE.byteLength, GEOSITE.byteLength, GEOSITE.byteLength, GEOSITE.byteLength]);
+  });
+
+  it('refuses a file over the size limit, by content-length or while streaming', async () => {
+    const store = async () => assert.fail('must not store');
+    const limits = { maxBytes: 1000 };
+    const big = fakeFetch(() => new Response(null, { headers: { 'content-length': '5000' } }));
+    await assert.rejects(downloadDataset('geosite', URL_, { fetch: big.f, store, limits }), /larger than 1000 bytes/);
+    // No content-length: counted while reading, and the rest of the body is never read.
+    let pulled = 0;
+    const endless = new ReadableStream<Uint8Array>({ pull: (c) => void (pulled++, c.enqueue(new Uint8Array(400))) });
+    await assert.rejects(downloadDataset('geosite', URL_, { fetch: fakeFetch(() => new Response(endless)).f, store, limits }), /larger than 1000 bytes/);
+    assert.ok(pulled < 10, `read ${pulled} chunks`);
+    // A wrong (too small) content-length does not get past the cap either.
+    const lying = fakeFetch(() => new Response(chunked([new Uint8Array(600), new Uint8Array(600)]), { headers: { 'content-length': '10' } }));
+    await assert.rejects(downloadDataset('geosite', URL_, { fetch: lying.f, store, limits }), /larger than 1000 bytes/);
+  });
+
+  it('gives up on a server that never answers or stalls mid-body', async () => {
+    const store = async () => assert.fail('must not store');
+    const never = (() => new Promise<Response>(() => undefined)) as typeof fetch;
+    await assert.rejects(downloadDataset('geosite', URL_, { fetch: never, store, limits: { stallMs: 30 } }), /did not answer within/);
+    const stalled = fakeFetch(() => new Response(new ReadableStream<Uint8Array>({ start: (c) => c.enqueue(new Uint8Array(10)) })));
+    await assert.rejects(downloadDataset('geosite', URL_, { fetch: stalled.f, store, limits: { stallMs: 30 } }), /stopped sending data for/);
+    // A slow trickle that never stalls is still bounded by the overall limit.
+    const trickle = fakeFetch(() => new Response(new ReadableStream<Uint8Array>({ pull: (c) => new Promise<void>((r) => setTimeout(() => {
+      try {
+        c.enqueue(new Uint8Array(1));
+      } catch {
+        // Cancelled after the timeout.
+      }
+      r();
+    }, 5)) })));
+    await assert.rejects(downloadDataset('geosite', URL_, { fetch: trickle.f, store, limits: { stallMs: 1000, totalMs: 60 } }), /did not finish within/);
+  });
+
+  it('the real fetch is aborted on a timeout', async () => {
+    let signal: AbortSignal | undefined;
+    const f = ((_url: string, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>(() => undefined);
+    }) as typeof fetch;
+    await assert.rejects(downloadDataset('geosite', URL_, { fetch: f, store: async () => undefined, limits: { stallMs: 20 } }));
+    assert.equal(signal?.aborted, true);
   });
 
   it('rejects HTTP errors and invalid files without storing', async () => {
@@ -201,6 +271,28 @@ describe('DatasetUpdater', () => {
     const [a, b] = await Promise.all([t.updater.run('startup'), t.updater.run('alarm')]);
     assert.equal(a, b);
     assert.equal(t.calls.length, 1);
+  });
+
+  it('a timeout is a normal failed attempt, and the next run is not blocked', async () => {
+    let calls = 0;
+    const f = (() => (++calls === 1 ? new Promise<Response>(() => undefined) : Promise.resolve(new Response(null, { status: 304 })))) as typeof fetch;
+    const state: { s: DatasetUpdateState } = { s: {} };
+    const updater = new DatasetUpdater({
+      now: () => NOW,
+      options: () => opts({ onStartup: true }),
+      needed: () => ALL,
+      listMetas: async () => [meta('geosite', { etag: '"v1"' })],
+      getState: async () => structuredClone(state.s),
+      setState: async (s) => void (state.s = structuredClone(s)),
+      onUpdated: async () => undefined,
+      log: () => undefined,
+      downloadOptions: { fetch: f, store: async () => undefined, limits: { stallMs: 20 } },
+    });
+    const out = await updater.run('startup');
+    assert.equal(out[0]!.result, 'failed');
+    assert.match(state.s.geosite!.lastError!, /did not answer within/);
+    assert.equal(updater.busy, false);
+    assert.equal((await updater.run('manual'))[0]!.result, 'unchanged');
   });
 
   it('nothing is fetched when automatic updates are off', async () => {

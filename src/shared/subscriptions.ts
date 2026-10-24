@@ -9,6 +9,7 @@ import { INTERVAL_MS, type UpdateTrigger } from './dataset-schedule.js';
 import { DATASET_KINDS, DATASETS, type DatasetKind } from './dataset-store.js';
 import { requiredDatasets } from './rules.js';
 import { isHttpUrl } from './extension-update.js';
+import { fetchLimited, type NetLimits } from './net.js';
 import type { Rule, Settings, Subscription } from './types.js';
 
 export const SUBSCRIPTION_DATA_KEY = 'subscriptionData';
@@ -17,6 +18,8 @@ export const SUBSCRIPTION_DATASET_STATE_KEY = 'subscriptionDatasetState';
 /** A failed automatic data-set download is retried at most this often. */
 export const DATASET_RETRY_HOURS = 1;
 export const MAX_SUBSCRIPTION_BYTES = 2 * 1024 * 1024;
+/** A rules file is small: a minute in all, and 20 s without data, are plenty. */
+export const SUBSCRIPTION_LIMITS: NetLimits = { totalMs: 60_000, stallMs: 20_000, maxBytes: MAX_SUBSCRIPTION_BYTES };
 export const MAX_SUBSCRIPTION_RULES = 5000;
 /** Automatic updates of one subscription happen at most this often. */
 export const MIN_SUBSCRIPTION_GAP_HOURS = 1;
@@ -118,6 +121,7 @@ export async function fetchSubscription(
   previous: SubscriptionData | undefined,
   fetchFn: typeof fetch = fetch,
   now: () => number = Date.now,
+  limits: Partial<NetLimits> = {},
 ): Promise<{ status: 'unchanged' } | { status: 'updated'; data: SubscriptionData }> {
   const url = rawUrl(sub.url);
   if (!isHttpUrl(url)) throw new Error('The address must start with https:// or http://.');
@@ -125,14 +129,14 @@ export async function fetchSubscription(
   const same = previous && previous.url === url && previous.fetchedAt !== undefined;
   if (same && previous.etag) headers['If-None-Match'] = previous.etag;
   if (same && previous.lastModified) headers['If-Modified-Since'] = previous.lastModified;
-  const res = await fetchFn(url, { cache: same ? 'no-cache' : 'no-store', headers, credentials: 'omit' });
+  // The byte cap is counted while the body streams in, so a file without content-length
+  // (or with a wrong one) is never read past it.
+  const { res, body } = await fetchLimited(fetchFn, url, { cache: same ? 'no-cache' : 'no-store', headers, credentials: 'omit' }, { ...SUBSCRIPTION_LIMITS, ...limits });
   if (res.status === 304 && same) return { status: 'unchanged' };
   if (res.status === 404) throw new Error('Not found (404). If the file is in a private GitHub repository, GitHub does not serve it without signing in.');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const length = Number(res.headers.get('content-length'));
-  if (length > MAX_SUBSCRIPTION_BYTES) throw new Error(`The file is larger than ${MAX_SUBSCRIPTION_BYTES / 1048576} MB.`);
-  const text = await res.text();
-  if (text.length > MAX_SUBSCRIPTION_BYTES) throw new Error(`The file is larger than ${MAX_SUBSCRIPTION_BYTES / 1048576} MB.`);
+  if (!res.ok || !body) throw new Error(`HTTP ${res.status}`);
+  // Like Response.text(): UTF-8, a leading byte-order mark dropped.
+  const text = new TextDecoder().decode(body);
   const contentType = res.headers.get('content-type') ?? '';
   if (/text\/html/i.test(contentType) && looksLikeHtml(text)) {
     throw new Error('This address returned a web page, not a JSON or YAML file. Use a link to the file itself (on GitHub, the file page or its Raw link).');
@@ -149,6 +153,38 @@ export async function fetchSubscription(
       ...(res.headers.get('last-modified') ? { lastModified: res.headers.get('last-modified')! } : {}),
     },
   };
+}
+
+/**
+ * After storage refused `current` (chrome.storage.local holds at most 10 MB), put back
+ * what storage still has for every entry that changed since `stored`, keeping the
+ * attempt time and recording `error`. Memory then matches storage again (plus the
+ * error), the previous rules stay in use, and the UI can show why. Entries are replaced,
+ * never changed in place, so "changed" is a reference comparison. Returns the ids reverted.
+ */
+export function revertUnsaved(current: SubscriptionDataMap, stored: SubscriptionDataMap, error: string): string[] {
+  const ids: string[] = [];
+  for (const [id, d] of Object.entries(current)) {
+    const old = stored[id];
+    if (d === old) continue;
+    const base: SubscriptionData = old && old.url === d.url ? old : { url: d.url, rules: [], skipped: [], skippedCount: 0, ignored: [] };
+    current[id] = { ...base, ...(d.lastAttempt !== undefined ? { lastAttempt: d.lastAttempt } : {}), error };
+    ids.push(id);
+  }
+  return ids;
+}
+
+/**
+ * When even the reverted data could not be saved and memory was reloaded from storage,
+ * mark the entries `revertUnsaved` reverted (`reverted`: id → reverted entry) as failed
+ * again, so the run reports them as failed instead of updated. A reloaded entry for the
+ * same URL keeps its rules; otherwise the reverted entry (no unsaved rules) is used.
+ */
+export function markUnsaved(current: SubscriptionDataMap, reverted: SubscriptionDataMap, error: string): void {
+  for (const [id, r] of Object.entries(reverted)) {
+    const d = current[id];
+    current[id] = d && d.url === r.url ? { ...d, ...(r.lastAttempt !== undefined ? { lastAttempt: r.lastAttempt } : {}), error } : { ...r, error };
+  }
 }
 
 /** Rules last fetched for a subscription, if they belong to its current URL. */
@@ -230,7 +266,22 @@ export function datasetsToDownload(settings: Settings, data: SubscriptionDataMap
   return out;
 }
 
-/** Whether an automatic download may be attempted now (failures are retried after a pause). */
+/**
+ * Whether an automatic download of a missing data set may be attempted now:
+ * - never tried, or the URL to use changed: yes;
+ * - the last attempt failed: after a pause;
+ * - it was downloaded from this URL before: no. It is missing because you deleted it
+ *   (Options ▸ Data sets), and that deletion sticks. The record is forgotten once no
+ *   enabled subscription needs the data set (see `staleDatasetRecords`), so adding a
+ *   subscription that needs it again downloads it again.
+ */
 export function datasetDownloadDue(rec: SubscriptionDatasetRecord | undefined, url: string, now: number): boolean {
-  return !rec || rec.url !== url || rec.ok || now - rec.at >= DATASET_RETRY_HOURS * HOUR;
+  if (!rec || rec.url !== url) return true;
+  return !rec.ok && now - rec.at >= DATASET_RETRY_HOURS * HOUR;
+}
+
+/** Records of automatic downloads for data sets that no enabled subscription needs any more. */
+export function staleDatasetRecords(settings: Settings, data: SubscriptionDataMap, state: SubscriptionDatasetState): DatasetKind[] {
+  const needed = new Set(datasetsToDownload(settings, data, []).map((j) => j.kind));
+  return DATASET_KINDS.filter((kind) => state[kind] !== undefined && !needed.has(kind));
 }

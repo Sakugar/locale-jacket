@@ -82,6 +82,15 @@ describe('fetchLatestRelease', () => {
     await assert.rejects(fetchLatestRelease(DEFAULT_RELEASE_SOURCE, answer(404, { message: 'Not Found' })), /private GitHub repository/);
     await assert.rejects(fetchLatestRelease(DEFAULT_RELEASE_SOURCE, answer(500, {})), /HTTP 500/);
     await assert.rejects(fetchLatestRelease('file:///etc/passwd', answer(200, {})), /https:\/\//);
+    await assert.rejects(fetchLatestRelease(DEFAULT_RELEASE_SOURCE, (async () => new Response('<html>', { status: 200 })) as typeof fetch), /not a GitHub release/);
+  });
+
+  it('gives up on a server that does not answer, and on an oversized answer', async () => {
+    const never = (() => new Promise<Response>(() => undefined)) as typeof fetch;
+    await assert.rejects(fetchLatestRelease(DEFAULT_RELEASE_SOURCE, never, { stallMs: 20 }), /did not answer within/);
+    const huge = (async () => new Response(JSON.stringify(githubRelease('1.3.0', { body: 'x'.repeat(5000) })))) as typeof fetch;
+    await assert.rejects(fetchLatestRelease(DEFAULT_RELEASE_SOURCE, huge, { maxBytes: 1000 }), /larger than 1000 bytes/);
+    assert.equal((await fetchLatestRelease(DEFAULT_RELEASE_SOURCE, huge)).version, '1.3.0');
   });
 });
 

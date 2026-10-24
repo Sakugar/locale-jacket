@@ -35,6 +35,8 @@ export interface DnrRule {
 
 export interface DnrCompileResult {
   rules: DnrRule[];
+  /** The rule each DNR rule mirrors (same index as `rules`); null for the catch-all default. */
+  sources: (Rule | null)[];
   skipped: { rule: Rule; reason: string }[];
 }
 
@@ -55,6 +57,7 @@ export function compileDnrRules(settings: Pick<Settings, 'rules' | 'defaultActio
   const ordered = rulesInPrecedenceOrder(settings.rules).filter((r) => r.action === 'SYSTEM' || r.profile);
   const skipped: DnrCompileResult['skipped'] = [];
   const out: DnrRule[] = [];
+  const sources: (Rule | null)[] = [];
   let regexCount = 0;
   const top = ordered.length + 1;
   // DNR cannot see server addresses, so a rule that ranks below an IP rule (a subscription's
@@ -123,6 +126,7 @@ export function compileDnrRules(settings: Pick<Settings, 'rules' | 'defaultActio
           : { type: 'modifyHeaders', requestHeaders: [{ header: 'accept-language', operation: 'set', value: rule.profile!.acceptLanguage }] },
       condition,
     });
+    sources.push(rule);
   });
 
   // An IP rule could override the default for hosts no hostname rule matches; DNR cannot
@@ -140,6 +144,35 @@ export function compileDnrRules(settings: Pick<Settings, 'rules' | 'defaultActio
       },
       condition: { resourceTypes: ['main_frame'] },
     });
+    sources.push(null);
   }
-  return { rules: out, skipped };
+  return { rules: out, sources, skipped };
+}
+
+export type RegexCheck = (regex: string) => Promise<{ isSupported: boolean; reason?: string }>;
+
+/**
+ * Drop the regex rules Chrome cannot use (`declarativeNetRequest.isRegexSupported`: a
+ * syntax it does not accept, or a pattern over its memory limit), recording them as
+ * skipped. One such rule would make Chrome reject the whole update, leaving the old
+ * rules in force. A failing check counts as supported, so the update itself decides.
+ */
+export async function dropUnsupportedRegex(result: DnrCompileResult, check: RegexCheck): Promise<DnrCompileResult> {
+  const supported: Awaited<ReturnType<RegexCheck>> = { isSupported: true };
+  const verdicts = await Promise.all(result.rules.map((r) => (r.condition.regexFilter ? check(r.condition.regexFilter).catch(() => supported) : supported)));
+  if (verdicts.every((v) => v.isSupported)) return result;
+  const rules: DnrRule[] = [];
+  const sources: (Rule | null)[] = [];
+  const skipped = [...result.skipped];
+  result.rules.forEach((r, i) => {
+    const v = verdicts[i]!;
+    const source = result.sources[i] ?? null;
+    if (v.isSupported) {
+      rules.push(r);
+      sources.push(source);
+    } else if (source) {
+      skipped.push({ rule: source, reason: `Chrome cannot use this pattern in declarativeNetRequest (${v.reason ?? 'unsupported'}); applied by the debugger session only.` });
+    }
+  });
+  return { rules, sources, skipped };
 }
