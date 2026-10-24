@@ -26,14 +26,14 @@ function escapeHtml(s) {
 }
 
 /**
- * Start the server. Returns { server, port, log, clearLog, beacons, close }.
+ * Start the server on 127.0.0.1 and ::1. Returns { server, servers, port, log, clearLog, beacons, close }.
  * `log` records every HTML document request with the Accept-Language it carried;
  * `beacons` holds the reports launch.html posts after it has loaded.
  */
 export function startServer({ port = 8787, quiet = false } = {}) {
   const log = [];
   const beacons = [];
-  const server = http.createServer((req, res) => {
+  const handler = (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
     const host = (req.headers.host ?? '').replace(/:\d+$/, '');
     const al = req.headers['accept-language'] ?? null;
@@ -164,31 +164,53 @@ export function startServer({ port = 8787, quiet = false } = {}) {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         return res.end('not found');
     }
-  });
+  };
 
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    // Listen on the IPv6 wildcard (dual-stack) so both ::1 and 127.0.0.1 work,
-    // but only accept loopback peers.
-    server.on('connection', (socket) => {
-      const a = socket.remoteAddress ?? '';
-      if (!(a === '::1' || a.startsWith('127.') || a.startsWith('::ffff:127.'))) socket.destroy();
-    });
-    server.listen({ port, host: '::', ipv6Only: false }, () => {
-      const actual = server.address().port;
-      if (!quiet) {
-        console.log(`Locale Jacket verification server: http://localhost:${actual}/`);
-        console.log(`Try: http://google.localhost:${actual}/  http://apple.localhost:${actual}/  http://example.localhost:${actual}/`);
-      }
-      resolve({
-        server,
-        port: actual,
-        log,
-        clearLog: () => { log.length = 0; },
-        beacons,
-        close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(() => r()); }),
+  // One server per loopback address (127.0.0.1 and ::1) on the same port, so *.localhost
+  // works whichever address the browser picks and nothing else can connect.
+  const listen = (host, p) =>
+    new Promise((resolve, reject) => {
+      const server = http.createServer(handler);
+      server.once('error', reject);
+      server.listen({ port: p, host, ipv6Only: host === '::1' }, () => {
+        server.off('error', reject);
+        resolve(server);
       });
     });
+  const closeAll = (servers) =>
+    Promise.all(servers.map((s) => new Promise((r) => { s.closeAllConnections?.(); s.close(() => r()); })));
+  const noIpv6 = (e) => e.code === 'EADDRNOTAVAIL' || e.code === 'EAFNOSUPPORT';
+
+  const start = async () => {
+    for (let attempt = 0; ; attempt++) {
+      const v4 = await listen('127.0.0.1', port);
+      const actual = v4.address().port;
+      try {
+        return [v4, await listen('::1', actual)];
+      } catch (e) {
+        if (noIpv6(e)) return [v4];
+        await closeAll([v4]);
+        // With port 0 the IPv4 port may already be taken on ::1; pick another.
+        if (port !== 0 || e.code !== 'EADDRINUSE' || attempt >= 9) throw e;
+      }
+    }
+  };
+
+  return start().then((servers) => {
+    const actual = servers[0].address().port;
+    if (!quiet) {
+      console.log(`Locale Jacket verification server: http://localhost:${actual}/`);
+      console.log(`Try: http://google.localhost:${actual}/  http://apple.localhost:${actual}/  http://example.localhost:${actual}/`);
+    }
+    return {
+      server: servers[0],
+      servers,
+      port: actual,
+      log,
+      clearLog: () => { log.length = 0; },
+      beacons,
+      close: () => closeAll(servers).then(() => {}),
+    };
   });
 }
 

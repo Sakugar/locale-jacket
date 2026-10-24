@@ -51,7 +51,10 @@ export function writeZip(entries) {
   return Buffer.concat([...locals, ...centrals, end]);
 }
 
-/** Read a ZIP archive (stored or deflated entries) into a Map of name → Buffer. */
+/**
+ * Read a ZIP archive (stored or deflated entries) into a Map of name → Buffer.
+ * Checks each local header against the central directory and the CRC-32 of the extracted data.
+ */
 export function readZip(buf) {
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65_557); i--) {
@@ -65,9 +68,12 @@ export function readZip(buf) {
   let p = buf.readUInt32LE(eocd + 16);
   const files = new Map();
   for (let n = 0; n < count; n++) {
-    if (buf.readUInt32LE(p) !== 0x02014b50) throw new Error('Corrupt ZIP central directory.');
+    if (p + 46 > eocd || buf.readUInt32LE(p) !== 0x02014b50) throw new Error('Corrupt ZIP central directory.');
+    const flags = buf.readUInt16LE(p + 8);
     const method = buf.readUInt16LE(p + 10);
+    const crc = buf.readUInt32LE(p + 16);
     const compSize = buf.readUInt32LE(p + 20);
+    const size = buf.readUInt32LE(p + 24);
     const nameLen = buf.readUInt16LE(p + 28);
     const extraLen = buf.readUInt16LE(p + 30);
     const commentLen = buf.readUInt16LE(p + 32);
@@ -75,11 +81,31 @@ export function readZip(buf) {
     const name = buf.toString('utf8', p + 46, p + 46 + nameLen);
     p += 46 + nameLen + extraLen + commentLen;
     if (name.endsWith('/')) continue;
+    if (flags & 1) throw new Error(`Encrypted ZIP entry ${name} is not supported.`);
+    if (localOff + 30 > buf.length || buf.readUInt32LE(localOff) !== 0x04034b50) throw new Error(`Corrupt ZIP: bad local header for ${name}.`);
+    if (buf.readUInt16LE(localOff + 8) !== method) throw new Error(`Corrupt ZIP: compression method mismatch for ${name}.`);
+    // With a data descriptor (flag bit 3) the local header may carry zero sizes and CRC.
+    if (!(flags & 8)) {
+      const lCrc = buf.readUInt32LE(localOff + 14);
+      const lComp = buf.readUInt32LE(localOff + 18);
+      const lSize = buf.readUInt32LE(localOff + 22);
+      if (lCrc !== crc || lComp !== compSize || lSize !== size) throw new Error(`Corrupt ZIP: local and central headers disagree for ${name}.`);
+    }
     const dataStart = localOff + 30 + buf.readUInt16LE(localOff + 26) + buf.readUInt16LE(localOff + 28);
+    if (dataStart + compSize > buf.length) throw new Error(`Corrupt ZIP: data for ${name} is truncated.`);
     const raw = buf.subarray(dataStart, dataStart + compSize);
-    if (method === 0) files.set(name, Buffer.from(raw));
-    else if (method === 8) files.set(name, zlib.inflateRawSync(raw));
-    else throw new Error(`Unsupported ZIP compression method ${method} for ${name}.`);
+    let data;
+    if (method === 0) data = Buffer.from(raw);
+    else if (method === 8) {
+      try {
+        data = zlib.inflateRawSync(raw);
+      } catch (e) {
+        throw new Error(`Corrupt ZIP: cannot inflate ${name} (${e.message}).`);
+      }
+    } else throw new Error(`Unsupported ZIP compression method ${method} for ${name}.`);
+    if (data.length !== size) throw new Error(`Corrupt ZIP: ${name} is ${data.length} bytes, expected ${size}.`);
+    if ((zlib.crc32(data) >>> 0) !== crc) throw new Error(`Corrupt ZIP: CRC-32 mismatch for ${name}.`);
+    files.set(name, data);
   }
   return files;
 }

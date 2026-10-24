@@ -2,11 +2,12 @@
 // Build the per-release diff pack: only the files that were added or changed since the
 // previous release, so an unpacked install can be upgraded by copying them over it.
 //
-//   node scripts/diff-pack.mjs [--from <version|zip>] [--to <zip>] [--out <dir>]
+//   node scripts/diff-pack.mjs [--from <version|zip>] [--to <zip>] [--out <dir>] [--releases <dir>]
 //     → <out>/locale-jacket-<from>-to-<version>.diff.zip
 //
 // The new release is dist/ (run `npm run build` first), or a release zip given with --to. The previous release defaults to
-// the newest locale-jacket-<v>.zip under release/ with a lower version. The pack contains
+// the newest release/v<v>/locale-jacket-<v>.zip with a lower version; --from <version> picks
+// release/v<version>/locale-jacket-<version>.zip, --from <zip> any zip. --releases replaces release/. The pack contains
 // the changed files at their normal paths, plus:
 //   CHANGES.txt   one line per file: A (added) / M (modified) / D (deleted), path, SHA-256
 //   DELETED.txt   files to remove from the old folder (only when there are any)
@@ -18,11 +19,11 @@ import { readZip, writeZip } from './lib/zip.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
-const releaseDir = path.join(root, 'release');
 const arg = (name) => {
   const i = process.argv.indexOf(name);
   return i > 0 ? process.argv[i + 1] : undefined;
 };
+const releaseDir = path.resolve(arg('--releases') ?? path.join(root, 'release'));
 
 function walk(dir, base = '') {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
@@ -33,7 +34,12 @@ function walk(dir, base = '') {
 let newFiles;
 const to = arg('--to');
 if (to) {
-  newFiles = new Map([...readZip(fs.readFileSync(path.resolve(to)))].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  try {
+    newFiles = new Map([...readZip(fs.readFileSync(path.resolve(to)))].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  } catch (e) {
+    console.error(`Cannot read ${path.resolve(to)}: ${e.message}`);
+    process.exit(1);
+  }
 } else {
   if (!fs.existsSync(path.join(dist, 'manifest.json'))) {
     console.error('dist/ is missing; run npm run build first.');
@@ -54,18 +60,17 @@ const cmp = (a, b) => {
   return 0;
 };
 
-function releaseZips() {
-  const found = new Map();
-  const visit = (dir) => {
-    if (!fs.existsSync(dir)) return;
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (e.isDirectory() && /^v\d/.test(e.name)) visit(path.join(dir, e.name));
-      const m = e.isFile() && e.name.match(/^locale-jacket-(\d+(?:\.\d+)*)\.zip$/);
-      if (m && !found.has(m[1])) found.set(m[1], path.join(dir, e.name));
-    }
-  };
-  visit(releaseDir);
-  return found;
+// Published releases live in <release>/v<ver>/locale-jacket-<ver>.zip. Loose zips at the
+// top level (package.mjs's default output) are dev builds and never used as the base.
+const releaseZip = (v) => path.join(releaseDir, `v${v}`, `locale-jacket-${v}.zip`);
+
+function releaseVersions() {
+  if (!fs.existsSync(releaseDir)) return [];
+  return fs
+    .readdirSync(releaseDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && /^v\d+(?:\.\d+)*$/.test(e.name))
+    .map((e) => e.name.slice(1))
+    .filter((v) => fs.existsSync(releaseZip(v)));
 }
 
 let fromVersion;
@@ -74,19 +79,31 @@ const from = arg('--from');
 if (from && from.endsWith('.zip')) {
   fromZip = path.resolve(from);
   fromVersion = path.basename(fromZip).match(/locale-jacket-(.+)\.zip$/)?.[1] ?? 'previous';
+} else if (from) {
+  fromVersion = from.replace(/^v/, '');
+  fromZip = releaseZip(fromVersion);
 } else {
-  const zips = releaseZips();
-  fromVersion = from ?? [...zips.keys()].filter((v) => cmp(v, version) < 0).sort(cmp).at(-1);
-  fromZip = fromVersion && zips.get(fromVersion);
+  fromVersion = releaseVersions().filter((v) => cmp(v, version) < 0).sort(cmp).at(-1);
+  fromZip = fromVersion && releaseZip(fromVersion);
 }
-if (!fromZip || !fs.existsSync(fromZip)) {
-  console.error(`No previous release zip found${fromVersion ? ` for ${fromVersion}` : ''}; pass --from <version|zip>.`);
+if (!fromZip) {
+  console.error(`No previous release found in ${releaseDir} (expected v<version>/locale-jacket-<version>.zip); pass --from <version|zip>.`);
+  process.exit(1);
+}
+if (!fs.existsSync(fromZip)) {
+  console.error(`Previous release zip not found: ${fromZip}; pass --from <version|zip>.`);
   process.exit(1);
 }
 
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
-const oldFiles = readZip(fs.readFileSync(fromZip));
+let oldFiles;
+try {
+  oldFiles = readZip(fs.readFileSync(fromZip));
+} catch (e) {
+  console.error(`Cannot read ${fromZip}: ${e.message}`);
+  process.exit(1);
+}
 
 const lines = [];
 const entries = [];
