@@ -22,6 +22,9 @@ let verifying = false;
 let verifyPending = false;
 /** Bumped on navigation, so a check that started on the previous document is dropped. */
 let verifyToken = 0;
+/** Checks re-run because the tab still showed the previous document (reset on navigation). */
+let verifyRetries = 0;
+const MAX_VERIFY_RETRIES = 20;
 /** The user asked for a check; keep re-reading it after reloads and navigations. */
 let watchVerify = false;
 /** "Saved" note of the site card, kept across rebuilds while the host stays the same. */
@@ -188,7 +191,17 @@ async function runVerify(): Promise<void> {
     result = { ok: false, attached: false, source: 'script', frames: [], error: (e as Error).message };
   }
   verifying = false;
-  if (token === verifyToken && tab?.url === url) verify = result;
+  // tab.url can already be the next page while the tab still shows the previous document
+  // (a navigation in flight or re-issued): such a report belongs to the old page.
+  const readFrom = result.frames.find((f) => f.kind === 'main')?.url;
+  const readHost = readFrom ? hostFromUrl(readFrom) : null; // null for error pages: accept those
+  const sameDocument = !readHost || !url || readHost === hostFromUrl(url);
+  if (token === verifyToken && tab?.url === url && sameDocument) {
+    verify = result;
+  } else if (token === verifyToken && !sameDocument && verifyRetries < MAX_VERIFY_RETRIES) {
+    verifyRetries++;
+    setTimeout(() => void runVerify(), 300); // read again once the new page is there
+  }
   if (verifyPending) {
     verifyPending = false;
     void runVerify();
@@ -403,6 +416,7 @@ async function main(): Promise<void> {
       // The shown report and any running check belong to the previous document.
       verify = null;
       verifyToken++;
+      verifyRetries = 0;
       if (savedNote && savedNote.host !== currentHost()) savedNote = null;
       renderTab();
       renderSite();

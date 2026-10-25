@@ -500,13 +500,19 @@ try {
     const languageNow = () => evaluate(cdp, popup.s, `(() => { const r = [...(document.querySelector('.verify table')?.rows ?? [])].find((x) => x.cells[0].textContent === 'navigator.language'); return r ? r.cells[r.cells.length - 1].textContent : null; })()`);
     await until(async () => ((await languageNow()) === 'en-US') || null, { message: 'en-US report' });
     await cdp.send('Page.navigate', { url: u('www.apple.localhost', '/plain.html') }, site.s);
-    let stale = false;
+    let stale = null;
     await until(async () => {
       const v = await languageNow();
-      if (v === 'en-US' && (await evaluate(cdp, popup.s, `document.querySelector('#tabCard .host')?.textContent`)) === 'www.apple.localhost') stale = true;
+      if (!stale && v === 'en-US' && (await evaluate(cdp, popup.s, `document.querySelector('#tabCard .host')?.textContent`)) === 'www.apple.localhost') {
+        // What was shown, and what the tab really had at that moment.
+        const table = await evaluate(cdp, popup.s, `[...document.querySelector('.verify table').rows].map((r) => [...r.cells].map((c) => c.textContent).join('/')).slice(0, 4).join(' | ')`);
+        const page = await evaluate(cdp, site.s, `location.host + ' ' + navigator.language + '/' + Intl.DateTimeFormat().resolvedOptions().locale`).catch((e) => e.message);
+        const st = await status(site.tabId);
+        stale = `shown: ${table}; page: ${page}; status: ${st.host} applied ${st.applied?.locale} late ${st.late}`;
+      }
       return v === 'ja-JP' || null;
     }, { message: 'report re-read for the new page', intervalMs: 50 });
-    if (stale) throw new Error('the en-US report of the previous page was shown under the new host');
+    if (stale) throw new Error(`the en-US report of the previous page was shown under the new host (${stale})`);
   });
 
   await test('version tip and Updates page: nothing checked until asked; a newer release shows only a tip (release page link, no update steps)', async () => {
