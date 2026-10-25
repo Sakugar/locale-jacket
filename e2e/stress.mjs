@@ -224,6 +224,26 @@ const probe = (name, fn) => run('probe', name, fn);
 
 const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 
+/**
+ * Click the popup's "Check what the page sees" for a tab and return its "Now" column
+ * ({ 'navigator.language': …, 'Intl.DateTimeFormat': … }).
+ */
+async function popupCheck(tabId) {
+  const popup = await openTab(`chrome-extension://${extId}/popup/popup.html?tabId=${tabId}`);
+  await until(() => evaluate(cdp, popup.s, `(() => { const b = [...document.querySelectorAll('#tabCard button')].find((x) => x.textContent === 'Check what the page sees'); b?.click(); return !!b; })()`), { message: 'check button' });
+  const cells = () => evaluate(cdp, popup.s, `[...(document.querySelector('.verify table')?.rows ?? [])].map((r) => [...r.cells].map((c) => c.textContent))`);
+  const rows = await until(async () => ((await cells()).length > 1 ? cells() : null), { message: 'verify table' });
+  await closeTab(popup);
+  return Object.fromEntries(rows.slice(1).map((r) => [r[0], r.at(-1)]));
+}
+
+/** Differences between the popup's check and what the page's own scripts see right now. */
+async function checkDisagrees(tab) {
+  const [shown, live] = [await popupCheck(tab.tabId), await evaluate(cdp, tab.s, '__ljSnapshot()')];
+  const pairs = [['navigator.language', live.language], ['Intl.DateTimeFormat', live.dateLocale], ['Intl.NumberFormat', live.numberLocale], ['Intl.Collator', live.collatorLocale]];
+  return pairs.filter(([k, v]) => shown[k] !== undefined && shown[k] !== v).map(([k, v]) => `${k}: popup says ${shown[k]}, page sees ${v}`);
+}
+
 /** Open a new target from inside a page (window.open) and adopt it. */
 async function openFromPage(tab, url, features = '') {
   await cdp.send('Runtime.evaluate', { expression: `window.open(${JSON.stringify(url)}, '_blank', ${JSON.stringify(features)}); true`, userGesture: true }, tab.s);
@@ -382,7 +402,12 @@ try {
     await cdp.send('Page.navigate', { url: u('apple.localhost', '/no-content') }, tab.s).catch(() => undefined);
     await sleep(600);
     if (!(await hrefOf(tab)).includes('google.localhost')) throw new Error('a 204 should leave the page in place');
-    expectLocale({ live: await evaluate(cdp, tab.s, '__ljSnapshot()') }, 'en-US', 'page after the 204', { start: false });
+    const wrong = localeProblems({ live: await evaluate(cdp, tab.s, '__ljSnapshot()') }, 'en-US', { start: false });
+    if (wrong.length) {
+      const st = await status(tab.tabId);
+      const disagree = await checkDisagrees(tab);
+      throw new Error(`page after the 204 should still be en-US: ${wrong.slice(0, 3).join(', ')}; status says ${st.applied?.locale}${st.late || st.warnings.length ? ' (with a warning)' : ' with no warning'}${disagree.length ? `; the popup's check disagrees with the page: ${disagree.join('; ')}` : ''}`);
+    }
     await cdp.send('Page.navigate', { url: 'http://unreachable.apple.localhost:1/' }, tab.s).catch(() => undefined);
     await sleep(1500);
     await cdp.send('Page.navigate', { url: u('docs.google.localhost', '/missing-page') }, tab.s).catch(() => undefined);
@@ -439,7 +464,7 @@ try {
     // navigator.language and the header must still be native, since those are per tab.
     if (r.live.language !== NATIVE) throw new Error(`navigator.language leaked: ${r.live.language}`);
     expectHeader(r.documentAcceptLanguage, HEADER[NATIVE], 'SYSTEM popup document');
-    if (!admitsProblem(st)) throw new Error(`Intl leaks from the shared process and the tab does not report it: ${problems.slice(0, 4).join(', ')}; status ${JSON.stringify({ session: st?.session, warnings: st?.warnings })}`);
+    if (!admitsProblem(st)) throw new Error(`Intl leaks from the shared process and the tab does not report it (the popup's check shows it only as raw values: ${JSON.stringify(await popupCheck(popup.tabId))}): ${problems.slice(0, 4).join(', ')}; status ${JSON.stringify({ session: st?.session, warnings: st?.warnings })}`);
     note(`Intl leaks from the shared process, reported: ${st.warnings.join(' | ')}`);
     return 'reported';
   });

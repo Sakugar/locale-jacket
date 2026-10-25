@@ -30,13 +30,14 @@ Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone a
 
 ## Found by the stress suite
 
-Each item has a failing test in `e2e/stress.mjs`. It failed the same way in Chrome 156 and Edge 156, on every run.
+Each item has a failing test in `e2e/stress.mjs`. It failed the same way in Chrome 156 and Edge 156, on every run. S1–S3 were also reproduced by hand in Linux Chrome 156 with the Playwright MCP, looking at the popup and the options page (see "Checking the UI with the Playwright MCP" below).
 
 ### S1. Closed tabs come back as tracked "failed" sessions (P1)
 
 - **What:** close a tab while the extension is still attaching (slow server, closed 0–400 ms after opening). 3–4 of 10 such tabs stay in `localeJacket.statuses()` forever, with session `failed` and no host. They are never cleaned up. Each one is a small leak, and the options page's Sessions view lists tabs that no longer exist.
 - **Where:** `SessionManager.session()` (`src/background/manager.ts`) creates a `TabSession` for any tab id it doesn't know. An event that arrives after `chrome.tabs.onRemoved` (`webNavigation`, `tabs.onUpdated`, a late debugger result) therefore re-creates a session for a closed tab.
 - **Fix:** remember removed tab ids (Chrome doesn't reuse them within a browser session). `session()` should not create entries for those ids, and late events for them should be ignored.
+- **In the UI:** nothing is visible, because the options page's Sessions table filters by open tabs. The ghosts only show in `localeJacket.statuses()`, each with the error "No tab with given id …", and they pile up (8 after 20 closed tabs). They only appear when the tab is created with its URL (Ctrl+click, `target="_blank"`, `Target.createTarget`). Opening about:blank and then navigating didn't leak.
 - **Test:** "tab closed while the extension is attaching".
 
 ### S2. A navigation that never commits leaves the other site's profile on the page (P1)
@@ -44,13 +45,17 @@ Each item has a failing test in `e2e/stress.mjs`. It failed the same way in Chro
 - **What:** on a page that should be en-US, start a navigation to a ja-JP site that answers `204 No Content`. The gate applies ja-JP for that navigation, but the 204 never commits, so the old en-US page stays and keeps reporting ja-JP (`navigator.language`, every `Intl` constructor). The same probably happens with downloads and any other navigation that doesn't commit.
 - **Where:** `onNavigationError()` in `src/background/tab-session.ts` restores the committed page's profile, but Chrome doesn't fire `webNavigation.onErrorOccurred` for a 204.
 - **Fix:** after an abort-and-reissue, if no commit follows (watch `Page.frameStoppedLoading` or the re-issued request's response status, or use a timeout), re-apply the profile of the URL that is actually committed.
-- **Test:** "204 No Content, a network error page and a 404 in between…".
+- **The popup makes it worse:** the tab's status knows ja-JP is applied (`applied.locale`), but the popup's badge says **"Active · de-DE … Applied from the start of the page"**, taken from the rule, with no warning. Its "Check what the page sees" grades backwards: it compares against the stale target profile (ja-JP), so "At start: de-DE" shows red and "Now: ja-JP" shows green.
+- **Seen once, not reproduced in 2 more tries:** the extension re-applied de-DE in its session, but the page's main world kept ja-JP, and the check (a fresh isolated world) showed de-DE. In that state the check disagrees with the page.
+- **A reload fixes the page.**
+- **Test:** "204 No Content, a network error page and a 404 in between…". It also compares the popup's check with the page (`checkDisagrees`).
 
 ### S3. SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it (P2)
 
 - **What:** an en-US page (`mail.google.localhost`) opens a same-site popup to a SYSTEM site (`accounts.google.localhost`), the OAuth pattern. The popup shares the opener's renderer, so its `Intl` reports en-US instead of the native locale. `navigator.language` and the header are correct. The tab's status is session `none` with no warnings, so the popup shows nothing wrong. `LIMITATIONS.md` says such tabs show *Partial*, and the project's rule is that conflicts are reported, never hidden.
 - **Same case with a profile:** with another profile (fr-FR popup in an en-US process), the conflict *is* reported ("Page scripts started with fr-FR / en-US instead of fr-FR").
 - **Fix:** for a SYSTEM tab whose opener is spoofed and same-site, check `Intl` once (e.g. through `chrome.scripting`, or a short debugger attach) and show it as *Partial*. Or keep a session on SYSTEM tabs opened by a spoofed same-site page.
+- **In the UI:** the popup's badge says "System locale" and "No spoofing on this site; the browser's own locale is used." "Check what the page sees" shows `navigator.language` zh-CN next to `Intl.*` de-DE, but marks nothing, since a SYSTEM tab has no expected locale to compare with.
 - **Test:** "same-site popup to a SYSTEM site (accounts.google)…".
 
 ### S4. Nested dedicated workers keep the real `navigator.language` (P2)
@@ -64,6 +69,15 @@ Each item has a failing test in `e2e/stress.mjs`. It failed the same way in Chro
 
 - **What:** stored DOMAIN-REGEX rules that the check refuses are listed as "Stored rule #12 was invalid and has been skipped: …". The message doesn't show the pattern, so with many rules it's hard to find the right one.
 - **Fix:** include the rule's type and value in the message (trimmed when long), as `regexProblems` in `sw.ts` already does for deferred checks.
+
+## Checking the UI with the Playwright MCP
+
+The stress suite reads what the page sees. The popup and the options page need a person, or the Playwright MCP:
+- **The MCP's own browser can't run the extension.** Playwright launches Chrome with `--disable-extensions`, so `Extensions.loadUnpacked` returns an id but no worker starts, and `chrome-extension://` pages are blocked (`ERR_BLOCKED_BY_CLIENT`).
+- **Workaround, no config change:** in `browser_run_code_unsafe`, start a second Chrome with `page.context().browser().browserType().launchPersistentContext(dir, { channel: 'chrome', ignoreDefaultArgs: ['--disable-extensions'], args: ['--enable-unsafe-extension-debugging', '--lang=zh-CN'] })`, then `Extensions.loadUnpacked` through `ctx.browser().newBrowserCDPSession()`.
+- **Each tool call runs in a fresh scope.** Keep handles on the persistent `page` object (`page.__lj = { ctx }`), not `globalThis`.
+- **First navigation fails in Playwright:** `page.goto` to a spoofed site fails with `ERR_ABORTED`, because of the extension's abort-and-reissue. Catch it and wait for the page.
+- **Clean up:** close the second Chrome (`ctx.close()`), the MCP browser and the verify server afterwards, and delete the profile.
 
 ## Code issues
 
