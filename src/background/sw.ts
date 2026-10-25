@@ -637,7 +637,7 @@ chrome.webNavigation.onCommitted.addListener(
     ),
   WEB,
 );
-chrome.webNavigation.onErrorOccurred.addListener((d) => withManager((m) => m.onNavigationError(d.tabId, d.frameId)), WEB);
+chrome.webNavigation.onErrorOccurred.addListener((d) => withManager((m) => m.onNavigationError(d.tabId, d.frameId, d.url)), WEB);
 
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.id === undefined) return;

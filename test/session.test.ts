@@ -172,7 +172,7 @@ describe('TabSession lifecycle', () => {
     const again = paused(GOOGLE, 'MAIN', { 'Accept-Language': 'zh-CN,zh;q=0.9' });
     t.onRequestPaused(again);
     assert.deepEqual(port.last('Fetch.continueRequest')?.params, { requestId: again.requestId, headers: [{ name: 'Accept-Language', value: 'en-US,en;q=0.9' }] });
-    await t.onNavigationError();
+    await t.onNavigationError(GOOGLE);
     port.probe = snapshot('en-US');
     await t.onCommitted({ url: GOOGLE, transitionType: 'link', timeStamp: ctx.now() });
     assert.deepEqual(port.emulation(), []);
@@ -251,11 +251,42 @@ describe('TabSession lifecycle', () => {
       requestId: again.requestId,
       headers: [{ name: 'Accept', value: 'text/html' }, { name: 'Accept-Language', value: 'ja-JP,ja;q=0.9' }],
     });
-    await t.onNavigationError(); // the aborted original navigation reports an error
+    await t.onNavigationError(APPLE); // the aborted original navigation reports an error
     assert.deepEqual(port.emulation(), [], 'the abort error does not revert the new profile');
     port.probe = snapshot('ja-JP');
     await t.onCommitted({ url: APPLE, transitionType: 'link' });
     assert.equal(t.status().late, false);
+    assert.equal(t.status().applied?.locale, 'ja-JP');
+  });
+
+  it('a re-issued navigation that loads no page (204, download) reverts to the committed page’s profile', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    t.onRequestPaused(paused(APPLE));
+    await flush();
+    assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'ja-JP' });
+    t.onRequestPaused(paused(APPLE)); // the re-issued request passes the gate
+    port.clear();
+    await t.onNavigationError(APPLE); // our own abort
+    assert.deepEqual(port.emulation(), [], 'the abort error is ignored');
+    await t.onNavigationError(APPLE); // the server answered 204: nothing commits
+    assert.deepEqual(port.last('Emulation.setLocaleOverride')?.params, { locale: 'en-US' });
+    assert.equal(t.status().applied?.locale, 'en-US');
+    // The next visit to the same URL is gated again rather than let through as a re-issue.
+    port.clear();
+    t.onRequestPaused(paused(APPLE));
+    await flush();
+    assert.ok(port.methods().includes('Fetch.failRequest'), 're-issued again with the right profile');
+  });
+
+  it('errors of other navigations during a re-issue keep the new profile', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    t.onRequestPaused(paused(APPLE));
+    await flush();
+    port.clear();
+    await t.onNavigationError(EXAMPLE); // e.g. a navigation the re-issue superseded
+    await t.onNavigationError(); // no URL: treated the same way
+    await t.onNavigationError(APPLE); // our own abort
+    assert.deepEqual(port.emulation(), []);
     assert.equal(t.status().applied?.locale, 'ja-JP');
   });
 

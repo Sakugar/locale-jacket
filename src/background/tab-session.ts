@@ -167,8 +167,12 @@ export class TabSession {
   private autoReloads: { url: string; at: number }[] = [];
   private error: string | null = null;
   private pendingGateUrl: string | null = null;
-  /** Navigation aborted and re-issued by the gate (suppresses the resulting error event). */
-  private reissue: { url: string; at: number } | null = null;
+  /**
+   * Navigation aborted and re-issued by the gate. `abortErrors` counts the error events our
+   * own abort still owes; only those are ignored, so a re-issued navigation that fails or
+   * ends without a document (204, download) still reverts to the committed page's profile.
+   */
+  private reissue: { url: string; at: number; abortErrors: number } | null = null;
   /** Last main-frame navigation start reported by Page.frameStartedNavigating (tells history traversals apart). */
   private lastStart: { url: string; type: string } | null = null;
   private attachFailures: number[] = [];
@@ -488,7 +492,7 @@ export class TabSession {
     this.autoReloads = this.autoReloads.filter((r) => now - r.at < AUTO_RELOAD_COOLDOWN_MS);
     if (this.autoReloads.some((r) => r.url === url) || this.autoReloads.length >= AUTO_RELOAD_MAX_PER_WINDOW) return false;
     this.autoReloads.push({ url, at: now });
-    this.reissue = { url, at: now }; // the stopped navigation reports an error; ignore it
+    this.reissue = { url, at: now, abortErrors: 1 }; // the stopped navigation reports an error; ignore it
     this.url = url;
     this.resolution = res;
     const t = { tabId: this.tabId };
@@ -653,7 +657,8 @@ export class TabSession {
   private reissueNavigation(p: PausedRequest, res: Resolution): void {
     const url = p.request.url;
     const t = { tabId: this.tabId };
-    this.reissue = { url, at: this.ctx.now() };
+    const reissue = { url, at: this.ctx.now(), abortErrors: 1 };
+    this.reissue = reissue;
     this.log('debug', `gate: ${res.host ?? url} → ${res.profile?.locale ?? 'SYSTEM'} (profile change: aborting and re-issuing)`);
     const applied = this.applyMain(res, false);
     const referrer = Object.entries(p.request.headers).find(([k]) => k.toLowerCase() === 'referer')?.[1];
@@ -684,6 +689,9 @@ export class TabSession {
           ...(referrer ? { referrer } : {}),
           ...(policy ? { referrerPolicy: policy } : {}),
         });
+      }, (e) => {
+        reissue.abortErrors = 0; // nothing was aborted, so no error event is owed
+        throw e;
       })
       .catch((e) => {
         if (!isDetachedError(e)) this.log('warn', `Could not re-issue the navigation: ${errorMessage(e)}`);
@@ -758,11 +766,23 @@ export class TabSession {
     this.ctx.changed(this.tabId);
   }
 
-  onNavigationError(): Promise<void> {
+  /** webNavigation.onErrorOccurred for the main frame (`url`: the navigation that failed). */
+  onNavigationError(url?: string): Promise<void> {
     return this.queue.run(async () => {
       this.pendingGateUrl = null;
-      // Our own abort-and-reissue produces an error event for the aborted navigation.
-      if (this.reissue && this.ctx.now() - this.reissue.at < REISSUE_GUARD_MS) return;
+      const r = this.reissue;
+      if (r && this.ctx.now() - r.at < REISSUE_GUARD_MS) {
+        // Another navigation's error while ours is in flight (e.g. one it superseded).
+        if (url === undefined || stripHash(url) !== stripHash(r.url)) return;
+        // Our own abort-and-reissue produces one error event for the aborted navigation.
+        if (r.abortErrors > 0) {
+          r.abortErrors--;
+          return;
+        }
+        // The re-issued navigation itself ended without a document: revert below.
+        this.reissue = null;
+        this.log('debug', 'The re-issued navigation did not load a page; restoring the current page’s profile.');
+      }
       if (this.state !== 'attached' || !this.url) return;
       const res = this.resolveUrl(this.url);
       if (!this.isApplied(res)) await this.applyMain(res, true);
@@ -912,11 +932,14 @@ export class TabSession {
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.text);
       return r.result.value;
     };
+    // Judge the page by the rule for the document that is loaded, not by the profile last
+    // sent: if those disagree (a navigation that never committed), the check must show it.
+    const expectedMain = this.resolution.profile?.locale ?? null;
     try {
       const v = await evalIn(undefined, this.mainFrameId);
-      frames.push({ kind: 'main', url: v.url, start: v.start, live: v.live, expectedLocale: this.targetProfile?.locale ?? null, error: null });
+      frames.push({ kind: 'main', url: v.url, start: v.start, live: v.live, expectedLocale: expectedMain, error: null });
     } catch (e) {
-      frames.push({ kind: 'main', url: this.url ?? '', start: null, live: null, expectedLocale: this.targetProfile?.locale ?? null, error: errorMessage(e) });
+      frames.push({ kind: 'main', url: this.url ?? '', start: null, live: null, expectedLocale: expectedMain, error: errorMessage(e) });
     }
     for (const child of this.children.values()) {
       if (child.type !== 'iframe') continue;

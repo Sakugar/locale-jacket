@@ -154,9 +154,9 @@ export class SessionManager {
     void this.session(tabId).onCommitted(details);
   }
 
-  onNavigationError(tabId: number, frameId: number): void {
+  onNavigationError(tabId: number, frameId: number, url?: string): void {
     if (frameId !== 0) return;
-    void this.tabs.get(tabId)?.onNavigationError();
+    void this.tabs.get(tabId)?.onNavigationError(url);
   }
 
   // ------------------------------------------------------- debugger events
