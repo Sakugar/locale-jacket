@@ -1,17 +1,16 @@
 # Development backlog
 
-Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. S2 is fixed (unreleased). Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
+Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. S1 and S2 are fixed and S7 mostly fixed (unreleased). Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
 
 Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone asks.
 
 | # | Issue | Area | Priority |
 |---|---|---|---|
-| S1 | Closed tabs come back as tracked "failed" sessions | `src/background/manager.ts` | P1 |
 | S3 | SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it | `src/background/tab-session.ts` | P2 |
 | S4 | Nested dedicated workers keep the real `navigator.language` | `src/background/tab-session.ts` | P2 |
 | S5 | Refused stored regexes are named by position, not by pattern | `src/shared/config-io.ts` | P3 |
 | S6 | A profile switch sometimes adds an extra history entry (intermittent) | `src/background/tab-session.ts` | P2 |
-| S7 | The popup can briefly show the previous page's check under the new host (Edge) | `src/popup/popup.ts` | P3 |
+| S7 | The popup can briefly show the previous page's check under the new host (Edge; much rarer since the fix) | `src/popup/popup.ts` | P3 |
 | 1 | GeoSite `cn` category blocks the worker for about 130 ms | `src/shared/geosite.ts` | P2 |
 | 2 | Options-page import has no whole-file regex budget | `src/shared/config-io.ts`, `src/options/options.ts` | P2 |
 | 3 | 20 large subscriptions can exceed the `storage.local` quota | `src/shared/subscriptions.ts`, `src/background/sw.ts` | P2 |
@@ -33,13 +32,9 @@ Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone a
 
 Each item has a failing test in `e2e/stress.mjs`. It failed the same way in Chrome 156 and Edge 156, on every run. S1–S3 were also reproduced by hand in Linux Chrome 156 with the Playwright MCP, looking at the popup and the options page (see "Checking the UI with the Playwright MCP" below).
 
-### S1. Closed tabs come back as tracked "failed" sessions (P1)
+### S1. Closed tabs come back as tracked "failed" sessions (fixed, unreleased)
 
-- **What:** close a tab while the extension is still attaching (slow server, closed 0–400 ms after opening). 3–4 of 10 such tabs stay in `localeJacket.statuses()` forever, with session `failed` and no host. They are never cleaned up. Each one is a small leak, and the options page's Sessions view lists tabs that no longer exist.
-- **Where:** `SessionManager.session()` (`src/background/manager.ts`) creates a `TabSession` for any tab id it doesn't know. An event that arrives after `chrome.tabs.onRemoved` (`webNavigation`, `tabs.onUpdated`, a late debugger result) therefore re-creates a session for a closed tab.
-- **Fix:** remember removed tab ids (Chrome doesn't reuse them within a browser session). `session()` should not create entries for those ids, and late events for them should be ignored.
-- **In the UI:** nothing is visible, because the options page's Sessions table filters by open tabs. The ghosts only show in `localeJacket.statuses()`, each with the error "No tab with given id …", and they pile up (8 after 20 closed tabs). They only appear when the tab is created with its URL (Ctrl+click, `target="_blank"`, `Target.createTarget`). Opening about:blank and then navigating didn't leak.
-- **Test:** "tab closed while the extension is attaching".
+Fixed: see `CHANGELOG.md` [Unreleased]. `SessionManager` remembers removed tab ids (up to 1,000; Chrome doesn't reuse them within a browser session), and `session()` no longer creates entries for them. Covered by the unit test "events that arrive after a tab closed…" and the stress test "tab closed while the extension is attaching".
 
 ### S2. A navigation that never commits leaves the other site's profile on the page (fixed, unreleased)
 
@@ -66,11 +61,11 @@ Fixed: see `CHANGELOG.md` [Unreleased]. `onNavigationError` now ignores only the
 - **Where to look:** `reissueNavigation()`: `Page.navigate` with `transitionType: 'link'`. The handoff's invariant is "exactly one history entry" per re-issued navigation.
 - **Test:** "ping-pong…". On failure it lists the entries (`pp` numbers), which shows which hop was doubled.
 
-### S7. The popup can briefly show the previous page's check under the new host (P3, Edge)
+### S7. The popup can briefly show the previous page's check under the new host (P3, Edge; mostly fixed, unreleased)
 
-- **What:** e2e "popup keeps its controls…" fails in Edge 156 about 2 times in 3, with and without the S2 fix: right after navigating, the popup shows the new host with the previous page's en-US check. The 1.3.3 release run happened to pass.
-- **Where:** `src/popup/popup.ts`. The 1.5 s status poll can show the new host (from the worker's commit) before the popup's `chrome.tabs.onUpdated` (URL change) clears `verify`.
-- **Fix:** in the poll, compare `chrome.tabs.get(tab.id)` with `tab.url` and run the same reset as the `onUpdated` handler. Or drop `verify` when its main frame's host differs from the status host.
+- **What:** e2e "popup keeps its controls…" failed in Edge 156 about 2 times in 3: right after navigating, the popup showed the new host with the previous page's en-US check.
+- **Fix (unreleased):** `runVerify()` in `src/popup/popup.ts` accepts a result only when its main frame's `location.href` is on the host the popup shows. Otherwise it reads again, every 300 ms and at most 20 times per navigation. A check could start while `tab.url` already pointed to the next page but the tab still showed the old document.
+- **Result:** 32 of 34 Edge runs passed (before: 2 of 6). The two failures came before the test recorded diagnostics; the 28 runs since then all passed. If it fails again, the error shows the table, the page's real host and values, and the tab's status at that moment. That tells whether the result was stale or the new page really reported en-US for a moment.
 
 ### S5. Refused stored regexes are named by position, not by pattern (P3)
 
