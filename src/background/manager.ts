@@ -31,8 +31,13 @@ export function spoofingPossible(s: Settings): boolean {
   return s.enabled && (s.defaultAction.action === 'PROFILE' || s.rules.some((r) => r.enabled && r.action === 'PROFILE'));
 }
 
+/** How many closed tab ids to remember (Chrome never reuses a tab id within a browser session). */
+const MAX_REMOVED_TABS = 1000;
+
 export class SessionManager {
   private readonly tabs = new Map<number, TabSession>();
+  /** Closed tabs: an event that arrives after chrome.tabs.onRemoved must not bring one back. */
+  private readonly removed = new Set<number>();
   private settings: Settings;
   private suspended: boolean;
   private readonly ctx: TabContext;
@@ -61,9 +66,10 @@ export class SessionManager {
     };
   }
 
-  private session(tabId: number, url: string | null = null): TabSession {
+  private session(tabId: number, url: string | null = null): TabSession | null {
     let t = this.tabs.get(tabId);
     if (!t) {
+      if (this.removed.has(tabId)) return null;
       t = new TabSession(tabId, this.ctx, url);
       this.tabs.set(tabId, t);
     }
@@ -94,7 +100,7 @@ export class SessionManager {
     } catch (e) {
       this.ctx.log('warn', null, `Could not list tabs: ${errorMessage(e)}`);
     }
-    await Promise.all(tabs.map((tab) => this.session(tab.id, tab.url).onTabSeen(tab.url, true)));
+    await Promise.all(tabs.map((tab) => this.session(tab.id, tab.url)?.onTabSeen(tab.url, true)));
   }
 
   async updateSettings(next: Settings): Promise<void> {
@@ -125,33 +131,35 @@ export class SessionManager {
   // ------------------------------------------------------------ tab events
 
   onTabCreated(tabId: number, url: string | null): void {
-    void this.session(tabId, null).onTabSeen(url, false);
+    void this.session(tabId, null)?.onTabSeen(url, false);
   }
 
   onTabRemoved(tabId: number): void {
     const t = this.tabs.get(tabId);
     if (t) t.close();
     this.tabs.delete(tabId);
+    this.removed.add(tabId);
+    if (this.removed.size > MAX_REMOVED_TABS) this.removed.delete(this.removed.values().next().value!);
     this.deps.onTabGone(tabId);
   }
 
   onTabReplaced(addedTabId: number, removedTabId: number, url: string | null): void {
     this.onTabRemoved(removedTabId);
-    void this.session(addedTabId, url).onTabSeen(url, true);
+    void this.session(addedTabId, url)?.onTabSeen(url, true);
   }
 
   onTabUrlChanged(tabId: number, url: string): void {
-    this.session(tabId).onUrlChanged(url);
+    this.session(tabId)?.onUrlChanged(url);
   }
 
   onBeforeNavigate(tabId: number, frameId: number, url: string): void {
     if (frameId !== 0) return;
-    void this.session(tabId).onBeforeNavigate(url);
+    void this.session(tabId)?.onBeforeNavigate(url);
   }
 
   onCommitted(tabId: number, frameId: number, details: CommitDetails): void {
     if (frameId !== 0) return;
-    void this.session(tabId).onCommitted(details);
+    void this.session(tabId)?.onCommitted(details);
   }
 
   onNavigationError(tabId: number, frameId: number, url?: string): void {

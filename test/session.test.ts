@@ -829,6 +829,25 @@ describe('SessionManager', () => {
     assert.deepEqual(port.detachCalls, [5]);
   });
 
+  it('events that arrive after a tab closed do not bring it back', async () => {
+    const { m, port } = makeManager(defaultSettings());
+    m.onTabCreated(8, GOOGLE);
+    m.onTabRemoved(8); // closed while the attach was still starting
+    m.onBeforeNavigate(8, 0, GOOGLE);
+    m.onCommitted(8, 0, { url: GOOGLE });
+    m.onTabUrlChanged(8, GOOGLE);
+    m.onTabCreated(8, GOOGLE);
+    await settle();
+    assert.equal(m.status(8), null);
+    assert.deepEqual(m.statuses(), []);
+    assert.ok(port.attachCalls <= 1, `attached ${port.attachCalls} times`);
+    // A replaced tab's old id is gone for good as well.
+    m.onTabReplaced(10, 9, GOOGLE);
+    m.onCommitted(9, 0, { url: GOOGLE });
+    await settle();
+    assert.equal(m.status(9), null);
+  });
+
   it('IP rules decide with the server address observed for the host', async () => {
     const s = defaultSettings();
     s.rules.push({ id: 'ip', type: 'IP-CIDR', value: normalizeRuleValue('IP-CIDR', '17.0.0.0/8').value!, action: 'PROFILE', profile: makeProfile('ja-JP'), enabled: true, priority: 0, note: '' });
