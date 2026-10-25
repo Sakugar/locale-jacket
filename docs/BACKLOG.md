@@ -1,11 +1,16 @@
 # Development backlog
 
-Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
+Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
 
 Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone asks.
 
 | # | Issue | Area | Priority |
 |---|---|---|---|
+| S1 | Closed tabs come back as tracked "failed" sessions | `src/background/manager.ts` | P1 |
+| S2 | A navigation that never commits (204) leaves the other site's profile on the page | `src/background/tab-session.ts` | P1 |
+| S3 | SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it | `src/background/tab-session.ts` | P2 |
+| S4 | Nested dedicated workers keep the real `navigator.language` | `src/background/tab-session.ts` | P2 |
+| S5 | Refused stored regexes are named by position, not by pattern | `src/shared/config-io.ts` | P3 |
 | 1 | GeoSite `cn` category blocks the worker for about 130 ms | `src/shared/geosite.ts` | P2 |
 | 2 | Options-page import has no whole-file regex budget | `src/shared/config-io.ts`, `src/options/options.ts` | P2 |
 | 3 | 20 large subscriptions can exceed the `storage.local` quota | `src/shared/subscriptions.ts`, `src/background/sw.ts` | P2 |
@@ -22,6 +27,43 @@ Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone a
 | D2 | Subscription and data-set URLs may be plain `http://` | product decision | ask user |
 | T1 | Chrome DevTools MCP can't load the extension | dev tooling | — |
 | T2 | Windows `git.exe` sometimes can't reach github.com | dev tooling | — |
+
+## Found by the stress suite
+
+Each item has a failing test in `e2e/stress.mjs`. It failed the same way in Chrome 156 and Edge 156, on every run.
+
+### S1. Closed tabs come back as tracked "failed" sessions (P1)
+
+- **What:** close a tab while the extension is still attaching (slow server, closed 0–400 ms after opening). 3–4 of 10 such tabs stay in `localeJacket.statuses()` forever, with session `failed` and no host. They are never cleaned up. Each one is a small leak, and the options page's Sessions view lists tabs that no longer exist.
+- **Where:** `SessionManager.session()` (`src/background/manager.ts`) creates a `TabSession` for any tab id it doesn't know. An event that arrives after `chrome.tabs.onRemoved` (`webNavigation`, `tabs.onUpdated`, a late debugger result) therefore re-creates a session for a closed tab.
+- **Fix:** remember removed tab ids (Chrome doesn't reuse them within a browser session). `session()` should not create entries for those ids, and late events for them should be ignored.
+- **Test:** "tab closed while the extension is attaching".
+
+### S2. A navigation that never commits leaves the other site's profile on the page (P1)
+
+- **What:** on a page that should be en-US, start a navigation to a ja-JP site that answers `204 No Content`. The gate applies ja-JP for that navigation, but the 204 never commits, so the old en-US page stays and keeps reporting ja-JP (`navigator.language`, every `Intl` constructor). The same probably happens with downloads and any other navigation that doesn't commit.
+- **Where:** `onNavigationError()` in `src/background/tab-session.ts` restores the committed page's profile, but Chrome doesn't fire `webNavigation.onErrorOccurred` for a 204.
+- **Fix:** after an abort-and-reissue, if no commit follows (watch `Page.frameStoppedLoading` or the re-issued request's response status, or use a timeout), re-apply the profile of the URL that is actually committed.
+- **Test:** "204 No Content, a network error page and a 404 in between…".
+
+### S3. SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it (P2)
+
+- **What:** an en-US page (`mail.google.localhost`) opens a same-site popup to a SYSTEM site (`accounts.google.localhost`), the OAuth pattern. The popup shares the opener's renderer, so its `Intl` reports en-US instead of the native locale. `navigator.language` and the header are correct. The tab's status is session `none` with no warnings, so the popup shows nothing wrong. `LIMITATIONS.md` says such tabs show *Partial*, and the project's rule is that conflicts are reported, never hidden.
+- **Same case with a profile:** with another profile (fr-FR popup in an en-US process), the conflict *is* reported ("Page scripts started with fr-FR / en-US instead of fr-FR").
+- **Fix:** for a SYSTEM tab whose opener is spoofed and same-site, check `Intl` once (e.g. through `chrome.scripting`, or a short debugger attach) and show it as *Partial*. Or keep a session on SYSTEM tabs opened by a spoofed same-site page.
+- **Test:** "same-site popup to a SYSTEM site (accounts.google)…".
+
+### S4. Nested dedicated workers keep the real `navigator.language` (P2)
+
+- **What:** a dedicated worker started *by another worker* reports the native `navigator.language` and `navigator.languages` (zh-CN). Its `Intl` is right, because that is per process. Workers started by the page itself, including blob: and data: workers, are correct. This isn't in `LIMITATIONS.md`.
+- **Where:** worker overrides are applied to targets auto-attached from the page. A worker's own child workers need auto-attach set on the worker's session too.
+- **Fix:** call `Target.setAutoAttach` (with `waitForDebuggerOnStart`) on each worker session as well, and apply the same overrides. Document the gap if that isn't possible.
+- **Test:** "same-process contexts follow the page…" (`nestedWorker`).
+
+### S5. Refused stored regexes are named by position, not by pattern (P3)
+
+- **What:** stored DOMAIN-REGEX rules that the check refuses are listed as "Stored rule #12 was invalid and has been skipped: …". The message doesn't show the pattern, so with many rules it's hard to find the right one.
+- **Fix:** include the rule's type and value in the message (trimmed when long), as `regexProblems` in `sw.ts` already does for deferred checks.
 
 ## Code issues
 
