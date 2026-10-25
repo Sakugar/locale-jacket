@@ -1,16 +1,17 @@
 # Development backlog
 
-Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
+Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. S2 is fixed (unreleased). Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
 
 Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone asks.
 
 | # | Issue | Area | Priority |
 |---|---|---|---|
 | S1 | Closed tabs come back as tracked "failed" sessions | `src/background/manager.ts` | P1 |
-| S2 | A navigation that never commits (204) leaves the other site's profile on the page | `src/background/tab-session.ts` | P1 |
 | S3 | SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it | `src/background/tab-session.ts` | P2 |
 | S4 | Nested dedicated workers keep the real `navigator.language` | `src/background/tab-session.ts` | P2 |
 | S5 | Refused stored regexes are named by position, not by pattern | `src/shared/config-io.ts` | P3 |
+| S6 | A profile switch sometimes adds an extra history entry (intermittent) | `src/background/tab-session.ts` | P2 |
+| S7 | The popup can briefly show the previous page's check under the new host (Edge) | `src/popup/popup.ts` | P3 |
 | 1 | GeoSite `cn` category blocks the worker for about 130 ms | `src/shared/geosite.ts` | P2 |
 | 2 | Options-page import has no whole-file regex budget | `src/shared/config-io.ts`, `src/options/options.ts` | P2 |
 | 3 | 20 large subscriptions can exceed the `storage.local` quota | `src/shared/subscriptions.ts`, `src/background/sw.ts` | P2 |
@@ -40,15 +41,9 @@ Each item has a failing test in `e2e/stress.mjs`. It failed the same way in Chro
 - **In the UI:** nothing is visible, because the options page's Sessions table filters by open tabs. The ghosts only show in `localeJacket.statuses()`, each with the error "No tab with given id …", and they pile up (8 after 20 closed tabs). They only appear when the tab is created with its URL (Ctrl+click, `target="_blank"`, `Target.createTarget`). Opening about:blank and then navigating didn't leak.
 - **Test:** "tab closed while the extension is attaching".
 
-### S2. A navigation that never commits leaves the other site's profile on the page (P1)
+### S2. A navigation that never commits leaves the other site's profile on the page (fixed, unreleased)
 
-- **What:** on a page that should be en-US, start a navigation to a ja-JP site that answers `204 No Content`. The gate applies ja-JP for that navigation, but the 204 never commits, so the old en-US page stays and keeps reporting ja-JP (`navigator.language`, every `Intl` constructor). The same probably happens with downloads and any other navigation that doesn't commit.
-- **Where:** `onNavigationError()` in `src/background/tab-session.ts` restores the committed page's profile, but Chrome doesn't fire `webNavigation.onErrorOccurred` for a 204.
-- **Fix:** after an abort-and-reissue, if no commit follows (watch `Page.frameStoppedLoading` or the re-issued request's response status, or use a timeout), re-apply the profile of the URL that is actually committed.
-- **The popup makes it worse:** the tab's status knows ja-JP is applied (`applied.locale`), but the popup's badge says **"Active · de-DE … Applied from the start of the page"**, taken from the rule, with no warning. Its "Check what the page sees" grades backwards: it compares against the stale target profile (ja-JP), so "At start: de-DE" shows red and "Now: ja-JP" shows green.
-- **Seen once, not reproduced in 2 more tries:** the extension re-applied de-DE in its session, but the page's main world kept ja-JP, and the check (a fresh isolated world) showed de-DE. In that state the check disagrees with the page.
-- **A reload fixes the page.**
-- **Test:** "204 No Content, a network error page and a 404 in between…". It also compares the popup's check with the page (`checkDisagrees`).
+Fixed: see `CHANGELOG.md` [Unreleased]. `onNavigationError` now ignores only the one error event each self-made abort causes, and only for the re-issued URL. The popup's check grades the page by the rule for the loaded document. The stress test "204 No Content…" covers both, including the popup's check.
 
 ### S3. SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it (P2)
 
@@ -64,6 +59,18 @@ Each item has a failing test in `e2e/stress.mjs`. It failed the same way in Chro
 - **Where:** worker overrides are applied to targets auto-attached from the page. A worker's own child workers need auto-attach set on the worker's session too.
 - **Fix:** call `Target.setAutoAttach` (with `waitForDebuggerOnStart`) on each worker session as well, and apply the same overrides. Document the gap if that isn't possible.
 - **Test:** "same-process contexts follow the page…" (`nestedWorker`).
+
+### S6. A profile switch sometimes adds an extra history entry (P2, intermittent)
+
+- **What:** in "ping-pong" (one tab switching en-US ⇄ ja-JP 10 times), the history sometimes has 12 entries instead of 11: about 1 in 5 runs in Chrome 156, both with and without the S2 fix. Every page still ends with the right locale. One re-issue is apparently added as a new entry instead of taking the aborted navigation's place.
+- **Where to look:** `reissueNavigation()`: `Page.navigate` with `transitionType: 'link'`. The handoff's invariant is "exactly one history entry" per re-issued navigation.
+- **Test:** "ping-pong…". On failure it lists the entries (`pp` numbers), which shows which hop was doubled.
+
+### S7. The popup can briefly show the previous page's check under the new host (P3, Edge)
+
+- **What:** e2e "popup keeps its controls…" fails in Edge 156 about 2 times in 3, with and without the S2 fix: right after navigating, the popup shows the new host with the previous page's en-US check. The 1.3.3 release run happened to pass.
+- **Where:** `src/popup/popup.ts`. The 1.5 s status poll can show the new host (from the worker's commit) before the popup's `chrome.tabs.onUpdated` (URL change) clears `verify`.
+- **Fix:** in the poll, compare `chrome.tabs.get(tab.id)` with `tab.url` and run the same reset as the `onUpdated` handler. Or drop `verify` when its main frame's host differs from the status host.
 
 ### S5. Refused stored regexes are named by position, not by pattern (P3)
 

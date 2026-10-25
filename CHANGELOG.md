@@ -4,6 +4,13 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Fixed
+- **A link that loads no page left the wrong locale on the current page.** Following a link to a site with another profile when that site answered with no page (`204 No Content`, or a download) left the page you were on reporting the other site's locale (`navigator.language` and every `Intl` constructor) until it was reloaded. The extension ignored every navigation error for 5 seconds after re-issuing a navigation. Now it ignores only the one error its own abort causes, so the failed navigation restores the current page's profile.
+- **"Check what the page sees" graded against the wrong locale.** The popup's check compared the page with the profile last sent to the tab instead of the rule for the page that is loaded. In the case above it marked the correct locale red and the wrong one green. It now uses the rule for the loaded page, so any mismatch shows in red.
+
+### Added
+- **Stress tests** (`npm run e2e:stress`, `npm run e2e:stress:edge`): restarts, crashes, navigation storms, tabs closed while loading, same-process popups, blob/srcdoc/nested workers, 5,000 rules and hostile stored regexes, in real Chrome and Edge.
+
 ## [1.3.3] - 2026-10-24
 
 **Hotfix**: security follow-up to 1.3.1.

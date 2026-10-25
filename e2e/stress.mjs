@@ -312,7 +312,7 @@ try {
       expectHeader(r.documentAcceptLanguage, HEADER[locale], `hop ${i} document`);
     }
     const hist = await cdp.send('Page.getNavigationHistory', {}, tab.s);
-    if (hist.entries.length !== 11) throw new Error(`history has ${hist.entries.length} entries, expected 11 (a re-issue added or lost one)`);
+    if (hist.entries.length !== 11) throw new Error(`history has ${hist.entries.length} entries, expected 11 (a re-issue added or lost one): ${hist.entries.map((e) => new URL(e.url).search.replace('?pp=', '')).join(' ')}`);
   });
 
   await test('navigation storm: 4 navigations fired without waiting; the last one wins with its own locale', async () => {
@@ -408,6 +408,8 @@ try {
       const disagree = await checkDisagrees(tab);
       throw new Error(`page after the 204 should still be en-US: ${wrong.slice(0, 3).join(', ')}; status says ${st.applied?.locale}${st.late || st.warnings.length ? ' (with a warning)' : ' with no warning'}${disagree.length ? `; the popup's check disagrees with the page: ${disagree.join('; ')}` : ''}`);
     }
+    const disagree = await checkDisagrees(tab);
+    if (disagree.length) throw new Error(`after the 204 the popup's check disagrees with the page: ${disagree.join('; ')}`);
     await cdp.send('Page.navigate', { url: 'http://unreachable.apple.localhost:1/' }, tab.s).catch(() => undefined);
     await sleep(1500);
     await cdp.send('Page.navigate', { url: u('docs.google.localhost', '/missing-page') }, tab.s).catch(() => undefined);
