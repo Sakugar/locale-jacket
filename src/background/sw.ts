@@ -42,6 +42,8 @@ import { defaultSettings } from '../shared/presets.js';
 import {
   datasetDownloadDue,
   datasetsToDownload,
+  decodeSubscriptionData,
+  encodeSubscriptionData,
   fetchSubscription,
   markUnsaved,
   rawUrl,
@@ -318,7 +320,17 @@ let ownSettings: Settings | null = null;
 let subscriptionData: SubscriptionDataMap = {};
 
 async function loadSubscriptionData(): Promise<SubscriptionDataMap> {
-  const data = ((await chrome.storage.local.get(SUBSCRIPTION_DATA_KEY))[SUBSCRIPTION_DATA_KEY] as SubscriptionDataMap | undefined) ?? {};
+  const { data, outdated } = decodeSubscriptionData((await chrome.storage.local.get(SUBSCRIPTION_DATA_KEY))[SUBSCRIPTION_DATA_KEY]);
+  if (outdated) {
+    // Data saved by 1.3.3 or older: store it in the compact form now, which frees most of
+    // the space it took. If that fails the old form stays and is still read.
+    try {
+      await chrome.storage.local.set({ [SUBSCRIPTION_DATA_KEY]: encodeSubscriptionData(data) });
+      info('Subscription data converted to the compact storage format.');
+    } catch (e) {
+      log({ t: Date.now(), level: 'warn', tabId: null, msg: `Could not convert the stored subscription data: ${errorMessage(e)}` });
+    }
+  }
   // Regexes the current check accepted when the data was fetched are not analysed again.
   trustCheckedSubscriptionData(data);
   return data;
@@ -398,7 +410,7 @@ async function updateSubscriptions(trigger: SubscriptionTrigger, ids?: string[])
   // What storage holds (entries are replaced, never changed in place, so a shallow copy is a snapshot).
   let stored: SubscriptionDataMap = { ...subscriptionData };
   const persist = async (): Promise<void> => {
-    const write = () => chrome.storage.local.set({ [SUBSCRIPTION_DATA_KEY]: subscriptionData });
+    const write = () => chrome.storage.local.set({ [SUBSCRIPTION_DATA_KEY]: encodeSubscriptionData(subscriptionData) });
     try {
       await write();
     } catch (e) {

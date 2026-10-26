@@ -702,7 +702,8 @@ try {
     files.set('/geosite.dat', { type: 'application/octet-stream', version: 1, body: geositeDat });
     const opts = await openTab(`chrome-extension://${extId}/options/options.html#subs`);
     const datasetsInstalled = () => evaluate(cdp, opts.s, `import('/shared/dataset-store.js').then((s) => s.listDatasets()).then((l) => l.map((m) => m.kind).join(','))`);
-    const subData = () => sw(`chrome.storage.local.get('subscriptionData').then((r) => r.subscriptionData ?? {})`);
+    // Stored in a compact form; decoded the way the extension reads it.
+    const subData = () => evaluate(cdp, opts.s, `import('/shared/subscriptions.js').then((s) => chrome.storage.local.get(s.SUBSCRIPTION_DATA_KEY).then((r) => s.decodeSubscriptionData(r[s.SUBSCRIPTION_DATA_KEY]).data))`);
     try {
       await until(() => evaluate(cdp, opts.s, `!!document.querySelector('#subs input[type=url]')`), { message: 'Subscriptions page' });
       await evaluate(cdp, opts.s, `import('/shared/dataset-store.js').then((s) => s.deleteDataset('geosite')).then(() => chrome.runtime.sendMessage({ type: 'datasetsChanged' }))`);

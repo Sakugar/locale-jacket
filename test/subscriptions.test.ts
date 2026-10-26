@@ -12,6 +12,8 @@ import { normalizeRuleValue, precedenceTier, resolveHost, rulesInPrecedenceOrder
 import {
   datasetDownloadDue,
   datasetsToDownload,
+  decodeSubscriptionData,
+  encodeSubscriptionData,
   fetchSubscription,
   markUnsaved,
   MAX_SUBSCRIPTION_RULES,
@@ -19,13 +21,15 @@ import {
   rawUrl,
   revertUnsaved,
   staleDatasetRecords,
+  SUBSCRIPTION_DATA_FORMAT,
+  SUBSCRIPTION_DATA_KEY,
   subscriptionDue,
   trustCheckedSubscriptionData,
   withSubscriptions,
   type SubscriptionData,
   type SubscriptionDataMap,
 } from '../src/shared/subscriptions.js';
-import type { Settings, Subscription } from '../src/shared/types.js';
+import type { Rule, Settings, Subscription } from '../src/shared/types.js';
 
 const HOUR = 3_600_000;
 const NOW = 1_800_000_000_000;
@@ -466,5 +470,202 @@ describe('subscriptions in the configuration', () => {
     assert.equal(merged.rules.length, 1);
     assert.equal(s.rules.length, 0, 'the input is not modified');
     assert.equal(resolveHost('x.example', merged).profile?.locale, makeProfile('en-US').locale);
+  });
+});
+
+describe('stored form of subscription data', () => {
+  const a = sub('a', 'https://example.com/a.yaml');
+  const b = sub('b', 'https://example.com/b.json', { name: '' });
+  const FILE_A = [
+    'rules:',
+    '  - DOMAIN-SUFFIX,example.org,fr-FR',
+    '  - DOMAIN,www.example.org,SYSTEM',
+    '  - DOMAIN-KEYWORD,shop,fr-FR',
+    '  - DOMAIN-REGEX,^stored-[a-z]+\\.example$,ja-JP',
+    '  - GEOSITE,google,en-US',
+    '  - IP-CIDR,17.0.0.0/8,de-DE,no-resolve',
+    '  - IP-CIDR6,2001:db8::/32,de-DE',
+    '  - IP-ASN,13335,SYSTEM',
+    '  - GEOIP,US,en-US',
+    '  - type: DOMAIN-SUFFIX',
+    '    domain: tz.example',
+    '    profile: { locale: en-GB, timezone: Europe/London, geolocation: { latitude: 51.5, longitude: -0.12, accuracy: 50 } }',
+    '    priority: 7',
+    '    note: "a note, with \\"quotes\\""',
+    '  - type: DOMAIN',
+    '    domain: off.example',
+    '    locale: ja-JP',
+    '    enabled: false',
+    '    priority: -3',
+    '  - type: DOMAIN-SUFFIX',
+    '    domain: tz2.example',
+    '    profile: { timezone: Europe/London, locale: en-GB, geolocation: { accuracy: 50, longitude: -0.12, latitude: 51.5 } }',
+    '  - BOGUS,x,en-US',
+    'datasets:',
+    '  geosite: https://cdn.example/geosite.dat',
+    '',
+  ].join('\n');
+  const map = (): SubscriptionDataMap => ({
+    a: data(a, FILE_A, { etag: '"e1"', lastModified: 'Mon, 01 Jan 2024 00:00:00 GMT' }),
+    b: data(b, JSON.stringify({ rules: ['DOMAIN,b.example,ko-KR'] }), { error: 'HTTP 500', lastAttempt: NOW }),
+    // A subscription whose first attempt failed: no rules, no fetch time, no marker.
+    c: { url: 'https://example.com/c.yaml', rules: [], skipped: [], skippedCount: 0, ignored: [], lastAttempt: NOW, error: 'HTTP 404' },
+  });
+  // What chrome.storage keeps: a JSON copy.
+  const viaStorage = <T>(v: T): unknown => JSON.parse(JSON.stringify(v));
+
+  it('round-trips: the same rules, ids, origins and fields, with each profile stored once', () => {
+    const before = map();
+    assert.equal(before.a!.rules.length, 12);
+    assert.equal(before.a!.skippedCount, 1);
+    const stored = encodeSubscriptionData(before);
+    assert.equal(stored.format, SUBSCRIPTION_DATA_FORMAT);
+    const back = decodeSubscriptionData(viaStorage(stored));
+    assert.equal(back.outdated, false);
+    assert.deepEqual(back.data, before);
+    assert.deepEqual(back.data.a!.rules.map((r) => r.id), before.a!.rules.map((_, i) => `a:${i}`));
+    assert.deepEqual(back.data.b!.rules[0]!.origin, { subscription: 'b', name: 'example.com/b.json', layer: 0 });
+    assert.equal(back.data.a!.regexCheck, REGEX_CHECK_VERSION);
+    assert.ok(!('regexCheck' in back.data.c!), 'no marker is added where there was none');
+    // fr-FR, ja-JP, en-US, de-DE and en-GB with a time zone and position (the same fields in another order count once).
+    assert.equal(stored.subscriptions.a!.rules.profiles.length, 5);
+    const text = JSON.stringify(stored);
+    assert.ok(!text.includes('"origin"') && !text.includes('"a:0"') && !text.includes('"acceptLanguage":"fr-FR,fr;q=0.9","timezone":null,"geolocation":null},{"locale":"fr-FR"'), 'ids, origins and repeated profiles are not stored');
+    // Saving the decoded data again gives the same stored form.
+    assert.deepEqual(viaStorage(encodeSubscriptionData(back.data)), viaStorage(stored));
+  });
+
+  it('decoded rules behave like the fetched ones', () => {
+    const before = map();
+    const back = decodeSubscriptionData(viaStorage(encodeSubscriptionData(before))).data;
+    const s = (d: SubscriptionDataMap) => withSubscriptions(settingsWith([a, b], { ...defaultSettings(), rules: [] }), d);
+    for (const host of ['x.example.org', 'www.example.org', 'shop.example', 'stored-abc.example', 'tz.example', 'off.example', 'b.example']) {
+      const want = resolveHost(host, s(before));
+      const got = resolveHost(host, s(back));
+      assert.deepEqual([got.action, got.profile, got.rule?.id, got.rule && ruleLabel(got.rule)], [want.action, want.profile, want.rule?.id, want.rule && ruleLabel(want.rule)], host);
+    }
+    assert.equal(resolveHost('tz.example', s(back)).profile?.timezone, 'Europe/London');
+    assert.equal(back.a!.rules.find((r) => r.type === 'IP-CIDR')!.noResolve, true);
+    assert.deepEqual(datasetsToDownload(settingsWith([a, b]), back, []), datasetsToDownload(settingsWith([a, b]), before, []));
+  });
+
+  it('reads the format of 1.3.3 and older, keeping the regex-check marker as it was', () => {
+    const current = map();
+    const older: SubscriptionDataMap = { ...current, b: { ...current.b!, regexCheck: REGEX_CHECK_VERSION - 1 } };
+    const { regexCheck: _none, ...unmarkedA } = current.a!;
+    const cases: [string, SubscriptionDataMap][] = [['current marker', current], ['older marker', older], ['no marker', { ...current, a: unmarkedA }]];
+    for (const [what, old] of cases) {
+      const r = decodeSubscriptionData(viaStorage(old));
+      assert.equal(r.outdated, true, what);
+      assert.deepEqual(r.data, old, `${what}: migrated data equals what was stored`);
+      // Trusted or checked exactly as before, and due for a fetch exactly as before.
+      assert.equal(trustCheckedSubscriptionData(r.data), trustCheckedSubscriptionData(old), what);
+      for (const [id, s] of [['a', a], ['b', b]] as const) {
+        for (const trigger of ['startup', 'alarm', 'changed'] as const) {
+          assert.equal(subscriptionDue(s, r.data[id], trigger, NOW), subscriptionDue(s, old[id], trigger, NOW), `${what} ${id} ${trigger}`);
+        }
+      }
+    }
+    // Checked by the current version and fetched an hour ago: the migration does not cause a fetch.
+    assert.equal(subscriptionDue(a, decodeSubscriptionData(viaStorage(current)).data.a, 'startup', NOW), false);
+    const olderA = { a: { ...current.a!, regexCheck: REGEX_CHECK_VERSION - 1 } };
+    assert.equal(subscriptionDue(a, decodeSubscriptionData(viaStorage(olderA)).data.a, 'startup', NOW), true, 'an older check is still refetched');
+    assert.equal(subscriptionDue(a, decodeSubscriptionData(viaStorage({ a: unmarkedA })).data.a, 'startup', NOW), true, 'so is data without a marker');
+    // Converted and saved again, it is in the current format and still equal.
+    const again = decodeSubscriptionData(viaStorage(encodeSubscriptionData(decodeSubscriptionData(viaStorage(older)).data)));
+    assert.equal(again.outdated, false);
+    assert.deepEqual(again.data, older);
+  });
+
+  it('nothing stored, a newer format and entries that cannot be read', () => {
+    assert.deepEqual(decodeSubscriptionData(undefined), { data: {}, outdated: false });
+    assert.deepEqual(decodeSubscriptionData({}), { data: {}, outdated: true });
+    assert.deepEqual(decodeSubscriptionData({ format: SUBSCRIPTION_DATA_FORMAT + 1, subscriptions: { a: {} } }), { data: {}, outdated: false });
+    const stored = viaStorage(encodeSubscriptionData(map())) as { subscriptions: Record<string, { rules: { list: unknown } }> };
+    (stored.subscriptions.a!.rules.list as unknown[])[2] = [0, 'x.example', 99];
+    stored.subscriptions.b!.rules.list = 'nope';
+    const r = decodeSubscriptionData(stored);
+    assert.deepEqual(Object.keys(r.data), ['c'], 'entries that cannot be read are left out (and fetched again)');
+    assert.deepEqual(Object.keys(decodeSubscriptionData({ a: { url: 'u', rules: [{ type: 'NOPE', value: 'x' }] }, b: viaStorage(map().b) }).data), ['b']);
+  });
+
+  it('20 subscriptions × 5,000 rules fit well within the 10 MB storage.local quota', () => {
+    const QUOTA = 10 * 1024 * 1024;
+    const bytes = (v: unknown) => Buffer.byteLength(SUBSCRIPTION_DATA_KEY + JSON.stringify(v));
+    const locales = ['en-US', 'en-GB', 'fr-FR', 'de-DE', 'ja-JP', 'zh-TW', 'ko-KR', 'es-ES', 'pt-BR', 'it-IT', 'ru-RU', 'nl-NL'];
+    const types = ['DOMAIN-SUFFIX', 'DOMAIN-SUFFIX', 'DOMAIN-SUFFIX', 'DOMAIN', 'DOMAIN', 'DOMAIN-KEYWORD', 'DOMAIN-REGEX', 'GEOSITE', 'IP-CIDR', 'GEOIP'] as const;
+    interface Case { profiles: number; withTzGeo?: boolean; notes?: boolean; host: (s: number, i: number) => string }
+    const cases: Record<string, Case> = {
+      // A dozen locales and ordinary host names (about 25 characters).
+      typical: { profiles: 12, host: (s, i) => `site${i}-${s}.example${i % 13}.com` },
+      // Host names of about 50 characters.
+      'long names': { profiles: 12, host: (s, i) => `static-assets-${i}.region${i % 9}.cdn-provider-${s}.example.com` },
+      // 200 profiles per subscription, each with a time zone and a position, 70-80-character
+      // host names, and a note and a priority on every rule: the text alone is about 8 MB.
+      heavy: { profiles: 200, withTzGeo: true, notes: true, host: (s, i) => `service-${s}-${i}.region-${i % 97}.cdn.some-long-company-name-here.example.com` },
+    };
+    const build = (c: Case): SubscriptionDataMap => {
+      const out: SubscriptionDataMap = {};
+      for (let s = 0; s < MAX_SUBSCRIPTIONS; s++) {
+        const id = `sub${s}-0123456789`;
+        const profiles = Array.from({ length: c.profiles }, (_, i) =>
+          makeProfile(locales[i % locales.length]!, c.withTzGeo ? { timezone: 'America/Los_Angeles', geolocation: { latitude: 37.7749 + i / 1000, longitude: -122.4194, accuracy: 100 } } : {}));
+        const origin = { subscription: id, name: `Subscription number ${s}`, layer: 0 };
+        const rules = Array.from({ length: MAX_SUBSCRIPTION_RULES }, (_, i): Rule => {
+          const type = types[i % types.length]!;
+          const host = c.host(s, i);
+          const value =
+            type === 'DOMAIN-REGEX' ? `^(?:[a-z0-9-]+\\.)?${host.replace(/\./g, '\\.')}$`
+            : type === 'GEOSITE' ? `category-${i % 50}`
+            : type === 'IP-CIDR' ? `10.${i % 256}.${s}.0/24`
+            : type === 'GEOIP' ? 'US'
+            : type === 'DOMAIN-KEYWORD' ? `keyword${i}`
+            : host;
+          const system = i % 10 === 9;
+          return {
+            id: `${id}:${i}`, type, value, action: system ? 'SYSTEM' : 'PROFILE', profile: system ? null : profiles[i % profiles.length]!,
+            enabled: !(c.notes && i % 20 === 0), priority: c.notes ? i % 5 : 0, note: c.notes ? `Added for ticket #${i} by the team` : '', origin,
+          };
+        });
+        out[id] = {
+          url: `https://raw.githubusercontent.com/some-org/some-repo/main/rules/list-${s}.yaml`, rules, regexCheck: REGEX_CHECK_VERSION,
+          skipped: Array.from({ length: 20 }, (_, i) => `rules[${i}]: unknown rule type "BOGUS".`), skippedCount: 120, ignored: ['default', 'options'],
+          datasets: { geosite: 'https://cdn.jsdelivr.net/gh/some/geosite@release/geosite.dat' }, fetchedAt: NOW, lastAttempt: NOW,
+          etag: 'W/"0123456789abcdef0123456789abcdef"', lastModified: 'Mon, 01 Jan 2024 00:00:00 GMT',
+        };
+      }
+      return out;
+    };
+    const report: Record<string, Record<string, number>> = {};
+    for (const [kind, c] of Object.entries(cases)) {
+      const d = build(c);
+      const t0 = performance.now();
+      const stored = encodeSubscriptionData(d);
+      const encodeMs = performance.now() - t0;
+      const json = JSON.stringify(stored);
+      const t1 = performance.now();
+      const back = decodeSubscriptionData(JSON.parse(json));
+      const decodeMs = performance.now() - t1;
+      assert.equal(Object.values(back.data).reduce((n, x) => n + x.rules.length, 0), MAX_SUBSCRIPTIONS * MAX_SUBSCRIPTION_RULES);
+      assert.deepEqual(back.data['sub7-0123456789'], d['sub7-0123456789']);
+      // The rules' own text (values and notes, as JSON strings) is stored however compact the form.
+      let text = 0;
+      for (const e of Object.values(d)) for (const r of e.rules) text += Buffer.byteLength(JSON.stringify(r.value)) + (r.note ? Buffer.byteLength(JSON.stringify(r.note)) : 0);
+      const rules = MAX_SUBSCRIPTIONS * MAX_SUBSCRIPTION_RULES;
+      const overhead = (bytes(stored) - text) / rules;
+      report[kind] = {
+        format1MB: +(bytes(d) / 2 ** 20).toFixed(2),
+        format2MB: +(bytes(stored) / 2 ** 20).toFixed(2),
+        textMB: +(text / 2 ** 20).toFixed(2),
+        bytesPerRuleBesidesText: +overhead.toFixed(1),
+        encodeMs: Math.round(encodeMs),
+        decodeMs: Math.round(decodeMs),
+      };
+      assert.ok(bytes(d) > QUOTA, `${kind}: the old format does not fit`);
+      // Besides its text, a rule costs a few bytes (about 7 typically; 20 with priorities, flags and many profiles).
+      assert.ok(overhead < 25, `${kind}: ${overhead} bytes per rule besides its text`);
+      if (!c.notes) assert.ok(bytes(stored) < QUOTA / 2, `${kind}: ${bytes(stored)} bytes`);
+    }
+    console.log(`    subscription data, ${MAX_SUBSCRIPTIONS} × ${MAX_SUBSCRIPTION_RULES} rules: ${JSON.stringify(report)}`);
   });
 });

@@ -22,6 +22,7 @@ import { defaultSettings, examplePresetRules, globalEnUsSettings } from '../shar
 import { analyzeRules, describeAction, displayDomain, resolveHost, ruleLabel, rulesInPrecedenceOrder, requiredDatasets, type RuleIssue } from '../shared/rules.js';
 import {
   currentData,
+  decodeSubscriptionData,
   rawUrl,
   SUBSCRIPTION_DATA_KEY,
   SUBSCRIPTION_DATASET_STATE_KEY,
@@ -863,7 +864,7 @@ let subDatasetState: SubscriptionDatasetState = {};
 
 async function loadSubData(): Promise<void> {
   const r = await chrome.storage.local.get([SUBSCRIPTION_DATA_KEY, SUBSCRIPTION_DATASET_STATE_KEY]);
-  subData = (r[SUBSCRIPTION_DATA_KEY] as SubscriptionDataMap | undefined) ?? {};
+  subData = decodeSubscriptionData(r[SUBSCRIPTION_DATA_KEY]).data;
   subDatasetState = (r[SUBSCRIPTION_DATASET_STATE_KEY] as SubscriptionDatasetState | undefined) ?? {};
 }
 
@@ -1197,7 +1198,7 @@ async function main(): Promise<void> {
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || (!changes[SUBSCRIPTION_DATA_KEY] && !changes[SUBSCRIPTION_DATASET_STATE_KEY])) return;
-    if (changes[SUBSCRIPTION_DATA_KEY]) subData = (changes[SUBSCRIPTION_DATA_KEY].newValue as SubscriptionDataMap | undefined) ?? {};
+    if (changes[SUBSCRIPTION_DATA_KEY]) subData = decodeSubscriptionData(changes[SUBSCRIPTION_DATA_KEY].newValue).data;
     if (changes[SUBSCRIPTION_DATASET_STATE_KEY]) subDatasetState = (changes[SUBSCRIPTION_DATASET_STATE_KEY].newValue as SubscriptionDatasetState | undefined) ?? {};
     settleUpdating();
     preserveInputs(document.body, () => {

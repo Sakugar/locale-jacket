@@ -11,7 +11,7 @@ import { analysisBudget, REGEX_CHECK_VERSION } from './regex-safety.js';
 import { markRegexValidated, REGEX_BATCH_BUDGET_MS, requiredDatasets } from './rules.js';
 import { isHttpUrl } from './extension-update.js';
 import { fetchLimited, type NetLimits } from './net.js';
-import type { Rule, Settings, Subscription } from './types.js';
+import { RULE_TYPES, type LocaleProfile, type Rule, type RuleOrigin, type Settings, type Subscription } from './types.js';
 
 export const SUBSCRIPTION_DATA_KEY = 'subscriptionData';
 /** Automatic data-set downloads for subscriptions: { [kind]: SubscriptionDatasetRecord }. */
@@ -51,6 +51,182 @@ export interface SubscriptionData {
   error?: string;
 }
 export type SubscriptionDataMap = Record<string, SubscriptionData>;
+
+// ------------------------------------------------------------ stored form
+//
+// storage.local[SUBSCRIPTION_DATA_KEY] holds a compact form of SubscriptionDataMap. This
+// is the only place that knows it; the service worker writes it with
+// encodeSubscriptionData and both the worker and the options page read it with
+// decodeSubscriptionData.
+//
+// Format 1 (up to 1.3.3, no marker): the map itself, every rule stored verbatim with its
+// profile, id and origin (about 330 bytes a rule; 20 × 5,000 rules ≈ 33 MB, past the
+// 10 MB quota). Format 2: { format: 2, subscriptions: { [id]: StoredSubscriptionData } },
+// where each entry keeps its other fields as they are and `rules` becomes a table: each
+// distinct rule type and profile is stored once and rules refer to them by index. Ids
+// (`<subId>:<index>`) and `origin` are rebuilt on load, as parseSubscription made them.
+
+/** The stored-format version written by encodeSubscriptionData. */
+export const SUBSCRIPTION_DATA_FORMAT = 2;
+
+/** StoredRule flags; a flag that is not set is the common case. */
+const SYSTEM_FLAG = 1;
+const DISABLED_FLAG = 2;
+const NO_RESOLVE_FLAG = 4;
+
+/**
+ * One rule: [type (index into `types`), value, profile (index into `profiles`, -1 for none),
+ * flags (SYSTEM 1, disabled 2, noResolve 4), priority, note]. Trailing fields equal to
+ * their default (0, 0, '') are left out.
+ */
+export type StoredRule = [type: number, value: string, profile: number, flags?: number, priority?: number, note?: string];
+
+export interface StoredRules {
+  /** origin.name of every rule (the subscription's label when it was fetched). */
+  name: string;
+  types: Rule['type'][];
+  profiles: LocaleProfile[];
+  list: StoredRule[];
+}
+
+export type StoredSubscriptionData = Omit<SubscriptionData, 'rules'> & { rules: StoredRules };
+
+export interface StoredSubscriptionDataMap {
+  format: typeof SUBSCRIPTION_DATA_FORMAT;
+  subscriptions: Record<string, StoredSubscriptionData>;
+}
+
+/**
+ * Encoded rule tables by rules array. Entries are replaced, never changed in place (see
+ * revertUnsaved), and an entry updated with a new attempt time or error keeps its rules
+ * array, so each array is encoded once however often the map is saved.
+ */
+const encodedRules = new WeakMap<readonly Rule[], StoredRules>();
+
+function encodeRules(rules: readonly Rule[]): StoredRules {
+  const cached = encodedRules.get(rules);
+  if (cached) return cached;
+  const types: Rule['type'][] = [];
+  const typeIndex = new Map<string, number>();
+  const profiles: LocaleProfile[] = [];
+  const profileIndex = new Map<string, number>();
+  const list: StoredRule[] = rules.map((r) => {
+    let t = typeIndex.get(r.type);
+    if (t === undefined) typeIndex.set(r.type, (t = types.push(r.type) - 1));
+    let p = -1;
+    if (r.profile) {
+      const key = profileKey(r.profile);
+      const known = profileIndex.get(key);
+      if (known !== undefined) p = known;
+      else profileIndex.set(key, (p = profiles.push(r.profile) - 1));
+    }
+    const flags = (r.action === 'SYSTEM' ? SYSTEM_FLAG : 0) | (r.enabled ? 0 : DISABLED_FLAG) | (r.noResolve ? NO_RESOLVE_FLAG : 0);
+    // (A rule from format 1 data without a priority or note gets the default.)
+    const out: StoredRule = [t, r.value, p, flags, typeof r.priority === 'number' ? r.priority : 0, typeof r.note === 'string' ? r.note : ''];
+    // Drop trailing defaults: [t, value, p] for most rules.
+    while (out.length > 3 && (out[out.length - 1] === 0 || out[out.length - 1] === '')) out.pop();
+    return out;
+  });
+  const stored: StoredRules = { name: rules[0]?.origin?.name ?? '', types, profiles, list };
+  encodedRules.set(rules, stored);
+  return stored;
+}
+
+/** Two profiles with the same fields are one profile, whatever their key order. */
+function profileKey(p: LocaleProfile): string {
+  const g = p.geolocation;
+  return JSON.stringify([p.locale, p.languages, p.acceptLanguage, p.timezone, g ? [g.latitude, g.longitude, g.accuracy] : null]);
+}
+
+/** The stored form of `data` (what the service worker writes to storage.local). */
+export function encodeSubscriptionData(data: SubscriptionDataMap): StoredSubscriptionDataMap {
+  const subscriptions: Record<string, StoredSubscriptionData> = {};
+  for (const [id, d] of Object.entries(data)) subscriptions[id] = { ...d, rules: encodeRules(d.rules) };
+  return { format: SUBSCRIPTION_DATA_FORMAT, subscriptions };
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function decodeRules(subId: string, s: unknown): Rule[] | null {
+  if (!isRecord(s) || !Array.isArray(s.types) || !Array.isArray(s.profiles) || !Array.isArray(s.list)) return null;
+  const types = s.types as unknown[];
+  const profiles = s.profiles as unknown[];
+  if (!types.every((t) => typeof t === 'string' && (RULE_TYPES as readonly string[]).includes(t))) return null;
+  if (!profiles.every(isRecord)) return null;
+  const origin: RuleOrigin = { subscription: subId, name: typeof s.name === 'string' ? s.name : subId, layer: 0 };
+  const rules: Rule[] = [];
+  for (const [i, x] of (s.list as unknown[]).entries()) {
+    if (!Array.isArray(x)) return null;
+    const [t, value, p, flags = 0, priority = 0, note = ''] = x as unknown[];
+    if (typeof t !== 'number' || types[t] === undefined || typeof value !== 'string') return null;
+    if (typeof p !== 'number' || (p !== -1 && profiles[p] === undefined)) return null;
+    if (typeof flags !== 'number' || typeof priority !== 'number' || typeof note !== 'string') return null;
+    rules.push({
+      id: `${subId}:${i}`,
+      type: types[t] as Rule['type'],
+      value,
+      action: flags & SYSTEM_FLAG ? 'SYSTEM' : 'PROFILE',
+      profile: p === -1 ? null : (profiles[p] as unknown as LocaleProfile),
+      enabled: !(flags & DISABLED_FLAG),
+      priority,
+      note,
+      ...(flags & NO_RESOLVE_FLAG ? { noResolve: true } : {}),
+      origin,
+    });
+  }
+  // Saving these rules again stores the same table, so it need not be encoded again.
+  encodedRules.set(rules, { name: origin.name, types: types as Rule['type'][], profiles: profiles as unknown as LocaleProfile[], list: s.list as StoredRule[] });
+  return rules;
+}
+
+/** A format-1 entry's rules, if they look like rules (ids and origin are rebuilt like format 2's). */
+function migrateRules(subId: string, rules: unknown): Rule[] | null {
+  if (!Array.isArray(rules)) return null;
+  const ok = rules.every(
+    (r) =>
+      isRecord(r) &&
+      typeof r.type === 'string' &&
+      (RULE_TYPES as readonly string[]).includes(r.type) &&
+      typeof r.value === 'string' &&
+      (r.profile === null || isRecord(r.profile)),
+  );
+  if (!ok) return null;
+  return decodeRules(subId, encodeRules(rules as Rule[]));
+}
+
+/**
+ * Read what storage.local[SUBSCRIPTION_DATA_KEY] holds, in the current or the older format.
+ * Everything but the rules (including the `regexCheck` marker, the ETag and the fetch
+ * times) is kept as stored, so migrated data is trusted, checked or refetched exactly as
+ * before. An entry that cannot be read is left out, so its subscription is fetched again.
+ * `outdated`: the value is not in the current format (and should be written again).
+ */
+export function decodeSubscriptionData(raw: unknown): { data: SubscriptionDataMap; outdated: boolean } {
+  const data: SubscriptionDataMap = {};
+  if (!isRecord(raw)) return { data, outdated: false };
+  // Format 1 is a map of subscription ids to objects, so a number at `format` marks format 2+.
+  const format = typeof raw.format === 'number' ? raw.format : 1;
+  // A newer format (after a downgrade) cannot be read: its subscriptions are fetched again,
+  // and it is overwritten only then.
+  if (format > SUBSCRIPTION_DATA_FORMAT) return { data, outdated: false };
+  const entries = format === 1 ? raw : raw.subscriptions;
+  if (!isRecord(entries)) return { data, outdated: true };
+  for (const [id, e] of Object.entries(entries)) {
+    if (!isRecord(e) || typeof e.url !== 'string') continue;
+    const rules = format === 1 ? migrateRules(id, e.rules) : decodeRules(id, e.rules);
+    if (!rules) continue;
+    data[id] = {
+      ...(e as unknown as Omit<SubscriptionData, 'rules'>),
+      rules,
+      skipped: Array.isArray(e.skipped) ? (e.skipped as string[]) : [],
+      skippedCount: typeof e.skippedCount === 'number' ? e.skippedCount : 0,
+      ignored: Array.isArray(e.ignored) ? (e.ignored as string[]) : [],
+    };
+  }
+  return { data, outdated: format !== SUBSCRIPTION_DATA_FORMAT };
+}
 
 export type SubscriptionTrigger = UpdateTrigger | 'changed';
 
