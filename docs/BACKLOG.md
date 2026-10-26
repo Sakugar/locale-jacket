@@ -1,6 +1,6 @@
 # Development backlog
 
-Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. S1 and S2 are fixed and S7 mostly fixed (unreleased). Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
+Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. S1, S2 and S5 are fixed, S7 mostly fixed, and code issues 2, 3, 4, 6 and 7 are fixed (all unreleased). Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
 
 Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone asks.
 
@@ -8,16 +8,10 @@ Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone a
 |---|---|---|---|
 | S3 | SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it | `src/background/tab-session.ts` | P2 |
 | S4 | Nested dedicated workers keep the real `navigator.language` | `src/background/tab-session.ts` | P2 |
-| S5 | Refused stored regexes are named by position, not by pattern | `src/shared/config-io.ts` | P3 |
 | S6 | A profile switch sometimes adds an extra history entry (intermittent) | `src/background/tab-session.ts` | P2 |
 | S7 | The popup can briefly show the previous page's check under the new host (Edge; much rarer since the fix) | `src/popup/popup.ts` | P3 |
 | 1 | GeoSite `cn` category blocks the worker for about 130 ms | `src/shared/geosite.ts` | P2 |
-| 2 | Options-page import has no whole-file regex budget | `src/shared/config-io.ts`, `src/options/options.ts` | P2 |
-| 3 | 20 large subscriptions can exceed the `storage.local` quota | `src/shared/subscriptions.ts`, `src/background/sw.ts` | P2 |
-| 4 | Timing-based unit tests may flake on a slow machine | `test/perf.test.ts` | P2 |
 | 5 | Browser timings not re-measured after the perf fixes | `e2e/launch-perf.mjs` | P2 |
-| 6 | Corrupt mmdb records found at runtime aren't shown | `src/background/datasets.ts` | P3 |
-| 7 | Options keeps saying a deleted data set "was downloaded for subscription X" | `src/options/options.ts` | P3 |
 | 8 | First-request header missing for subscription GEOSITE rules below an IP rule | `src/shared/dnr.ts` | P3 |
 | 9 | Validation messages, activity log and fetch errors are English-only | `src/shared/config-io.ts`, `src/shared/i18n/*` | P3 |
 | 10 | The regex check refuses some harmless patterns | `src/shared/regex-safety.ts` | P3 |
@@ -67,10 +61,9 @@ Fixed: see `CHANGELOG.md` [Unreleased]. `onNavigationError` now ignores only the
 - **Fix (unreleased):** `runVerify()` in `src/popup/popup.ts` accepts a result only when its main frame's `location.href` is on the host the popup shows. Otherwise it reads again, every 300 ms and at most 20 times per navigation. A check could start while `tab.url` already pointed to the next page but the tab still showed the old document.
 - **Result:** 32 of 34 Edge runs passed (before: 2 of 6). The two failures came before the test recorded diagnostics; the 28 runs since then all passed. If it fails again, the error shows the table, the page's real host and values, and the tab's status at that moment. That tells whether the result was stale or the new page really reported en-US for a moment.
 
-### S5. Refused stored regexes are named by position, not by pattern (P3)
+### S5. Refused stored regexes are named by position, not by pattern (fixed, unreleased)
 
-- **What:** stored DOMAIN-REGEX rules that the check refuses are listed as "Stored rule #12 was invalid and has been skipped: …". The message doesn't show the pattern, so with many rules it's hard to find the right one.
-- **Fix:** include the rule's type and value in the message (trimmed when long), as `regexProblems` in `sw.ts` already does for deferred checks.
+Fixed: see `CHANGELOG.md` [Unreleased]. `sanitizeStoredSettings` now writes "Stored rule #12 (DOMAIN-REGEX,<value>) was invalid and has been skipped: …", with the value cut to 80 characters, and without the one-rule import's `rules[0]: ` prefix. Covered by the unit test "names a skipped stored rule by its type and value…".
 
 ## Checking the UI with the Playwright MCP
 
@@ -92,37 +85,33 @@ The stress suite reads what the page sees. The popup and the options page need a
   - Or build the category's lookup structure once and store it in IndexedDB next to the data set, so a worker wake only reads it.
   - Keep the regex batch budget (`GEOSITE_REGEX_BUDGET_MS`) charged exactly as now.
 
-### 2. Options-page import has no whole-file regex budget (P2)
+### 2. Options-page import has no whole-file regex budget (fixed, unreleased)
 
-- **What:** `importConfigText` checks each regex with the per-pattern limit (`MAX_ANALYSIS`, about 0.6 ms) but has no batch budget, unlike subscription parsing and settings loading (`REGEX_BATCH_BUDGET_MS` = 750 ms). A very large hostile import can freeze the options page for seconds. Only the options page is affected, not the worker or browsing.
-- **Where:** `src/shared/config-io.ts:58`. Callers: `src/options/options.ts:511` (paste/import) and `src/background/sw.ts:106` (preset).
-- **Fix:** pass an `analysisBudget(...)` through the import, as `parseSubscription` does. Decide what happens to rules past the budget. They can't simply be dropped from your own rules (see invariant "your own rules are never deleted by a budget" in `handoff.md`), so either refuse the import with a clear message or keep them unchecked with `defer` and list them as problems.
+Fixed: see `CHANGELOG.md` [Unreleased]. `importConfigText` gives the whole file one `analysisBudget(REGEX_BATCH_BUDGET_MS)` with `defer`, like `sanitizeStoredSettings`. Patterns past the budget are kept unchecked rather than refusing the import, so a backup that the worker's settings load only partly checked can still be restored. They are counted in `ImportResult.unchecked` (the options page's confirmation says how many), named in the first warning, and never run until checked: the options page's matcher checks them itself, and the worker checks them in slices and lists the refused ones as settings problems. The first-run preset (`sw.ts`) uses the same path, so it always loads. 8,000 patterns that are hard to check: about 6 s before, about 0.75 s now. Covered by the "import regex budget" unit tests.
 
-### 3. 20 large subscriptions can exceed the `storage.local` quota (P2)
+### 3. 20 large subscriptions can exceed the `storage.local` quota (fixed, unreleased)
 
-- **What:** subscription data is stored verbatim: each rule repeats its profile, id and origin. At the limits (20 subscriptions × 5,000 rules × 2 MB files) this can pass the 10 MB `storage.local` quota. Since 1.3.3 the write failure is shown and the old rules are kept, so nothing breaks silently, but the update is lost.
-- **Where:** `subscriptionData` in `storage.local`, written only by the SW (`src/shared/subscriptions.ts`, `src/background/sw.ts`).
-- **Fix:** a compact storage form: store each distinct profile once and refer to it by index, and rebuild ids (`<subId>:<index>`) and `origin` on load instead of storing them. `options.ts` reads this data too and needs the same change. Bump the stored format and migrate on load.
+Fixed: see `CHANGELOG.md` [Unreleased]. `subscriptionData` is stored in a compact form (format 2): each entry's rule types and profiles are stored once and rules refer to them by index; ids (`<subId>:<index>`) and `origin` are rebuilt on load. `encodeSubscriptionData` / `decodeSubscriptionData` in `src/shared/subscriptions.ts` are the only code that knows the format (used by `sw.ts`, `options.ts` and the e2e helper). Data saved by 1.3.3 or older is read as before (the `regexCheck` marker and fetch times are kept, so nothing is refetched because of it) and written back in the new form when the worker loads it. At the limits (20 × 5,000 rules) the stored size is 2.9 MB for typical lists (was 32 MB) and 4.6 MB with 50-character host names (was 34 MB); besides the rules' own text, a rule costs about 8 bytes. Still possible to pass the quota: rules whose text alone is near 10 MB (e.g. 80-character names and a note on every rule: 10.1 MB), or a different profile on nearly every rule (about 19 MB). The existing quota error then keeps the old rules. Covered by the unit tests "stored form of subscription data".
 
-### 4. Timing-based unit tests may flake on a slow machine (P2)
+### 4. Timing-based unit tests may flake on a slow machine (fixed, unreleased)
 
-- **What:** `test/perf.test.ts` asserts time ceilings. They are at least 10× the measured numbers, but a slow or busy CI machine could still fail them.
-- **Fix options:** count work instead of time where the code already has a counter (the regex check's `work()` units), or skip the timing assertions unless an env var like `LJ_PERF=1` is set and run them in a separate script.
+- **What:** `test/perf.test.ts` asserted time ceilings. They are at least 10× the measured numbers, but a slow or busy CI machine could still fail them.
+- **Fixed:** the hostile stored-regex test asserts on work: what one check of such a pattern charges to an `analysisBudget`, that the first navigation checks no more patterns than `NAVIGATION_REGEX_BUDGET_MS` worth of units (it resets the navigation budget first), and that the second checks none. The other ceilings (resolveHost, analyzeRules, refusing a 20,000-rule file, profile validations) have no work counter in the code; they always run, but are enforced only with `LJ_PERF=1`, i.e. `npm run test:perf` (`scripts/test-perf.mjs`). Without it, `npm test` prints each time as a test diagnostic.
 
 ### 5. Browser timings not re-measured after the perf fixes (P2)
 
 - **What:** the real-browser numbers in `handoff.md` (Performance) were taken before the 1.3.3 speed-ups. The fixes cut worker CPU per navigation (rule matching 4.3 ms → 0.009 ms with 5,000 rules), but page-load times weren't measured again.
 - **Do:** run `npm run e2e:launch -- --runs 10` and a 5,000-rule CPU-per-navigation run, then update `handoff.md`. Expect worker CPU per navigation near the 4-rule figure (3.4 ms) instead of 17 ms.
 
-### 6. Corrupt mmdb records found at runtime aren't shown (P3)
+### 6. Corrupt mmdb records found at runtime aren't shown (fixed, unreleased)
 
-- **What:** a corrupt GeoIP/ASN record found during a lookup counts as no match, but the user never learns why an IP rule doesn't match.
-- **Fix:** surface `lookup(...).error` in `src/background/datasets.ts` (once per data set, not per lookup) and show it on the options page's data page.
+- **What:** a corrupt GeoIP/ASN record found during a lookup counts as no match, but the user never learned why an IP rule didn't match.
+- **Fixed:** `DatasetRuntime` keeps the first `lookup(...).error` per data set (`lookupErrors`), logs it once as a warning, and keeps it until `reset()` (download, replace or delete); `ensure()` doesn't clear it. It reaches the options page as `GlobalStatus.datasets.lookupErrors` (`listStatuses`), and the data set's card shows it (`opt.data.recordError`). It lives in the worker's memory, so after the worker restarts it shows again only once a lookup hits the record again. Tests: "Corrupt data-set records found by lookups" in `test/parser-safety.test.ts` (the runtime now takes an optional `DatasetSource`, so tests don't need IndexedDB).
 
-### 7. Deleted data set still says "was downloaded for subscription X" (P3)
+### 7. Deleted data set still says "was downloaded for subscription X" (fixed, unreleased)
 
-- **What:** after a data set is deleted, the options page still shows that it was downloaded for a subscription.
-- **Fix:** clear the "downloaded for" record when the data set is deleted, or derive the text from what is stored.
+- **What:** after a data set was deleted, Options ▸ Subscriptions still showed that it was downloaded for a subscription.
+- **Fixed by deriving the text, not clearing the record:** the `subscriptionDatasetState` record is what keeps a deleted data set from being downloaded again (`datasetDownloadDue`), so clearing it on delete would bring the file back at the next subscription update. `subscriptionDatasetStatus()` (`src/shared/subscription-dataset-status.ts`) combines the record with what is installed: *downloaded* only while a file from the record's URL is installed, *deleted* (`opt.sub.dsDeleted`) when it is gone, nothing when another file replaced it, and the failure only while nothing is installed. The options page refreshes the installed list on the data page and when the worker writes a record. Tests: "what Options says about data sets downloaded for subscriptions" in `test/dataset-update.test.ts`.
 
 ### 8. First-request header missing for subscription GEOSITE rules below an IP rule (P3)
 
