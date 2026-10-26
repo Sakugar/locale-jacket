@@ -12,6 +12,7 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node scripts/build.mjs --tests && node --test --test-reporter=spec \"build/test/**/*.test.js\"",
+    "test:perf": "node scripts/build.mjs --tests && node scripts/test-perf.mjs",
     "e2e": "node scripts/build.mjs && node e2e/run.mjs",
     "serve:verify": "node verify/server.mjs",
     "icons": "node scripts/gen-icons.mjs",

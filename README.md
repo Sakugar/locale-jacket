@@ -325,6 +325,7 @@ npm run e2e:stress  # hard cases: restarts, crashes, navigation storms, popups, 
 npm run e2e:launch  # startup test and page-load timing (needs Chromium, see e2e/launch-perf.mjs; add -- --runs 10)
 npm run screenshots # UI screenshots into e2e/artifacts/ (add -- --ui=ja etc. for another language)
 npm run typecheck
+npm run test:perf   # the performance tests with their time ceilings enforced (npm test only reports the times)
 ```
 
 The end-to-end suite starts the browser with `--lang=zh-CN`, loads `dist/` through the DevTools protocol (`Extensions.loadUnpacked`), and drives pages on `*.localhost` hostnames. It asserts what the page's **first script** observed, which headers the server received, and what frames and workers saw.
