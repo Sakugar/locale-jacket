@@ -462,6 +462,8 @@ export const zhCN: Record<MessageKey, string> = {
   'opt.sub.datasetsHint': '当订阅包含 GEOSITE、GEOIP 或 IP-ASN 规则而对应数据集未安装时，会从订阅指定的地址下载，否则从“数据集”页面的默认地址下载。下载失败会在一小时后重试。',
   'opt.sub.dsDone': '已为“{sub}”从 {url} 下载 {name}（{when}）。',
   'opt.sub.dsFailed': '无法为“{sub}”下载 {name}：{error}',
+  'opt.sub.dsDeleted': '曾为“{sub}”下载过 {name}，但之后已被删除，因此不会再自动下载。如需使用，请在“数据集”页面下载或导入。',
+  'opt.data.recordError': '查询时在此文件中发现损坏的记录：{error}。对 IP 规则而言，存放在文件这部分的地址一律视为不匹配。请重新下载或导入该文件。',
 
   'opt.io.confirmUnchecked': '有 {count} 个正则表达式未能及时完成安全检查。它们会被保留，但在扩展检查完之前不会匹配；未通过检查的会列在“会话与日志”页面。',
   // @append-zh

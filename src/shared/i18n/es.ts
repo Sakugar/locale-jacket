@@ -462,6 +462,8 @@ export const es: Record<MessageKey, string> = {
   'opt.sub.datasetsHint': 'Cuando una suscripción tiene reglas GEOSITE, GEOIP o IP-ASN y ese conjunto de datos no está instalado, se descarga desde la dirección que indica la suscripción o, si no, desde la dirección predeterminada de la página Conjuntos de datos. Una descarga fallida se reintenta al cabo de una hora.',
   'opt.sub.dsDone': '{name} descargado para «{sub}» desde {url} ({when}).',
   'opt.sub.dsFailed': 'No se pudo descargar {name} para «{sub}»: {error}',
+  'opt.sub.dsDeleted': '{name} se descargó para «{sub}» y después se eliminó, así que no se volverá a descargar automáticamente. Si lo necesitas, descárgalo o impórtalo en la página Conjuntos de datos.',
+  'opt.data.recordError': 'Una búsqueda encontró un registro dañado en este archivo: {error}. Para las reglas de IP, las direcciones guardadas en esa parte del archivo cuentan como sin coincidencia. Vuelve a descargar o importar el archivo.',
 
   'opt.io.confirmUnchecked': '{count} expresión(es) regular(es) no se pudieron comprobar a tiempo. Se conservan, pero no coinciden hasta que la extensión las compruebe; las que rechace aparecerán en la página «Sesiones y registro».',
   // @append-es

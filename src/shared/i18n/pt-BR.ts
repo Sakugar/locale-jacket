@@ -462,6 +462,8 @@ export const ptBR: Record<MessageKey, string> = {
   'opt.sub.datasetsHint': 'Quando uma assinatura tem regras GEOSITE, GEOIP ou IP-ASN e esse conjunto de dados não está instalado, ele é baixado do endereço que a assinatura indica ou, se não houver, do endereço padrão da página Conjuntos de dados. Um download com falha é tentado de novo depois de uma hora.',
   'opt.sub.dsDone': '{name} baixado para “{sub}” de {url} ({when}).',
   'opt.sub.dsFailed': 'Não foi possível baixar {name} para “{sub}”: {error}',
+  'opt.sub.dsDeleted': '{name} foi baixado para “{sub}” e depois excluído, por isso não será baixado de novo automaticamente. Se precisar, baixe ou importe na página Conjuntos de dados.',
+  'opt.data.recordError': 'Uma consulta encontrou um registro corrompido neste arquivo: {error}. Para as regras de IP, os endereços guardados nessa parte do arquivo contam como sem correspondência. Baixe ou importe o arquivo novamente.',
 
   'opt.io.confirmUnchecked': '{count} expressão(ões) regular(es) não puderam ser verificadas a tempo. Elas são mantidas, mas não correspondem até que a extensão as verifique; as recusadas aparecem na página “Sessões e registro”.',
   // @append-pt-BR

@@ -223,7 +223,7 @@ let manager: SessionManager | null = null;
 
 // --------------------------------------------------- datasets and server IPs
 
-const datasets = new DatasetRuntime((msg) => log({ t: Date.now(), level: 'debug', tabId: null, msg }));
+const datasets = new DatasetRuntime((msg, level = 'debug') => log({ t: Date.now(), level, tabId: null, msg }));
 const ipCache = new IpCache();
 let watchingIps = false;
 
@@ -725,7 +725,7 @@ function globalStatus(m: SessionManager): GlobalStatus {
     attachedTabs: m.attachedCount(),
     settingsProblems: [...settingsProblems, ...regexProblems],
     dnr: { ...dnrState },
-    datasets: { installed: datasets.meta, problems: datasets.missing, ipCacheSize: ipCache.size, watchingIps },
+    datasets: { installed: datasets.meta, problems: datasets.missing, lookupErrors: datasets.lookupErrors, ipCacheSize: ipCache.size, watchingIps },
   };
 }
 

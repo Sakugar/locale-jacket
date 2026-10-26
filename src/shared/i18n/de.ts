@@ -462,6 +462,8 @@ export const de: Record<MessageKey, string> = {
   'opt.sub.datasetsHint': 'Hat ein Abonnement GEOSITE-, GEOIP- oder IP-ASN-Regeln und ist der Datensatz nicht installiert, wird er von der Adresse heruntergeladen, die das Abonnement nennt, sonst von der Standardadresse auf der Seite „Datensätze“. Ein fehlgeschlagener Download wird nach einer Stunde wiederholt.',
   'opt.sub.dsDone': '{name} für „{sub}“ von {url} heruntergeladen ({when}).',
   'opt.sub.dsFailed': '{name} für „{sub}“ konnte nicht heruntergeladen werden: {error}',
+  'opt.sub.dsDeleted': '{name} wurde für „{sub}“ heruntergeladen und danach gelöscht, deshalb wird es nicht wieder automatisch heruntergeladen. Laden Sie es bei Bedarf auf der Seite „Datensätze“ herunter oder importieren Sie es dort.',
+  'opt.data.recordError': 'Bei einer Abfrage wurde in dieser Datei ein beschädigter Eintrag gefunden: {error}. Für IP-Regeln gelten die Adressen in diesem Teil der Datei als kein Treffer. Laden oder importieren Sie die Datei erneut.',
 
   'opt.io.confirmUnchecked': '{count} reguläre(r) Ausdruck/Ausdrücke konnte(n) nicht rechtzeitig geprüft werden. Sie bleiben erhalten, greifen aber erst, wenn die Erweiterung sie geprüft hat; abgelehnte werden dann auf der Seite „Sitzungen & Protokoll“ aufgeführt.',
   // @append-de

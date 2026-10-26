@@ -461,6 +461,8 @@ export const en = {
   'opt.sub.datasetsHint': 'When a subscription has GEOSITE, GEOIP or IP-ASN rules and that data set is not installed, it is downloaded from the address the subscription names, or otherwise from the default address on the Data sets page. A failed download is retried after an hour.',
   'opt.sub.dsDone': '{name} downloaded for “{sub}” from {url} ({when}).',
   'opt.sub.dsFailed': '{name} for “{sub}” could not be downloaded: {error}',
+  'opt.sub.dsDeleted': '{name} was downloaded for “{sub}” and then deleted, so it is not downloaded again automatically. Download or import it on the Data sets page if you need it.',
+  'opt.data.recordError': 'A lookup found a corrupt record in this file: {error}. IP rules treat the addresses stored in that part of the file as no match. Download or import the file again.',
 
   'opt.io.confirmUnchecked': '{count} regular expression(s) could not be checked in time. They are kept, but never match until the extension has checked them; any it refuses are then listed on the Sessions & log page.',
   // @append-en

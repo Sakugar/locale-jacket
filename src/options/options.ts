@@ -6,6 +6,7 @@ import { downloadDataset } from '../shared/dataset-download.js';
 import { autoUpdatesEnabled, isUrlSource, MAX_UPDATE_GAP_HOURS, MIN_UPDATE_GAP_HOURS, minGapMs, type DatasetUpdateRecord, type UpdateOutcome } from '../shared/dataset-schedule.js';
 import { DATASET_KINDS, DATASETS, deleteDataset, listDatasets, putDataset, type DatasetMeta } from '../shared/dataset-store.js';
 import { validateDataset } from '../shared/dataset-validate.js';
+import { subscriptionDatasetStatus } from '../shared/subscription-dataset-status.js';
 import { compileDnrRules } from '../shared/dnr.js';
 import {
   availableUpdate,
@@ -655,12 +656,14 @@ async function renderSessions(): Promise<void> {
 
 async function renderData(): Promise<void> {
   const root = $('#data');
-  const [metas, status, upd] = await Promise.all([
-    listDatasets().catch(() => [] as DatasetMeta[]),
+  const [listed, status, upd] = await Promise.all([
+    listDatasets().catch(() => null),
     send({ type: 'listStatuses' }).catch(() => null),
     send({ type: 'getDatasetUpdateState' }).catch(() => null),
   ]);
+  const metas = listed ?? [];
   clear(root);
+  if (listed) setInstalledDatasets(listed);
   const needed = requiredDatasets(withSubscriptions(settings, subData).rules);
   root.append(
     h('h1', {}, t('opt.data.title')),
@@ -729,6 +732,9 @@ async function renderData(): Promise<void> {
         h('p', { class: 'hint' }, t('opt.data.formatSource', { format: info.format, source: info.license })),
         meta ? h('p', { class: 'hint' }, t('opt.data.currentFrom', { source: meta.source })) : null,
         meta ? updateLine(meta, upd?.state[kind]) : null,
+        meta && kind !== 'geosite' && status?.global.datasets.lookupErrors?.[kind]
+          ? h('p', { class: 'small error-text' }, t('opt.data.recordError', { error: status.global.datasets.lookupErrors[kind]! }))
+          : null,
         h('div', { class: 'row wrap' },
           url,
           download,
@@ -861,11 +867,21 @@ function settleUpdating(): void {
 
 /** Automatic data-set downloads for subscriptions (written by the service worker). */
 let subDatasetState: SubscriptionDatasetState = {};
+/** Data sets installed now: what those downloads say depends on it (a deleted one is not "downloaded"). */
+let installedDatasets: DatasetMeta[] = [];
 
 async function loadSubData(): Promise<void> {
   const r = await chrome.storage.local.get([SUBSCRIPTION_DATA_KEY, SUBSCRIPTION_DATASET_STATE_KEY]);
   subData = decodeSubscriptionData(r[SUBSCRIPTION_DATA_KEY]).data;
   subDatasetState = (r[SUBSCRIPTION_DATASET_STATE_KEY] as SubscriptionDatasetState | undefined) ?? {};
+  installedDatasets = await listDatasets().catch(() => installedDatasets);
+}
+
+/** Data sets live in IndexedDB (no change events): the data page and the worker's download records refresh them. */
+function setInstalledDatasets(metas: DatasetMeta[]): void {
+  if (JSON.stringify(metas) === JSON.stringify(installedDatasets)) return;
+  installedDatasets = metas;
+  preserveInputs(document.body, () => renderSubscriptions());
 }
 
 /** The option to download the data sets subscriptions need, and what was downloaded. */
@@ -877,9 +893,16 @@ function subscriptionDatasetsCard(): HTMLElement {
     const rec = subDatasetState[kind];
     if (!rec) return [];
     const name = DATASETS[kind].label;
-    return [rec.ok
-      ? h('p', { class: 'hint' }, t('opt.sub.dsDone', { name, sub: rec.for, url: rec.url, when: new Date(rec.at).toLocaleString(getLanguage()) }))
-      : h('p', { class: 'small error-text' }, t('opt.sub.dsFailed', { name, sub: rec.for, error: rec.error ?? '' }))];
+    switch (subscriptionDatasetStatus(rec, installedDatasets.find((m) => m.kind === kind))) {
+      case 'downloaded':
+        return [h('p', { class: 'hint' }, t('opt.sub.dsDone', { name, sub: rec.for, url: rec.url, when: new Date(rec.at).toLocaleString(getLanguage()) }))];
+      case 'failed':
+        return [h('p', { class: 'small error-text' }, t('opt.sub.dsFailed', { name, sub: rec.for, error: rec.error ?? '' }))];
+      case 'deleted':
+        return [h('p', { class: 'hint' }, t('opt.sub.dsDeleted', { name, sub: rec.for }))];
+      case 'replaced':
+        return [];
+    }
   });
   return h('div', { class: 'card stack' },
     h('label', { class: 'row' }, box, h('span', {}, t('opt.sub.datasets'))),
@@ -1199,7 +1222,11 @@ async function main(): Promise<void> {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || (!changes[SUBSCRIPTION_DATA_KEY] && !changes[SUBSCRIPTION_DATASET_STATE_KEY])) return;
     if (changes[SUBSCRIPTION_DATA_KEY]) subData = decodeSubscriptionData(changes[SUBSCRIPTION_DATA_KEY].newValue).data;
-    if (changes[SUBSCRIPTION_DATASET_STATE_KEY]) subDatasetState = (changes[SUBSCRIPTION_DATASET_STATE_KEY].newValue as SubscriptionDatasetState | undefined) ?? {};
+    if (changes[SUBSCRIPTION_DATASET_STATE_KEY]) {
+      subDatasetState = (changes[SUBSCRIPTION_DATASET_STATE_KEY].newValue as SubscriptionDatasetState | undefined) ?? {};
+      // The worker writes a record after each download it made for a subscription.
+      void listDatasets().then(setInstalledDatasets, () => undefined);
+    }
     settleUpdating();
     preserveInputs(document.body, () => {
       renderRules();

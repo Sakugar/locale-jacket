@@ -6,6 +6,8 @@ import { downloadDataset } from '../src/shared/dataset-download.js';
 import { dueDatasets, planUpdates, type DatasetUpdateState, type Needed } from '../src/shared/dataset-schedule.js';
 import type { DatasetMeta } from '../src/shared/dataset-store.js';
 import { defaultSettings } from '../src/shared/presets.js';
+import { subscriptionDatasetStatus } from '../src/shared/subscription-dataset-status.js';
+import type { SubscriptionDatasetRecord } from '../src/shared/subscriptions.js';
 import type { DatasetUpdateOptions } from '../src/shared/types.js';
 import { encodeGeosite } from './fixtures.js';
 
@@ -300,5 +302,28 @@ describe('DatasetUpdater', () => {
     await t.updater.run('startup');
     await t.updater.run('alarm');
     assert.equal(t.calls.length, 0);
+  });
+});
+
+describe('what Options says about data sets downloaded for subscriptions', () => {
+  const GEOIP_URL = 'https://cdn.example/country.mmdb';
+  const ok: SubscriptionDatasetRecord = { url: GEOIP_URL, for: 'Sub', at: NOW - DAY, ok: true };
+  const failed: SubscriptionDatasetRecord = { url: GEOIP_URL, for: 'Sub', at: NOW - H, ok: false, error: 'HTTP 500' };
+
+  it('says "downloaded" only while that file is installed', () => {
+    assert.equal(subscriptionDatasetStatus(ok, meta('geoip', { source: GEOIP_URL })), 'downloaded');
+    // Updated in place later (same address): still the file downloaded for the subscription.
+    assert.equal(subscriptionDatasetStatus(ok, meta('geoip', { source: GEOIP_URL, savedAt: NOW })), 'downloaded');
+  });
+
+  it('a deleted data set is not "downloaded" (its record stays, so it is not downloaded again)', () => {
+    assert.equal(subscriptionDatasetStatus(ok, undefined), 'deleted');
+  });
+
+  it('a file from elsewhere replaces the record; a failure shows only while nothing is installed', () => {
+    assert.equal(subscriptionDatasetStatus(ok, meta('geoip', { source: 'file: Country.mmdb' })), 'replaced');
+    assert.equal(subscriptionDatasetStatus(ok, meta('geoip', { source: 'https://other.example/c.mmdb' })), 'replaced');
+    assert.equal(subscriptionDatasetStatus(failed, undefined), 'failed');
+    assert.equal(subscriptionDatasetStatus(failed, meta('geoip', { source: GEOIP_URL })), 'replaced');
   });
 });

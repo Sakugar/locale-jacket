@@ -462,6 +462,8 @@ export const fr: Record<MessageKey, string> = {
   'opt.sub.datasetsHint': 'Quand un abonnement contient des règles GEOSITE, GEOIP ou IP-ASN et que le jeu de données n’est pas installé, il est téléchargé depuis l’adresse indiquée par l’abonnement, sinon depuis l’adresse par défaut de la page Jeux de données. Un téléchargement échoué est retenté après une heure.',
   'opt.sub.dsDone': '{name} téléchargé pour « {sub} » depuis {url} ({when}).',
   'opt.sub.dsFailed': 'Impossible de télécharger {name} pour « {sub} » : {error}',
+  'opt.sub.dsDeleted': '{name} a été téléchargé pour « {sub} » puis supprimé ; il ne sera donc plus téléchargé automatiquement. Téléchargez-le ou importez-le depuis la page Jeux de données si vous en avez besoin.',
+  'opt.data.recordError': 'Une recherche a trouvé un enregistrement corrompu dans ce fichier : {error}. Pour les règles IP, les adresses stockées dans cette partie du fichier sont considérées comme sans correspondance. Téléchargez ou importez à nouveau le fichier.',
 
   'opt.io.confirmUnchecked': '{count} expression(s) régulière(s) n’ont pas pu être vérifiées à temps. Elles sont conservées, mais ne correspondent à rien tant que l’extension ne les a pas vérifiées ; celles qu’elle refuse sont alors listées sur la page « Sessions et journal ».',
   // @append-fr

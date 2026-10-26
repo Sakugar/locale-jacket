@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { DatasetRuntime, type DatasetSource } from '../src/background/datasets.js';
 import { sanitizeStoredSettings } from '../src/shared/config-io.js';
+import type { DatasetKind, DatasetMeta } from '../src/shared/dataset-store.js';
 import { validateDataset } from '../src/shared/dataset-validate.js';
 import { parseIp, type IpAddr } from '../src/shared/ip.js';
 import { makeProfile } from '../src/shared/locale.js';
@@ -196,6 +198,65 @@ describe('MaxMind DB parser safety', () => {
     assert.throws(() => new MmdbReader(buildDb({ data: usRecord, meta: str('not a map') })), /metadata is not a map/);
     // A date beyond what Date can show is not an error.
     assert.match(validateDataset('geoip', bad({ build_epoch: 10n ** 15n })).summary, /unknown date/);
+  });
+});
+
+// ------------------------------------------------- corrupt records at runtime
+
+/** A DatasetRuntime over in-memory files, with what it logged. */
+function runtime(files: Partial<Record<DatasetKind, Uint8Array>>) {
+  const logged: { msg: string; level: string }[] = [];
+  const source: DatasetSource = {
+    list: async () => Object.entries(files).map(([kind, b]): DatasetMeta => ({ kind: kind as DatasetKind, source: 'file: test.mmdb', size: b!.byteLength, savedAt: 0, summary: 'test' })),
+    bytes: async (kind) => (files[kind] ? files[kind]!.slice().buffer : null),
+  };
+  const rt = new DatasetRuntime((msg, level = 'debug') => logged.push({ msg, level }), source);
+  return { rt, logged };
+}
+
+describe('Corrupt data-set records found by lookups', () => {
+  const corrupt = buildDb({ data: ptr(0) }); // 0.0.0.0/1 points at a pointer to itself
+
+  it('a corrupt record counts as no match, and is reported once per data set', async () => {
+    const { rt, logged } = runtime({ geoip: corrupt, asn: corrupt });
+    await rt.ensure({ geosite: [], geoip: true, asn: true });
+    assert.deepEqual(rt.missing, []);
+    assert.deepEqual(rt.lookupErrors, {});
+    const ctx = rt.context(null);
+    assert.equal(ctx.geoip!(ip('8.8.8.8')), null, 'no match');
+    assert.equal(ctx.geoip!(ip('9.9.9.9')), null, 'another address in the corrupt part');
+    assert.equal(ctx.asn!(ip('1.1.1.1')), null);
+    const errors = rt.lookupErrors;
+    assert.match(errors.geoip ?? '', /pointer to a pointer/);
+    assert.match(errors.asn ?? '', /pointer to a pointer/);
+    const warnings = logged.filter((l) => l.level === 'warn');
+    assert.equal(warnings.length, 2, warnings.map((w) => w.msg).join('\n'));
+    assert.match(warnings[0]!.msg, /GeoIP data set has a corrupt record/);
+    assert.match(warnings[1]!.msg, /ASN data set has a corrupt record/);
+    // Other ranges still work and add nothing.
+    assert.equal(ctx.geoip!(ip('200.1.1.1')), null);
+    assert.equal(logged.filter((l) => l.level === 'warn').length, 2);
+  });
+
+  it('the error stays while the same file is loaded and goes once the data sets are re-read', async () => {
+    const { rt } = runtime({ geoip: corrupt });
+    await rt.ensure({ geosite: [], geoip: true, asn: false });
+    rt.context(null).geoip!(ip('8.8.8.8'));
+    // Settings changes call ensure() again; the file and its error stay.
+    await rt.ensure({ geosite: [], geoip: true, asn: false });
+    assert.match(rt.lookupErrors.geoip ?? '', /pointer to a pointer/);
+    // A download, replace or delete resets the runtime.
+    rt.reset();
+    assert.deepEqual(rt.lookupErrors, {});
+  });
+
+  it('a sound file reports nothing', async () => {
+    const { rt, logged } = runtime({ geoip: buildDb({ data: usRecord }) });
+    await rt.ensure({ geosite: [], geoip: true, asn: false });
+    assert.equal(rt.context(null).geoip!(ip('8.8.8.8')), 'US');
+    assert.equal(rt.context(null).geoip!(ip('200.1.1.1')), null);
+    assert.deepEqual(rt.lookupErrors, {});
+    assert.equal(logged.filter((l) => l.level === 'warn').length, 0);
   });
 });
 

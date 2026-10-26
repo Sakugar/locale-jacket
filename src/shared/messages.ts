@@ -54,7 +54,14 @@ export interface GlobalStatus {
   attachedTabs: number;
   settingsProblems: string[];
   dnr: { active: boolean; ruleCount: number; skipped: string[]; error: string | null };
-  datasets: { installed: DatasetMeta[]; problems: string[]; ipCacheSize: number; watchingIps: boolean };
+  datasets: {
+    installed: DatasetMeta[];
+    problems: string[];
+    /** The first corrupt record a lookup found in each data set since it was loaded (that lookup counted as no match). */
+    lookupErrors: Partial<Record<'geoip' | 'asn', string>>;
+    ipCacheSize: number;
+    watchingIps: boolean;
+  };
 }
 
 export interface HostTest {

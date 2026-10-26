@@ -462,6 +462,8 @@ export const ko: Record<MessageKey, string> = {
   'opt.sub.datasetsHint': '구독에 GEOSITE, GEOIP 또는 IP-ASN 규칙이 있고 해당 데이터 세트가 설치되지 않았으면, 구독이 지정한 주소에서, 없으면 데이터 세트 페이지의 기본 주소에서 다운로드합니다. 실패하면 한 시간 뒤에 다시 시도합니다.',
   'opt.sub.dsDone': '"{sub}"을(를) 위해 {url}에서 {name}을(를) 다운로드했습니다({when}).',
   'opt.sub.dsFailed': '"{sub}"에 필요한 {name}을(를) 다운로드하지 못했습니다: {error}',
+  'opt.sub.dsDeleted': '"{sub}"을(를) 위해 {name}을(를) 다운로드했지만 이후 삭제되었으므로 다시 자동으로 다운로드하지 않습니다. 필요하면 데이터 세트 페이지에서 다운로드하거나 가져오세요.',
+  'opt.data.recordError': '조회 중 이 파일에서 손상된 레코드를 발견했습니다: {error}. 파일의 이 부분에 저장된 주소는 IP 규칙에서 일치하지 않는 것으로 처리됩니다. 파일을 다시 다운로드하거나 가져오세요.',
 
   'opt.io.confirmUnchecked': '정규식 {count}개를 제시간에 검사하지 못했습니다. 규칙은 유지되지만 확장 프로그램이 검사할 때까지 일치하지 않으며, 거부된 항목은 “세션 및 로그” 페이지에 표시됩니다.',
   // @append-ko

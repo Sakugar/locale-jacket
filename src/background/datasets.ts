@@ -5,8 +5,8 @@
 
 import { getDatasetBytes, listDatasets, type DatasetKind, type DatasetMeta } from '../shared/dataset-store.js';
 import { indexGeosite, loadGeositeCategory, parseGeositeValue, type GeositeIndex, type GeositeList } from '../shared/geosite.js';
-import type { IpAddr } from '../shared/ip.js';
-import { asnOf, countryOf, MmdbReader } from '../shared/mmdb.js';
+import { formatIp, type IpAddr } from '../shared/ip.js';
+import { asnOf, countryOf, MmdbReader, type MmdbValue } from '../shared/mmdb.js';
 import { t } from '../shared/i18n.js';
 import type { MatchContext } from '../shared/rules.js';
 
@@ -16,6 +16,17 @@ export interface Requirements {
   asn: boolean;
 }
 
+/** Where the data sets are read from: the extension's IndexedDB (tests pass their own). */
+export interface DatasetSource {
+  list(): Promise<DatasetMeta[]>;
+  bytes(kind: DatasetKind): Promise<ArrayBuffer | null>;
+}
+
+const STORE: DatasetSource = { list: listDatasets, bytes: getDatasetBytes };
+
+/** The data sets read by address lookups (they can find corrupt records). */
+export type LookupKind = 'geoip' | 'asn';
+
 export class DatasetRuntime {
   meta: DatasetMeta[] = [];
   private geositeIndex: GeositeIndex | null = null;
@@ -24,8 +35,16 @@ export class DatasetRuntime {
   private asnReader: MmdbReader | null = null;
   private readonly lookupCache = new Map<string, { country: string | null; asn: number | null }>();
   private problems: string[] = [];
+  /**
+   * The first corrupt record a lookup found in each data set (that lookup counted as no
+   * match). Kept until the data sets are re-read (reset), and logged once.
+   */
+  private readonly lookupErrorByKind: Partial<Record<LookupKind, string>> = {};
 
-  constructor(private readonly log: (msg: string) => void) {}
+  constructor(
+    private readonly log: (msg: string, level?: 'debug' | 'warn') => void,
+    private readonly store: DatasetSource = STORE,
+  ) {}
 
   private has(kind: DatasetKind): boolean {
     return this.meta.some((m) => m.kind === kind);
@@ -38,13 +57,15 @@ export class DatasetRuntime {
     this.geoipReader = null;
     this.asnReader = null;
     this.lookupCache.clear();
+    delete this.lookupErrorByKind.geoip;
+    delete this.lookupErrorByKind.asn;
   }
 
   /** Load what `req` needs. Safe to call repeatedly; already-loaded data is reused. */
   async ensure(req: Requirements): Promise<void> {
     this.problems = [];
     try {
-      this.meta = await listDatasets();
+      this.meta = await this.store.list();
     } catch (e) {
       this.problems.push(t('bg.data.unavailable', { error: (e as Error).message }));
       return;
@@ -55,7 +76,7 @@ export class DatasetRuntime {
       } else {
         try {
           if (!this.geositeIndex) {
-            const bytes = await getDatasetBytes('geosite');
+            const bytes = await this.store.bytes('geosite');
             if (bytes) this.geositeIndex = indexGeosite(bytes);
           }
           for (const value of req.geosite) {
@@ -82,7 +103,7 @@ export class DatasetRuntime {
       return null;
     }
     try {
-      const bytes = await getDatasetBytes(kind);
+      const bytes = await this.store.bytes(kind);
       return bytes ? new MmdbReader(bytes) : null;
     } catch (e) {
       this.problems.push(t('bg.data.unreadable', { name: kind, error: (e as Error).message }));
@@ -95,6 +116,21 @@ export class DatasetRuntime {
     return [...this.problems];
   }
 
+  /** Corrupt records found by lookups since the data sets were last read, by data set. */
+  get lookupErrors(): Partial<Record<LookupKind, string>> {
+    return { ...this.lookupErrorByKind };
+  }
+
+  /** A lookup that never throws: a corrupt record reads as no match and is reported once per data set. */
+  private lookup(kind: LookupKind, reader: MmdbReader, ip: IpAddr): MmdbValue | null {
+    const res = reader.lookup(ip);
+    if (res.error !== undefined && this.lookupErrorByKind[kind] === undefined) {
+      this.lookupErrorByKind[kind] = res.error;
+      this.log(`${kind === 'geoip' ? 'GeoIP' : 'ASN'} data set has a corrupt record (looking up ${formatIp(ip)}): ${res.error}. Addresses stored there count as no match.`, 'warn');
+    }
+    return res.record;
+  }
+
   geositeCategoryNames(): string[] {
     return this.geositeIndex ? [...this.geositeIndex.categories.keys()].sort() : [];
   }
@@ -102,7 +138,7 @@ export class DatasetRuntime {
   /** Load the geosite index (for the category list in the editor) even if no rule needs it yet. */
   async loadGeositeIndex(): Promise<void> {
     if (this.geositeIndex) return;
-    const bytes = await getDatasetBytes('geosite');
+    const bytes = await this.store.bytes('geosite');
     if (bytes) this.geositeIndex = indexGeosite(bytes);
   }
 
@@ -111,8 +147,8 @@ export class DatasetRuntime {
     let v = this.lookupCache.get(key);
     if (!v) {
       v = {
-        country: this.geoipReader ? countryOf(this.geoipReader.lookup(ip).record) : null,
-        asn: this.asnReader ? (asnOf(this.asnReader.lookup(ip).record)?.asn ?? null) : null,
+        country: this.geoipReader ? countryOf(this.lookup('geoip', this.geoipReader, ip)) : null,
+        asn: this.asnReader ? (asnOf(this.lookup('asn', this.asnReader, ip))?.asn ?? null) : null,
       };
       if (this.lookupCache.size > 5000) this.lookupCache.clear();
       this.lookupCache.set(key, v);

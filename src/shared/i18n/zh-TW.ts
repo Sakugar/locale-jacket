@@ -462,6 +462,8 @@ export const zhTW: Record<MessageKey, string> = {
   'opt.sub.datasetsHint': '當訂閱含有 GEOSITE、GEOIP 或 IP-ASN 規則而對應資料集未安裝時，會從訂閱指定的位址下載，否則從「資料集」頁面的預設位址下載。下載失敗會在一小時後重試。',
   'opt.sub.dsDone': '已為「{sub}」從 {url} 下載 {name}（{when}）。',
   'opt.sub.dsFailed': '無法為「{sub}」下載 {name}：{error}',
+  'opt.sub.dsDeleted': '曾為「{sub}」下載過 {name}，但之後已被刪除，因此不會再自動下載。如有需要，請在「資料集」頁面下載或匯入。',
+  'opt.data.recordError': '查詢時在此檔案中發現損毀的記錄：{error}。對 IP 規則而言，存放在檔案這部分的位址一律視為不符合。請重新下載或匯入此檔案。',
 
   'opt.io.confirmUnchecked': '有 {count} 個正規表示式未能及時完成安全檢查。它們會被保留，但在擴充功能檢查完之前不會比對；未通過檢查的會列在「工作階段與記錄」頁面。',
   // @append-zh-TW
