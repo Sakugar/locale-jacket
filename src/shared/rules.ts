@@ -532,12 +532,15 @@ export interface RuleValueResult {
   value: string | null;
   notes: string[];
   error?: string;
+  /** A DOMAIN-REGEX accepted unchecked because the batch budget was spent (RegexCheck.defer). */
+  unchecked?: boolean;
 }
 
 /**
  * Analysis time for one batch of regular expressions (one subscription file, one settings
- * load, one GeoSite category): a hostile list cannot hold the worker for longer. Patterns
- * left over when it is spent are refused like any other unsafe pattern.
+ * load, one import, one GeoSite category): a hostile list cannot hold the worker (or the
+ * options page) for longer. Patterns left over when it is spent are refused like any other
+ * unsafe pattern, or, with RegexCheck.defer (your own rules), kept unchecked.
  */
 export const REGEX_BATCH_BUDGET_MS = 750;
 
@@ -588,7 +591,7 @@ export function normalizeRuleValue(type: RuleType, input: string, check?: RegexC
       if (!deferred) markRegexValidated(raw);
       const notes = ['Matched case-insensitively against the hostname only (e.g. ^(.+\\.)?example\\.com$).'];
       if (!/^\^/.test(raw) || !/\$$/.test(raw)) notes.push('Tip: anchor it with ^ and $ so it cannot match unrelated hosts.');
-      return { value: raw, notes };
+      return deferred ? { value: raw, notes, unchecked: true } : { value: raw, notes };
     }
     case 'GEOSITE': {
       const v = raw.toLowerCase().replace(/^geosite:/, '');

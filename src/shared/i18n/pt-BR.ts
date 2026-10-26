@@ -463,5 +463,6 @@ export const ptBR: Record<MessageKey, string> = {
   'opt.sub.dsDone': '{name} baixado para “{sub}” de {url} ({when}).',
   'opt.sub.dsFailed': 'Não foi possível baixar {name} para “{sub}”: {error}',
 
+  'opt.io.confirmUnchecked': '{count} expressão(ões) regular(es) não puderam ser verificadas a tempo. Elas são mantidas, mas não correspondem até que a extensão as verifique; as recusadas aparecem na página “Sessões e registro”.',
   // @append-pt-BR
 };

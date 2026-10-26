@@ -463,5 +463,6 @@ export const ru: Record<MessageKey, string> = {
   'opt.sub.dsDone': '{name} скачан для «{sub}» с {url} ({when}).',
   'opt.sub.dsFailed': 'Не удалось скачать {name} для «{sub}»: {error}',
 
+  'opt.io.confirmUnchecked': 'Не удалось вовремя проверить регулярных выражений: {count}. Они сохранены, но не срабатывают, пока расширение их не проверит; отклонённые будут перечислены на странице «Сеансы и журнал».',
   // @append-ru
 };

@@ -463,5 +463,6 @@ export const fr: Record<MessageKey, string> = {
   'opt.sub.dsDone': '{name} téléchargé pour « {sub} » depuis {url} ({when}).',
   'opt.sub.dsFailed': 'Impossible de télécharger {name} pour « {sub} » : {error}',
 
+  'opt.io.confirmUnchecked': '{count} expression(s) régulière(s) n’ont pas pu être vérifiées à temps. Elles sont conservées, mais ne correspondent à rien tant que l’extension ne les a pas vérifiées ; celles qu’elle refuse sont alors listées sur la page « Sessions et journal ».',
   // @append-fr
 };

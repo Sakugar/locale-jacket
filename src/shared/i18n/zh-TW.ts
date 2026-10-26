@@ -463,5 +463,6 @@ export const zhTW: Record<MessageKey, string> = {
   'opt.sub.dsDone': '已為「{sub}」從 {url} 下載 {name}（{when}）。',
   'opt.sub.dsFailed': '無法為「{sub}」下載 {name}：{error}',
 
+  'opt.io.confirmUnchecked': '有 {count} 個正規表示式未能及時完成安全檢查。它們會被保留，但在擴充功能檢查完之前不會比對；未通過檢查的會列在「工作階段與記錄」頁面。',
   // @append-zh-TW
 };

@@ -463,5 +463,6 @@ export const de: Record<MessageKey, string> = {
   'opt.sub.dsDone': '{name} für „{sub}“ von {url} heruntergeladen ({when}).',
   'opt.sub.dsFailed': '{name} für „{sub}“ konnte nicht heruntergeladen werden: {error}',
 
+  'opt.io.confirmUnchecked': '{count} reguläre(r) Ausdruck/Ausdrücke konnte(n) nicht rechtzeitig geprüft werden. Sie bleiben erhalten, greifen aber erst, wenn die Erweiterung sie geprüft hat; abgelehnte werden dann auf der Seite „Sitzungen & Protokoll“ aufgeführt.',
   // @append-de
 };

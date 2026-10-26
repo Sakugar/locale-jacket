@@ -463,5 +463,6 @@ export const ja: Record<MessageKey, string> = {
   'opt.sub.dsDone': '「{sub}」のために {name} を {url} からダウンロードしました（{when}）。',
   'opt.sub.dsFailed': '「{sub}」のための {name} をダウンロードできませんでした：{error}',
 
+  'opt.io.confirmUnchecked': '{count} 件の正規表現は時間内にチェックできませんでした。ルールは残りますが、拡張機能がチェックするまで一致しません。拒否されたものは「セッションとログ」ページに表示されます。',
   // @append-ja
 };

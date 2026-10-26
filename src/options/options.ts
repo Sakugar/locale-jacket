@@ -512,7 +512,7 @@ function renderIO(): void {
           if (!r.settings) return show('bad', t('opt.io.nothingImported'), r.errors);
           const next = mode.value === 'merge' ? mergeRules(settings, r.settings).settings : r.settings;
           const issues = analyzeRules(next).filter((i) => i.level !== 'info');
-          if (!confirm(t(mode.value === 'merge' ? 'opt.io.confirmMerge' : 'opt.io.confirmReplace', { count: r.settings.rules.length }) + (issues.length ? `\n\n${t('opt.io.confirmChecks', { count: issues.length })}` : ''))) return;
+          if (!confirm(t(mode.value === 'merge' ? 'opt.io.confirmMerge' : 'opt.io.confirmReplace', { count: r.settings.rules.length }) + (issues.length ? `\n\n${t('opt.io.confirmChecks', { count: issues.length })}` : '') + (r.unchecked ? `\n\n${t('opt.io.confirmUnchecked', { count: r.unchecked })}` : ''))) return;
           await commit(next);
           show(r.warnings.length || issues.length ? 'warn' : 'ok', t('opt.io.imported', { count: r.settings.rules.length }), [...r.warnings, ...issues.map((i) => i.message)]);
         },

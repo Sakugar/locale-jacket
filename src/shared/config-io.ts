@@ -23,6 +23,11 @@ export interface ImportResult {
   settings: Settings | null;
   errors: string[];
   warnings: string[];
+  /**
+   * DOMAIN-REGEX rules kept without the safety check because the import's regex budget was
+   * spent (see importConfigText). They never match until the matcher has checked them.
+   */
+  unchecked: number;
 }
 
 /** How many rule subscriptions a configuration may have. */
@@ -55,10 +60,30 @@ export function parseConfigText(text: string): { value: unknown; error?: string 
   }
 }
 
-export function importConfigText(text: string, base?: Settings): ImportResult {
+/**
+ * Import a configuration file. All its regular expressions share one analysis budget
+ * (`regexBudgetMs`, REGEX_BATCH_BUDGET_MS), so a huge hostile file cannot freeze the options
+ * page. These are your own rules, so a spent budget never drops one or refuses the file:
+ * patterns it leaves unchecked are kept (RegexCheck.defer), counted in `unchecked` and named
+ * in the first warning. They never run unchecked: the matcher checks each before first use
+ * (the worker does it between events), and the ones it refuses are listed as settings problems.
+ */
+export function importConfigText(text: string, base?: Settings, regexBudgetMs = REGEX_BATCH_BUDGET_MS): ImportResult {
   const parsed = parseConfigText(text);
-  if (parsed.error) return { settings: null, errors: [parsed.error], warnings: [] };
-  return importConfigObject(parsed.value, base);
+  if (parsed.error) return { settings: null, errors: [parsed.error], warnings: [], unchecked: 0 };
+  return importConfigObject(parsed.value, base, { budget: analysisBudget(regexBudgetMs), defer: true });
+}
+
+/** How many unchecked patterns the import warning names before "and N more". */
+const UNCHECKED_LISTED = 10;
+/** Longest rule value shown in a message; longer ones are cut with "…". */
+const SHOWN_VALUE_LENGTH = 80;
+
+/** "TYPE,value" for messages, with a long value cut short. */
+function ruleSummary(type: unknown, value: unknown): string | null {
+  if (typeof type !== 'string' || (typeof value !== 'string' && typeof value !== 'number')) return null;
+  const v = String(value);
+  return `${type.slice(0, 40)},${v.length > SHOWN_VALUE_LENGTH ? `${v.slice(0, SHOWN_VALUE_LENGTH - 1)}…` : v}`;
 }
 
 /**
@@ -70,10 +95,12 @@ export function importConfigObject(raw: unknown, base?: Settings, check?: RegexC
   const warnings: string[] = [];
   const obj: Record<string, unknown> = Array.isArray(raw) ? { rules: raw } : isRecord(raw) ? raw : {};
   if (!Array.isArray(raw) && !isRecord(raw)) {
-    return { settings: null, errors: ['The configuration must be an object with a "rules" list.'], warnings };
+    return { settings: null, errors: ['The configuration must be an object with a "rules" list.'], warnings, unchecked: 0 };
   }
 
   const rules: Rule[] = [];
+  /** Rules whose regex the spent budget left unchecked (only with check.defer). */
+  const unchecked: string[] = [];
   let defaultAction: DefaultAction | null = null;
   const rawRules = obj.rules ?? [];
   if (!Array.isArray(rawRules)) {
@@ -86,6 +113,7 @@ export function importConfigObject(raw: unknown, base?: Settings, check?: RegexC
         if (res.error) errors.push(res.error);
         warnings.push(...res.warnings);
         if (res.rule) rules.push(res.rule);
+        if (res.rule && res.unchecked) unchecked.push(`${where} ${ruleSummary(res.rule.type, res.rule.value)}`);
         if (res.defaultAction) {
           if (defaultAction) warnings.push(`${where}: more than one MATCH/FINAL rule; the last one wins.`);
           defaultAction = res.defaultAction;
@@ -100,6 +128,7 @@ export function importConfigObject(raw: unknown, base?: Settings, check?: RegexC
       errors.push(...res.errors);
       warnings.push(...res.warnings);
       if (res.rule) rules.push(res.rule);
+      if (res.rule && res.unchecked) unchecked.push(`${where} ${ruleSummary(res.rule.type, res.rule.value)}`);
     });
   }
 
@@ -128,7 +157,17 @@ export function importConfigObject(raw: unknown, base?: Settings, check?: RegexC
     ids.add(r.id);
   }
 
-  if (errors.length) return { settings: null, errors, warnings };
+  if (errors.length) return { settings: null, errors, warnings, unchecked: 0 };
+  if (unchecked.length) {
+    const listed = unchecked.slice(0, UNCHECKED_LISTED).join('; ');
+    const more = unchecked.length > UNCHECKED_LISTED ? `; and ${unchecked.length - UNCHECKED_LISTED} more` : '';
+    // First, so it is not lost among the per-rule notes.
+    warnings.unshift(
+      `${unchecked.length} regular expression(s) were not checked: this file has more complex regular expressions than can be checked in one go. ` +
+        `They are kept, but never match until the extension has checked them in the background; any it refuses are then listed under "Stored settings had problems" on the Sessions & log page. ` +
+        `Not checked yet: ${listed}${more}.`,
+    );
+  }
   return {
     settings: {
       schemaVersion: 1,
@@ -140,6 +179,7 @@ export function importConfigObject(raw: unknown, base?: Settings, check?: RegexC
     },
     errors,
     warnings,
+    unchecked: unchecked.length,
   };
 }
 
@@ -288,7 +328,7 @@ function hasProfile(r: Record<string, unknown>): boolean {
   return isRecord(r.profile) || PROFILE_KEYS.some((k) => r[k] !== undefined && r[k] !== null);
 }
 
-function parseRuleObject(r: Record<string, unknown>, where: string, check?: RegexCheck): { rule: Rule | null; errors: string[]; warnings: string[] } {
+function parseRuleObject(r: Record<string, unknown>, where: string, check?: RegexCheck): { rule: Rule | null; errors: string[]; warnings: string[]; unchecked?: boolean } {
   const errors: string[] = [];
   const warnings: string[] = [];
   const type = parseType(r.type);
@@ -359,6 +399,7 @@ function parseRuleObject(r: Record<string, unknown>, where: string, check?: Rege
     },
     errors,
     warnings,
+    ...(v.unchecked ? { unchecked: true } : {}),
   };
 }
 
@@ -376,7 +417,11 @@ const VALUE_KEYS: Record<RuleType, string[]> = {
 };
 
 /** Parse "TYPE,value,LOCALE|SYSTEM[,no-resolve]" and "MATCH,LOCALE|SYSTEM". */
-function parseCompactRule(s: string, where: string, check?: RegexCheck): { rule?: Rule; defaultAction?: DefaultAction; error?: string; warnings: string[] } {
+function parseCompactRule(
+  s: string,
+  where: string,
+  check?: RegexCheck,
+): { rule?: Rule; defaultAction?: DefaultAction; error?: string; warnings: string[]; unchecked?: boolean } {
   const warnings: string[] = [];
   const parts = s.split(',').map((p) => p.trim());
   let noResolve = false;
@@ -406,13 +451,14 @@ function parseCompactRule(s: string, where: string, check?: RegexCheck): { rule?
   warnings.push(...v.notes.map((n) => `${where}: ${n}`));
   if (noResolve && !isIpRuleType(type)) warnings.push(`${where}: no-resolve only applies to IP rules; ignored.`);
   const extra = noResolve && isIpRuleType(type) ? { noResolve: true } : {};
+  const unchecked = v.unchecked ? { unchecked: true } : {};
   if (SYSTEM_WORDS.has(target.toUpperCase())) {
-    return { rule: { id: newRuleId(), type, value: v.value, action: 'SYSTEM', profile: null, enabled: true, priority: 0, note: '', ...extra }, warnings };
+    return { rule: { id: newRuleId(), type, value: v.value, action: 'SYSTEM', profile: null, enabled: true, priority: 0, note: '', ...extra }, warnings, ...unchecked };
   }
   const p = normalizeProfile({ locale: target });
   if (!p.profile) return { error: `${where}: ${p.errors.join(' ')}`, warnings };
   warnings.push(...p.warnings.map((w) => `${where}: ${w}`));
-  return { rule: { id: newRuleId(), type, value: v.value, action: 'PROFILE', profile: p.profile, enabled: true, priority: 0, note: '', ...extra }, warnings };
+  return { rule: { id: newRuleId(), type, value: v.value, action: 'PROFILE', profile: p.profile, enabled: true, priority: 0, note: '', ...extra }, warnings, ...unchecked };
 }
 
 function parseDefault(raw: unknown): { value: DefaultAction | null; errors: string[]; warnings: string[] } {
@@ -596,7 +642,12 @@ export function sanitizeStoredSettings(raw: unknown, fallback: Settings, regexBu
     const one = importConfigObject({ rules: [asConfig] }, undefined, check);
     const rule = one.settings?.rules[0];
     if (rule) rules.push(rule);
-    else problems.push(`Stored rule #${i + 1} was invalid and has been skipped: ${one.errors.join(' ')}`);
+    else {
+      // Name the rule by what it is, not only by position, and drop the "rules[0]: " of the one-rule import.
+      const what = isRecord(r) ? ruleSummary(r.type, r.value) : null;
+      const why = one.errors.map((e) => e.replace(/^rules\[0\]: /, '')).join(' ');
+      problems.push(`Stored rule #${i + 1}${what ? ` (${what})` : ''} was invalid and has been skipped: ${why}`);
+    }
   });
   // Each section is checked on its own, so one bad value (say, an option from another
   // version) resets only itself and never the rest of the user's settings.

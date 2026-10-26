@@ -463,5 +463,6 @@ export const ko: Record<MessageKey, string> = {
   'opt.sub.dsDone': '"{sub}"을(를) 위해 {url}에서 {name}을(를) 다운로드했습니다({when}).',
   'opt.sub.dsFailed': '"{sub}"에 필요한 {name}을(를) 다운로드하지 못했습니다: {error}',
 
+  'opt.io.confirmUnchecked': '정규식 {count}개를 제시간에 검사하지 못했습니다. 규칙은 유지되지만 확장 프로그램이 검사할 때까지 일치하지 않으며, 거부된 항목은 “세션 및 로그” 페이지에 표시됩니다.',
   // @append-ko
 };

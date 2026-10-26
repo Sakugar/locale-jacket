@@ -463,5 +463,6 @@ export const zhCN: Record<MessageKey, string> = {
   'opt.sub.dsDone': '已为“{sub}”从 {url} 下载 {name}（{when}）。',
   'opt.sub.dsFailed': '无法为“{sub}”下载 {name}：{error}',
 
+  'opt.io.confirmUnchecked': '有 {count} 个正则表达式未能及时完成安全检查。它们会被保留，但在扩展检查完之前不会匹配；未通过检查的会列在“会话与日志”页面。',
   // @append-zh
 };

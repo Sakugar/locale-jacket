@@ -463,5 +463,6 @@ export const es: Record<MessageKey, string> = {
   'opt.sub.dsDone': '{name} descargado para «{sub}» desde {url} ({when}).',
   'opt.sub.dsFailed': 'No se pudo descargar {name} para «{sub}»: {error}',
 
+  'opt.io.confirmUnchecked': '{count} expresión(es) regular(es) no se pudieron comprobar a tiempo. Se conservan, pero no coinciden hasta que la extensión las compruebe; las que rechace aparecerán en la página «Sesiones y registro».',
   // @append-es
 };

@@ -462,6 +462,7 @@ export const en = {
   'opt.sub.dsDone': '{name} downloaded for “{sub}” from {url} ({when}).',
   'opt.sub.dsFailed': '{name} for “{sub}” could not be downloaded: {error}',
 
+  'opt.io.confirmUnchecked': '{count} regular expression(s) could not be checked in time. They are kept, but never match until the extension has checked them; any it refuses are then listed on the Sessions & log page.',
   // @append-en
 } as const;
 

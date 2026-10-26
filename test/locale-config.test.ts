@@ -13,7 +13,7 @@ import {
   parseAcceptLanguage,
 } from '../src/shared/locale.js';
 import { defaultSettings } from '../src/shared/presets.js';
-import { refusedRegexes, resolveHost } from '../src/shared/rules.js';
+import { REGEX_BATCH_BUDGET_MS, refusedRegexes, resolveHost } from '../src/shared/rules.js';
 import type { Settings } from '../src/shared/types.js';
 import { parseYaml, stringifyYaml, YamlError, type YamlValue } from '../src/shared/yaml.js';
 
@@ -289,6 +289,119 @@ rules:
     // Once checked, the refused one is reported (the worker lists it with the settings
     // problems) and stays in the settings: a budget never deletes a rule.
     assert.deepEqual(refusedRegexes(deferred.settings.rules).map((x) => x.rule.id), ['bad2']);
+  });
+
+  it('names a skipped stored rule by its type and value, cut short when long', () => {
+    const rule = (id: string, type: string, value: string) => ({ id, type, value, action: 'PROFILE', profile: makeProfile('ja-JP'), enabled: true, priority: 0, note: '' });
+    const long = `^(d+)+${'x'.repeat(200)}storedlong$`;
+    const stored = {
+      ...JSON.parse(JSON.stringify(defaultSettings())),
+      rules: [rule('ok', 'DOMAIN', 'ok.example'), rule('bad', 'DOMAIN-REGEX', '^(b+)+storedname$'), rule('long', 'DOMAIN-REGEX', long), rule('host', 'DOMAIN', 'bad host!'), 'not a rule'],
+    };
+    const { settings, problems } = sanitizeStoredSettings(stored, defaultSettings());
+    assert.deepEqual(settings.rules.map((r) => r.id), ['ok']);
+    assert.equal(problems.length, 4);
+    assert.match(problems[0]!, /^Stored rule #2 \(DOMAIN-REGEX,\^\(b\+\)\+storedname\$\) was invalid and has been skipped: This regular expression could take too long/);
+    // A long value is cut (80 characters with the ellipsis), the reason is still there.
+    assert.ok(problems[1]!.startsWith(`Stored rule #3 (DOMAIN-REGEX,${long.slice(0, 79)}…) was invalid`), problems[1]!);
+    assert.ok(!problems[1]!.includes('storedlong'));
+    assert.match(problems[1]!, /could take too long to match/);
+    assert.match(problems[2]!, /^Stored rule #4 \(DOMAIN,bad host!\) was invalid/);
+    // Something that is not a rule has nothing to name.
+    assert.match(problems[3]!, /^Stored rule #5 was invalid/);
+    // The one-rule import's "rules[0]: " prefix is not repeated.
+    assert.ok(problems.every((p) => !p.includes('rules[0]')), problems.join('\n'));
+  });
+});
+
+describe('import regex budget', () => {
+  const rep = (x: string, n: number) => x.repeat(n);
+  /** Uses up all the work one check may do, and is refused as too complex to check. */
+  const heavy = (tag: string) => `^(?:${rep('(?:', 60)}$${rep('){3}', 60)}\\.)*${tag}$`;
+
+  it('a file within the budget is checked as before: no unchecked rules, unsafe ones refused', () => {
+    const ok = importConfigText('rules:\n  - DOMAIN-REGEX,^import-budget-[a-z]+\\.example$,ja-JP\n  - DOMAIN-SUFFIX,example.org,de-DE\n');
+    assert.equal(ok.unchecked, 0);
+    assert.ok(ok.settings);
+    assert.ok(!ok.warnings.some((w) => /not checked/.test(w)));
+    const bad = importConfigText('rules:\n  - DOMAIN-REGEX,^(e+)+importbudget$,ja-JP\n');
+    assert.equal(bad.settings, null);
+    assert.equal(bad.unchecked, 0);
+    assert.match(bad.errors[0]!, /^rules\[0\]: This regular expression could take too long/);
+  });
+
+  it('keeps regexes past a spent budget unchecked, names them, and the matcher checks them before use', () => {
+    const r = importConfigText(
+      JSON.stringify({
+        rules: [
+          'DOMAIN-SUFFIX,import-budget.example,fr-FR',
+          'DOMAIN-REGEX,^import-deferred-[a-z]+\\.example$,ja-JP',
+          { type: 'DOMAIN-REGEX', regex: '^(f+)+importdeferred$', locale: 'ko-KR' },
+          { type: 'DOMAIN-REGEX', regex: `^import-deferred-long-${'y'.repeat(120)}$`, action: 'SYSTEM' },
+        ],
+      }),
+      undefined,
+      0,
+    );
+    // Nothing is dropped and the file is not refused...
+    assert.ok(r.settings, r.errors.join('\n'));
+    assert.equal(r.settings.rules.length, 4);
+    assert.equal(r.unchecked, 3);
+    // ...and the first warning says so, naming each rule (long values cut short).
+    assert.match(r.warnings[0]!, /^3 regular expression\(s\) were not checked/);
+    assert.match(r.warnings[0]!, /kept, but never match until the extension has checked them/);
+    assert.ok(r.warnings[0]!.includes('rules[1] DOMAIN-REGEX,^import-deferred-[a-z]+\\.example$'), r.warnings[0]!);
+    assert.ok(r.warnings[0]!.includes('rules[2] DOMAIN-REGEX,^(f+)+importdeferred$'), r.warnings[0]!);
+    assert.ok(r.warnings[0]!.includes('rules[3] DOMAIN-REGEX,^import-deferred-long-y'), r.warnings[0]!);
+    assert.ok(!r.warnings[0]!.includes('y'.repeat(100)));
+    assert.ok(!r.warnings[0]!.includes('import-budget.example'));
+    // The safe one matches once checked; the unsafe one never runs and is then reported.
+    const s = r.settings;
+    assert.equal(resolveHost('import-deferred-abc.example', s).profile?.locale, 'ja-JP');
+    assert.equal(resolveHost(`${'f'.repeat(30)}importdeferred`, s).source, 'default');
+    assert.deepEqual(refusedRegexes(s.rules).map((x) => x.rule.value), ['^(f+)+importdeferred$']);
+    // The worker loads the saved settings with its own budget: there the unsafe one is
+    // found and listed with the stored rule's pattern.
+    const loaded = sanitizeStoredSettings(JSON.parse(JSON.stringify(s)), defaultSettings());
+    assert.ok(loaded.problems.some((p) => p.includes('(DOMAIN-REGEX,^(f+)+importdeferred$)')), loaded.problems.join('\n'));
+  });
+
+  it('lists at most 10 unchecked rules by name', () => {
+    const rules = Array.from({ length: 14 }, (_, i) => `DOMAIN-REGEX,^import-many-${i}\\.example$,ja-JP`);
+    const r = importConfigText(JSON.stringify({ rules }), undefined, 0);
+    assert.equal(r.unchecked, 14);
+    assert.ok(r.warnings[0]!.includes('rules[9] '));
+    assert.ok(!r.warnings[0]!.includes('rules[10] '));
+    assert.match(r.warnings[0]!, /; and 4 more\.$/);
+  });
+
+  it('a large hostile import is decided within the budget', () => {
+    const N = 8000;
+    const text = JSON.stringify({ rules: Array.from({ length: N }, (_, i) => ({ type: 'DOMAIN-REGEX', regex: heavy(`hostileimport${i}`), locale: 'ja-JP' })) });
+    const t0 = performance.now();
+    const r = importConfigText(text);
+    const ms = performance.now() - t0;
+    // Without the budget every pattern would use its full limit (several seconds in all).
+    assert.ok(ms < REGEX_BATCH_BUDGET_MS * 3, `${ms.toFixed(0)} ms for a ${REGEX_BATCH_BUDGET_MS} ms budget`);
+    // The ones checked are refused as too complex, so the file is refused and nothing is
+    // saved; the ones past the budget were not analysed at all.
+    assert.equal(r.settings, null);
+    assert.ok(r.errors.length > 10 && r.errors.length < N / 2, `${r.errors.length} refused`);
+    assert.ok(r.errors.every((e) => /too complex to check/.test(e)), r.errors.find((e) => !/too complex to check/.test(e)) ?? '');
+    assert.equal(r.unchecked, 0);
+  });
+
+  it('a large import of safe regexes past the budget keeps every rule', () => {
+    const N = 6000;
+    const text = JSON.stringify({ rules: Array.from({ length: N }, (_, i) => `DOMAIN-REGEX,^(?:[a-z0-9-]+\\.)*import-safe-${i}-(?:[a-z]+|[0-9]+)\\.example$,ja-JP`) });
+    // A tiny budget, so that it runs out part-way.
+    const r = importConfigText(text, undefined, 1);
+    assert.ok(r.settings, r.errors.join('\n'));
+    assert.equal(r.settings.rules.length, N);
+    assert.ok(r.unchecked > 0 && r.unchecked < N, `${r.unchecked} unchecked`);
+    assert.match(r.warnings[0]!, new RegExp(`^${r.unchecked} regular expression\\(s\\) were not checked`));
+    // Checked or not, each one works once the matcher has checked it.
+    assert.equal(resolveHost(`www.import-safe-${N - 1}-abc.example`, r.settings).profile?.locale, 'ja-JP');
   });
 });
 
