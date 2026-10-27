@@ -1,16 +1,13 @@
 # Development backlog
 
-Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. S1, S2 and S5 are fixed, S7 mostly fixed, and code issues 2, 3, 4, 6 and 7 are fixed (all unreleased). Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
+Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. S1–S6 are fixed, S7 mostly fixed, S8 is open (found 2026-10-27), and code issues 1, 2, 3, 4, 6 and 7 are fixed (all unreleased). Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
 
 Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone asks.
 
 | # | Issue | Area | Priority |
 |---|---|---|---|
-| S3 | SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it | `src/background/tab-session.ts` | P2 |
-| S4 | Nested dedicated workers keep the real `navigator.language` | `src/background/tab-session.ts` | P2 |
-| S6 | A profile switch sometimes adds an extra history entry (intermittent) | `src/background/tab-session.ts` | P2 |
+| S8 | Edge: a crashed tab's reload sometimes never commits (intermittent, stress test) | `src/background/tab-session.ts` | P2 |
 | S7 | The popup can briefly show the previous page's check under the new host (Edge; much rarer since the fix) | `src/popup/popup.ts` | P3 |
-| 1 | GeoSite `cn` category blocks the worker for about 130 ms | `src/shared/geosite.ts` | P2 |
 | 5 | Browser timings not re-measured after the perf fixes | `e2e/launch-perf.mjs` | P2 |
 | 8 | First-request header missing for subscription GEOSITE rules below an IP rule | `src/shared/dnr.ts` | P3 |
 | 9 | Validation messages, activity log and fetch errors are English-only | `src/shared/config-io.ts`, `src/shared/i18n/*` | P3 |
@@ -34,32 +31,30 @@ Fixed: see `CHANGELOG.md` [Unreleased]. `SessionManager` remembers removed tab i
 
 Fixed: see `CHANGELOG.md` [Unreleased]. `onNavigationError` now ignores only the one error event each self-made abort causes, and only for the re-issued URL. The popup's check grades the page by the rule for the loaded document. The stress test "204 No Content…" covers both, including the popup's check.
 
-### S3. SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it (P2)
+### S3. SYSTEM popup in a spoofed process gets its Intl locale, and nothing reports it (fixed, unreleased)
 
-- **What:** an en-US page (`mail.google.localhost`) opens a same-site popup to a SYSTEM site (`accounts.google.localhost`), the OAuth pattern. The popup shares the opener's renderer, so its `Intl` reports en-US instead of the native locale. `navigator.language` and the header are correct. The tab's status is session `none` with no warnings, so the popup shows nothing wrong. `LIMITATIONS.md` says such tabs show *Partial*, and the project's rule is that conflicts are reported, never hidden.
-- **Same case with a profile:** with another profile (fr-FR popup in an en-US process), the conflict *is* reported ("Page scripts started with fr-FR / en-US instead of fr-FR").
-- **Fix:** for a SYSTEM tab whose opener is spoofed and same-site, check `Intl` once (e.g. through `chrome.scripting`, or a short debugger attach) and show it as *Partial*. Or keep a session on SYSTEM tabs opened by a spoofed same-site page.
-- **In the UI:** the popup's badge says "System locale" and "No spoofing on this site; the browser's own locale is used." "Check what the page sees" shows `navigator.language` zh-CN next to `Intl.*` de-DE, but marks nothing, since a SYSTEM tab has no expected locale to compare with.
-- **Test:** "same-site popup to a SYSTEM site (accounts.google)…".
+Fixed: see `CHANGELOG.md` [Unreleased]. When a SYSTEM page commits with no session and another tab spoofs a page or cross-site frame whose `roughSite` (last two labels; a hint, never proof) matches, `TabSession.checkSharedProcess` reads the main document's `navigator.language` and `Intl` locale once through `chrome.scripting` (isolated world, no debugger) and adds a warning if `Intl` is not native, so the popup shows *Partial*. The result counts only for the document it was read from (`documentSeq`, URL check). A SYSTEM page whose start probe shows native `navigator.language` but another `Intl` is reported the same way instead of as a late profile. Not covered: a spoofed same-site page that joins the process after the SYSTEM page was checked (see `LIMITATIONS.md`). Unit test "a SYSTEM page sharing a spoofed same-site process…"; stress test "same-site popup to a SYSTEM site…" now passes as a reported limitation.
 
-### S4. Nested dedicated workers keep the real `navigator.language` (P2)
+### S4. Nested dedicated workers keep the real `navigator.language` (fixed, unreleased)
 
-- **What:** a dedicated worker started *by another worker* reports the native `navigator.language` and `navigator.languages` (zh-CN). Its `Intl` is right, because that is per process. Workers started by the page itself, including blob: and data: workers, are correct. This isn't in `LIMITATIONS.md`.
-- **Where:** worker overrides are applied to targets auto-attached from the page. A worker's own child workers need auto-attach set on the worker's session too.
-- **Fix:** call `Target.setAutoAttach` (with `waitForDebuggerOnStart`) on each worker session as well, and apply the same overrides. Document the gap if that isn't possible.
-- **Test:** "same-process contexts follow the page…" (`nestedWorker`).
+Fixed: see `CHANGELOG.md` [Unreleased]. `Target.setAutoAttach` is now sent on every child session (iframes and workers), so workers started by workers arrive paused and get the overrides before they run. Detaching a child also drops its descendants, and a frame's profile change re-applies to all its workers, nested ones included. Unit tests in "child targets"; stress test "same-process contexts…" (`nestedWorker`) passes in Chrome and Edge.
 
-### S6. A profile switch sometimes adds an extra history entry (P2, intermittent)
+### S6. A profile switch sometimes adds an extra history entry (fixed, unreleased)
 
-- **What:** in "ping-pong" (one tab switching en-US ⇄ ja-JP 10 times), the history sometimes has 12 entries instead of 11: about 1 in 5 runs in Chrome 156, both with and without the S2 fix. Every page still ends with the right locale. One re-issue is apparently added as a new entry instead of taking the aborted navigation's place.
-- **Where to look:** `reissueNavigation()`: `Page.navigate` with `transitionType: 'link'`. The handoff's invariant is "exactly one history entry" per re-issued navigation.
-- **Test:** "ping-pong…". On failure it lists the entries (`pp` numbers), which shows which hop was doubled.
+Fixed: see `CHANGELOG.md` [Unreleased]. Cause: the restart-in-flight path (`Page.stopLoading` → apply → `Page.navigate`) assumed Chrome turns a navigation to the URL the stopped load committed into a replacement. It does not: a load that was already committing still commits (its commit can arrive before `Page.stopLoading` answers), and the `Page.navigate` then added a second entry for the same page. The restart now checks `Page.getNavigationHistory` and sends `Page.reload` when the current entry is already that URL. Ping-pong passed 13 of 13 runs in Chrome 156 after the fix (before: about 1 in 5 failed). Unit test "a stopped load that had already committed is reloaded…".
 
 ### S7. The popup can briefly show the previous page's check under the new host (P3, Edge; mostly fixed, unreleased)
 
 - **What:** e2e "popup keeps its controls…" failed in Edge 156 about 2 times in 3: right after navigating, the popup showed the new host with the previous page's en-US check.
 - **Fix (unreleased):** `runVerify()` in `src/popup/popup.ts` accepts a result only when its main frame's `location.href` is on the host the popup shows. Otherwise it reads again, every 300 ms and at most 20 times per navigation. A check could start while `tab.url` already pointed to the next page but the tab still showed the old document.
 - **Result:** 32 of 34 Edge runs passed (before: 2 of 6). The two failures came before the test recorded diagnostics; the 28 runs since then all passed. If it fails again, the error shows the table, the page's real host and values, and the tab's status at that moment. That tells whether the result was stale or the new page really reported en-US for a moment.
+
+### S8. Edge: a crashed tab's reload sometimes never commits (P2, intermittent)
+
+- **What:** stress test "renderer crash…" fails in Edge 156 about 1 run in 8 (3 of 25 with the S3/S4/S6 fixes, 2 of 10 without them, so it is older than those fixes). Chrome passed every run. After `Page.crash` the test reloads the tab with `Page.navigate` (`transitionType: 'reload'`, like the sad tab's button). The navigate is accepted (it returns a loader id), but no document commits: 300 ms later the tab's page target has an empty URL and is still attached, and the page never reports.
+- **Extension log on a failing run:** the reload reaches the Fetch gate (`gate: apple.localhost → ja-JP`, same profile, so it is continued), then nothing more: no commit, no error, no warning from `Fetch.continueRequest`.
+- **Where to look:** whether the continued request reaches the verify server; whether Edge needs the overrides re-sent (or the `Fetch` domain re-enabled) for the new renderer after a crash; and whether this also happens without the extension. Diagnostics used: log what `Page.navigate` returned and the `Target.getTargets` page list when `report()` times out.
+- **Test:** "renderer crash: the reloaded page in the new process is spoofed again" (loop with `--edge --only "prerender|renderer crash|service worker and shared"`).
 
 ### S5. Refused stored regexes are named by position, not by pattern (fixed, unreleased)
 
@@ -76,14 +71,13 @@ The stress suite reads what the page sees. The popup and the options page need a
 
 ## Code issues
 
-### 1. GeoSite `cn` category blocks the worker for about 130 ms (P2)
+### 1. GeoSite `cn` category blocks the worker for about 130 ms (fixed, unreleased)
 
-- **What:** `loadGeositeCategory(index, 'cn')` runs synchronously in the service worker and takes about 130 ms (measured 2026-10-24). Navigation events that arrive during that time wait.
-- **Where:** `src/shared/geosite.ts:115`, called when a GEOSITE rule needs a category for the first time in a worker's life.
-- **Ideas:**
-  - Load the category in slices, the way `precompileRegexes` checks stored regexes between events.
-  - Or build the category's lookup structure once and store it in IndexedDB next to the data set, so a worker wake only reads it.
-  - Keep the regex batch budget (`GEOSITE_REGEX_BUDGET_MS`) charged exactly as now.
+Fixed: see `CHANGELOG.md` [Unreleased]. Measured first: almost all of the time went into decoding ~110,000 entries into one string each (`TextDecoder` per entry, `toLowerCase`, a regex for leading dots) and hashing them into a `Set`; walking the protobuf is ~6 ms. `loadGeositeCategory` now keeps the `domain:`/`full:` entries as byte ranges of the data set in a `DomainTable` (an open-addressing hash index over the ASCII-lowercased bytes, reused readers, no per-entry strings or objects). It behaves like the `Set` it replaces (same members, order and size; non-ASCII entries are still decoded and lowercased as strings), checked against the old code on every category of the MetaCubeX file (with and without `@cn`, `@!cn`, `@ads`, `@!ads`; 7,810 loads, 0 differences). Data sets are untrusted, so the hash is seeded per table, and a file crafted to collide makes the table fall back to a plain `Set` after a probe budget (8 per entry), so it costs at most what it did before. `regexp:` entries are decoded and charged to `GEOSITE_REGEX_BUDGET_MS` exactly as before. The DNR compiler also listed every domain of a category before seeing it was over the 20,000 limit; it now counts first (`plainDomainCount`).
+
+Cold, first call in a fresh process (Node 24, Windows; MetaCubeX `geosite.dat`, medians of 11): `cn` 98 → 34 ms, `geolocation-!cn` 42 → 29 ms (most of the rest is the check of its 151 regexes), `google` 2.3 → 0.8 ms; DNR compile for a `GEOSITE,cn` rule ~22 → 0.8 ms; memory held by `cn` 6.1 → 2.1 MB. Not re-measured in the browser.
+
+The load is still synchronous: the navigation that wakes the worker needs the category to pick its profile, so slicing it (or counting it as no match while it loads) would give that page the wrong locale.
 
 ### 2. Options-page import has no whole-file regex budget (fixed, unreleased)
 
