@@ -3,6 +3,7 @@
 
 import { errorMessage, type DebuggerPort } from './cdp.js';
 import { TabSession, type CommitDetails, type PausedRequest, type TabContext, type TargetInfo } from './tab-session.js';
+import { roughSite } from '../shared/domain.js';
 import type { LogEntry, TabStatus, VerifyResult } from '../shared/messages.js';
 import { resolveHost, type MatchContext } from '../shared/rules.js';
 import type { Settings } from '../shared/types.js';
@@ -25,6 +26,8 @@ export interface ManagerDeps {
   /** See TabContext.pendingNavigation / justStarted. */
   pendingNavigation?: TabContext['pendingNavigation'];
   justStarted?: TabContext['justStarted'];
+  /** See TabContext.readPageLocale (chrome.scripting; omitted in tests). */
+  readPageLocale?: TabContext['readPageLocale'];
 }
 
 export function spoofingPossible(s: Settings): boolean {
@@ -63,6 +66,12 @@ export class SessionManager {
       native: deps.native ?? (() => ({ locale: Intl.DateTimeFormat().resolvedOptions().locale, languages: [...navigator.languages] })),
       pendingNavigation: deps.pendingNavigation,
       justStarted: deps.justStarted,
+      readPageLocale: deps.readPageLocale,
+      spoofedNearby: (host, tabId) => {
+        const site = roughSite(host);
+        for (const [id, t] of this.tabs) if (id !== tabId && t.spoofedSites().includes(site)) return true;
+        return false;
+      },
     };
   }
 

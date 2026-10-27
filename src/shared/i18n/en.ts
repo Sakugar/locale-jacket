@@ -465,6 +465,7 @@ export const en = {
   'opt.data.recordError': 'A lookup found a corrupt record in this file: {error}. IP rules treat the addresses stored in that part of the file as no match. Download or import the file again.',
 
   'opt.io.confirmUnchecked': '{count} regular expression(s) could not be checked in time. They are kept, but never match until the extension has checked them; any it refuses are then listed on the Sessions & log page.',
+  'bg.warn.sharedProcess': 'Intl reports {locale} on this page: it shares its renderer process with a page spoofing that locale, and Chrome keeps one Intl locale per process. navigator.language and Accept-Language are not affected.',
   // @append-en
 } as const;
 

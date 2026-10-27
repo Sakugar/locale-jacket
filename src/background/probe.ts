@@ -30,6 +30,23 @@ export function localeSnapshot(): LocaleSnapshot {
   };
 }
 
+export interface PageLocale {
+  url: string;
+  language: string;
+  dateLocale: string;
+}
+
+/** Self-contained (passed to chrome.scripting): the document's URL and the values a shared process can change. */
+export function pageLocale(): PageLocale {
+  return { url: location.href, language: navigator.language, dateLocale: Intl.DateTimeFormat().resolvedOptions().locale };
+}
+
+/** Read pageLocale() in the tab's main frame through an isolated-world content script (no debugger needed). */
+export async function readPageLocale(tabId: number): Promise<PageLocale | null> {
+  const [r] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, world: 'ISOLATED', func: pageLocale });
+  return r?.result ?? null;
+}
+
 const SNAPSHOT_FN = localeSnapshot.toString();
 
 export const PROBE_SOURCE = `(() => { try { if (!globalThis.__ljProbe) globalThis.__ljProbe = (${SNAPSHOT_FN})(); } catch (e) {} })();`;

@@ -466,5 +466,6 @@ export const de: Record<MessageKey, string> = {
   'opt.data.recordError': 'Bei einer Abfrage wurde in dieser Datei ein beschädigter Eintrag gefunden: {error}. Für IP-Regeln gelten die Adressen in diesem Teil der Datei als kein Treffer. Laden oder importieren Sie die Datei erneut.',
 
   'opt.io.confirmUnchecked': '{count} reguläre(r) Ausdruck/Ausdrücke konnte(n) nicht rechtzeitig geprüft werden. Sie bleiben erhalten, greifen aber erst, wenn die Erweiterung sie geprüft hat; abgelehnte werden dann auf der Seite „Sitzungen & Protokoll“ aufgeführt.',
+  'bg.warn.sharedProcess': 'Intl meldet auf dieser Seite {locale}: Sie teilt ihren Renderer-Prozess mit einer Seite, die dieses Gebietsschema vortäuscht, und Chrome hat nur ein Intl-Gebietsschema pro Prozess. navigator.language und Accept-Language sind nicht betroffen.',
   // @append-de
 };

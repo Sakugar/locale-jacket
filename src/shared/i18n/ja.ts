@@ -466,5 +466,6 @@ export const ja: Record<MessageKey, string> = {
   'opt.data.recordError': '検索中にこのファイルで破損したレコードが見つかりました: {error}。ファイルのこの部分にあるアドレスは、IP ルールでは一致しないものとして扱われます。ファイルをもう一度ダウンロードまたはインポートしてください。',
 
   'opt.io.confirmUnchecked': '{count} 件の正規表現は時間内にチェックできませんでした。ルールは残りますが、拡張機能がチェックするまで一致しません。拒否されたものは「セッションとログ」ページに表示されます。',
+  'bg.warn.sharedProcess': 'このページの Intl は {locale} を返します。このロケールを偽装しているページとレンダラープロセスを共有しており、Chrome の Intl のロケールはプロセスごとに 1 つだからです。navigator.language と Accept-Language には影響しません。',
   // @append-ja
 };

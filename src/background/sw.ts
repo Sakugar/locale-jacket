@@ -32,7 +32,7 @@ import {
   type ExtensionUpdateState,
 } from '../shared/extension-update.js';
 import { IpCache } from './ip-cache.js';
-import { verifyWithScripting } from './probe.js';
+import { readPageLocale, verifyWithScripting } from './probe.js';
 import { hostFromUrl, normalizeHost } from '../shared/domain.js';
 import { setLanguage, t } from '../shared/i18n.js';
 import { parseIp } from '../shared/ip.js';
@@ -192,7 +192,10 @@ function badgeFor(s: TabStatus, suspended: boolean, enabled: boolean): { text: s
   if (!enabled) return { text: 'OFF', color: BADGE_COLORS.off, title: t('bg.badge.off') };
   if (suspended) return { text: '||', color: BADGE_COLORS.off, title: t('bg.badge.paused') };
   const p = s.resolution.profile;
-  if (!p) return { text: '', color: BADGE_COLORS.off, title: t('bg.badge.system', { host: s.host ?? '' }) };
+  if (!p) {
+    if (s.warnings.length) return { text: '!', color: BADGE_COLORS.warn, title: s.warnings[0]! };
+    return { text: '', color: BADGE_COLORS.off, title: t('bg.badge.system', { host: s.host ?? '' }) };
+  }
   const code = (p.locale.split('-')[0] ?? '').toUpperCase().slice(0, 3);
   if (s.session === 'restricted') return { text: '', color: BADGE_COLORS.off, title: t('bg.badge.restricted') };
   if (s.session !== 'attached' || s.late || s.warnings.length) {
@@ -591,6 +594,7 @@ const ready: Promise<SessionManager> = (async () => {
       return { url: tab.pendingUrl, method: seen && seen.url === tab.pendingUrl ? seen.method : undefined };
     },
     justStarted: () => startedAt !== null && Date.now() - startedAt < JUST_STARTED_MS,
+    readPageLocale,
     onStatus: updateBadge,
     onTabGone: (tabId) => topLevelRequests.delete(tabId),
     log,

@@ -466,5 +466,6 @@ export const zhTW: Record<MessageKey, string> = {
   'opt.data.recordError': '查詢時在此檔案中發現損毀的記錄：{error}。對 IP 規則而言，存放在檔案這部分的位址一律視為不符合。請重新下載或匯入此檔案。',
 
   'opt.io.confirmUnchecked': '有 {count} 個正規表示式未能及時完成安全檢查。它們會被保留，但在擴充功能檢查完之前不會比對；未通過檢查的會列在「工作階段與記錄」頁面。',
+  'bg.warn.sharedProcess': '此頁面的 Intl 回報 {locale}：它與一個偽裝成該語言的頁面共用轉譯器程序，而 Chrome 每個程序只有一個 Intl 語言。navigator.language 和 Accept-Language 不受影響。',
   // @append-zh-TW
 };

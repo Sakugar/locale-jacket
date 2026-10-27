@@ -466,5 +466,6 @@ export const ptBR: Record<MessageKey, string> = {
   'opt.data.recordError': 'Uma consulta encontrou um registro corrompido neste arquivo: {error}. Para as regras de IP, os endereços guardados nessa parte do arquivo contam como sem correspondência. Baixe ou importe o arquivo novamente.',
 
   'opt.io.confirmUnchecked': '{count} expressão(ões) regular(es) não puderam ser verificadas a tempo. Elas são mantidas, mas não correspondem até que a extensão as verifique; as recusadas aparecem na página “Sessões e registro”.',
+  'bg.warn.sharedProcess': 'O Intl informa {locale} nesta página: ela compartilha o processo de renderização com uma página que simula essa localidade, e o Chrome usa uma única localidade do Intl por processo. navigator.language e Accept-Language não são afetados.',
   // @append-pt-BR
 };

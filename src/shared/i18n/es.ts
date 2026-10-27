@@ -466,5 +466,6 @@ export const es: Record<MessageKey, string> = {
   'opt.data.recordError': 'Una búsqueda encontró un registro dañado en este archivo: {error}. Para las reglas de IP, las direcciones guardadas en esa parte del archivo cuentan como sin coincidencia. Vuelve a descargar o importar el archivo.',
 
   'opt.io.confirmUnchecked': '{count} expresión(es) regular(es) no se pudieron comprobar a tiempo. Se conservan, pero no coinciden hasta que la extensión las compruebe; las que rechace aparecerán en la página «Sesiones y registro».',
+  'bg.warn.sharedProcess': 'Intl indica {locale} en esta página: comparte su proceso de renderizado con una página que simula esa configuración regional, y Chrome usa una sola configuración regional de Intl por proceso. navigator.language y Accept-Language no se ven afectados.',
   // @append-es
 };

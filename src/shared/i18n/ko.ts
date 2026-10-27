@@ -466,5 +466,6 @@ export const ko: Record<MessageKey, string> = {
   'opt.data.recordError': '조회 중 이 파일에서 손상된 레코드를 발견했습니다: {error}. 파일의 이 부분에 저장된 주소는 IP 규칙에서 일치하지 않는 것으로 처리됩니다. 파일을 다시 다운로드하거나 가져오세요.',
 
   'opt.io.confirmUnchecked': '정규식 {count}개를 제시간에 검사하지 못했습니다. 규칙은 유지되지만 확장 프로그램이 검사할 때까지 일치하지 않으며, 거부된 항목은 “세션 및 로그” 페이지에 표시됩니다.',
+  'bg.warn.sharedProcess': '이 페이지의 Intl은 {locale}을(를) 보고합니다. 이 로캘로 위장한 페이지와 렌더러 프로세스를 공유하며, Chrome은 프로세스마다 Intl 로캘을 하나만 사용하기 때문입니다. navigator.language와 Accept-Language는 영향을 받지 않습니다.',
   // @append-ko
 };

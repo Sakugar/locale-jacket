@@ -7,7 +7,8 @@
 //     so this gate is what stops one site's profile leaking into the next document.
 //   * Target.setAutoAttach (waitForDebuggerOnStart) hands us every cross-site
 //     iframe (OOPIF) and dedicated worker before it runs, so they get overrides
-//     from their first script.
+//     from their first script. It is set on every child session too, so frames
+//     inside frames and workers started by workers are handed over the same way.
 //   * webNavigation events reconcile state for navigations the gate cannot see
 //     (service-worker-served documents, back/forward cache, prerender). A probe
 //     recorded at document start (in an isolated world) tells whether page scripts
@@ -30,8 +31,8 @@ import {
   type DebuggerPort,
 } from './cdp.js';
 import { applyState, CLEAN_STATE, desiredFor, fixAcceptLanguage, UNKNOWN_STATE, type AppliedState, type TargetKind } from './overrides.js';
-import { PROBE_WORLD, PROBE_SOURCE, VERIFY_EXPRESSION } from './probe.js';
-import { hostFromUrl } from '../shared/domain.js';
+import { PROBE_WORLD, PROBE_SOURCE, VERIFY_EXPRESSION, type PageLocale } from './probe.js';
+import { hostFromUrl, roughSite } from '../shared/domain.js';
 import { t } from '../shared/i18n.js';
 import { profileKey } from '../shared/locale.js';
 import type { FrameVerification, LocaleSnapshot, LogEntry, SessionState, TabStatus, VerifyResult } from '../shared/messages.js';
@@ -60,6 +61,13 @@ export interface TabContext {
   pendingNavigation?(tabId: number): Promise<{ url: string; method?: string } | null>;
   /** The browser or the extension started moments ago (startup pages, restored tabs). */
   justStarted?(): boolean;
+  /**
+   * Another tab spoofs a page or frame that may be same-site with `host` (see roughSite),
+   * so a page of `host` can end up in that renderer process and get its Intl locale.
+   */
+  spoofedNearby?(host: string, tabId: number): boolean;
+  /** What the tab's main document reports, read without the debugger. */
+  readPageLocale?(tabId: number): Promise<PageLocale | null>;
 }
 
 export interface CommitDetails {
@@ -163,6 +171,13 @@ export class TabSession {
   private sessionStatus: SessionState = 'none';
   private late = false;
   private lateReason: string | null = null;
+  /**
+   * The document's Intl locale comes from another session in its renderer process (the
+   * locale override is process-wide). Reported as a warning; a reload would not help.
+   */
+  private sharedWarning: string | null = null;
+  /** Bumped on every commit, so a check of the previous document is dropped. */
+  private documentSeq = 0;
   /** Recent automatic reloads (URL and time), to rule out loops. */
   private autoReloads: { url: string; at: number }[] = [];
   private error: string | null = null;
@@ -523,13 +538,29 @@ export class TabSession {
       this.log('warn', `Restarting without confirmation: ${errorMessage(e)}`),
     );
     if (this.state !== 'attached' || this.appliedKey !== profileKey(res.profile)) giveBack();
-    // If the old load committed in the meantime, Chrome turns a navigation to the same
-    // URL into a replacement, so no extra history entry is added either way.
-    await this.ctx.port.send(t, 'Page.navigate', { url, transitionType: 'link' }).catch((e) => {
+    // A load that was already committing when it was stopped still commits (in Chrome its
+    // commit can arrive before Page.stopLoading answers). Page.navigate to the URL it
+    // committed is not turned into a replacement: it adds a second history entry for the
+    // same page. So load that document again with a reload instead, which keeps the entry.
+    const committed = await this.currentEntryIs(url);
+    if (committed) this.log('debug', 'The stopped load had already committed; reloading it instead.');
+    const [method, params] = committed ? ['Page.reload', {}] : ['Page.navigate', { url, transitionType: 'link' }];
+    await this.ctx.port.send(t, method, params).catch((e) => {
       giveBack();
       this.log('warn', `Could not restart the page load: ${errorMessage(e)}`);
     });
     return true;
+  }
+
+  /** The tab's current history entry is `url` (browser-side, so it answers while a navigation is pending). */
+  private async currentEntryIs(url: string): Promise<boolean> {
+    try {
+      const h = await this.ctx.port.send<{ currentIndex: number; entries: { url: string }[] }>({ tabId: this.tabId }, 'Page.getNavigationHistory');
+      const current = h.entries[h.currentIndex]?.url;
+      return !!current && stripHash(current) === stripHash(url);
+    } catch {
+      return false; // unknown: navigate, as before
+    }
   }
 
   /**
@@ -725,6 +756,8 @@ export class TabSession {
 
   private async handleCommit(d: CommitDetails): Promise<void> {
     const gated = this.wasGated(d.url);
+    this.documentSeq++;
+    this.sharedWarning = null;
     this.url = d.url;
     const res = this.resolveUrl(d.url);
     this.resolution = res;
@@ -735,6 +768,7 @@ export class TabSession {
       } else if (!this.needsSession(res)) {
         this.sessionStatus = 'none';
         this.markLate(null, null);
+        if (!res.profile) this.checkSharedProcess(d.url);
       }
       this.ctx.changed(this.tabId);
       return;
@@ -752,7 +786,12 @@ export class TabSession {
       if (!isDetachedError(e)) this.log('debug', `Start probe unavailable: ${errorMessage(e)}`);
     }
     const expected = res.profile ?? this.ctx.native();
-    if (probe) {
+    if (probe && !res.profile && probe.language === expected.languages[0] && probe.dateLocale !== expected.locale) {
+      // A SYSTEM page whose own values are native, but whose Intl comes from another
+      // session in its renderer process: a conflict to report, which a reload would not fix.
+      this.noteSharedProcess(probe.dateLocale);
+      this.markLate(null, null);
+    } else if (probe) {
       this.markLate(probeMatches(probe, expected) ? null : t('bg.late.probe', { language: probe.language, intl: probe.dateLocale, expected: expected.locale }), d);
     } else if (gated || (wasApplied && !res.profile)) {
       this.markLate(null, null); // the gate applied the profile before the request was sent
@@ -764,6 +803,46 @@ export class TabSession {
     }
     if (this.state === 'attached' && !this.keepSession(res)) await this.detachInternal('not needed on this site');
     this.ctx.changed(this.tabId);
+  }
+
+  /**
+   * A SYSTEM page without a session still shares its renderer process with whatever else
+   * runs there, and the locale override is process-wide: a same-site popup opened by a
+   * spoofed page gets the opener's Intl locale. Read the page once (a content script, no
+   * debugger) when another tab spoofs a page or frame that may be same-site, and report
+   * a mismatch. Not awaited: the script runs once the document is ready.
+   */
+  private checkSharedProcess(url: string): void {
+    const host = hostFromUrl(url);
+    if (!host || !this.ctx.readPageLocale || !this.ctx.spoofedNearby?.(host, this.tabId)) return;
+    const seq = this.documentSeq;
+    void this.ctx
+      .readPageLocale(this.tabId)
+      .then((seen) => {
+        // Only for the document it was asked for, and only while no session of ours runs it.
+        if (!seen || seq !== this.documentSeq || this.closed || this.state === 'attached' || stripHash(seen.url) !== stripHash(url)) return;
+        if (seen.dateLocale !== this.ctx.native().locale) this.noteSharedProcess(seen.dateLocale);
+      })
+      .catch(() => undefined);
+  }
+
+  private noteSharedProcess(intl: string): void {
+    this.sharedWarning = t('bg.warn.sharedProcess', { locale: intl });
+    this.log('info', `Intl reports ${intl} on this SYSTEM page: it shares its renderer process with a page spoofing that locale.`);
+    this.ctx.changed(this.tabId);
+  }
+
+  /** Sites (roughSite) of the page and cross-site frames this tab's session gives a locale. */
+  spoofedSites(): string[] {
+    if (this.state !== 'attached') return [];
+    const sites: string[] = [];
+    const main = this.url ? hostFromUrl(this.url) : null;
+    if (main && this.targetProfile) sites.push(roughSite(main));
+    for (const c of this.children.values()) {
+      const host = c.type === 'iframe' && c.url ? hostFromUrl(c.url) : null;
+      if (host && this.childProfile(c)) sites.push(roughSite(host));
+    }
+    return sites;
   }
 
   /** webNavigation.onErrorOccurred for the main frame (`url`: the navigation that failed). */
@@ -827,6 +906,11 @@ export class TabSession {
         if (this.mayHoldSession) await this.detachInternal(this.ctx.spoofingActive() ? 'not needed on this site' : 'spoofing turned off');
         this.sessionStatus = 'none';
         this.markLate(null, null);
+        // The other tab may have stopped spoofing (or spoofing was turned off): look again.
+        if (this.sharedWarning) {
+          this.sharedWarning = null;
+          if (this.url && !res.profile) this.checkSharedProcess(this.url);
+        }
       }
       this.ctx.changed(this.tabId);
     });
@@ -856,7 +940,9 @@ export class TabSession {
         this.children.set(sessionId, child);
         this.log('debug', `child ${child.type} attached (${targetInfo.url || 'url pending'}) → ${this.childProfile(child)?.locale ?? 'SYSTEM'}`);
         applied = this.applyChild(child); // commands are sent synchronously, in order
-        if (child.type === 'iframe') void send('Target.setAutoAttach', AUTO_ATTACH_PARAMS);
+        // Frames and workers can start their own workers (nested dedicated workers);
+        // without auto-attach on this session those would run with the real values.
+        void send('Target.setAutoAttach', AUTO_ATTACH_PARAMS);
       }
     } catch (e) {
       this.log('warn', `Child target setup failed (${targetInfo.type}): ${errorMessage(e)}`);
@@ -867,9 +953,26 @@ export class TabSession {
     void applied.then(() => this.ctx.changed(this.tabId));
   }
 
+  /** Children started (directly or through other children) by this session: workers of workers too. */
+  private descendants(sessionId: string): Child[] {
+    const out: Child[] = [];
+    const parents = new Set([sessionId]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const c of this.children.values()) {
+        if (c.parentSessionId !== null && parents.has(c.parentSessionId) && !parents.has(c.sessionId)) {
+          parents.add(c.sessionId);
+          out.push(c);
+          grew = true;
+        }
+      }
+    }
+    return out;
+  }
+
   onDetachedFromTarget(sessionId: string): void {
+    for (const c of this.descendants(sessionId)) this.children.delete(c.sessionId);
     this.children.delete(sessionId);
-    for (const [id, c] of this.children) if (c.parentSessionId === sessionId) this.children.delete(id);
   }
 
   onTargetInfoChanged(info: TargetInfo): void {
@@ -879,7 +982,7 @@ export class TabSession {
     this.log('debug', `child ${child.type} url → ${hostFromUrl(info.url) ?? info.url}`);
     if (this.settings().options.frameMode !== 'per-frame') return;
     const updates = [this.applyChild(child)];
-    for (const w of this.children.values()) if (w.parentSessionId === child.sessionId) updates.push(this.applyChild(w));
+    for (const w of this.descendants(child.sessionId)) if (w.type === 'worker') updates.push(this.applyChild(w));
     void Promise.all(updates).then(() => this.ctx.changed(this.tabId));
   }
 
@@ -959,6 +1062,7 @@ export class TabSession {
     const res = this.resolution;
     const warnings = [...this.applyWarnings];
     for (const c of this.children.values()) for (const w of c.warnings) if (!warnings.includes(w)) warnings.push(w);
+    if (this.sharedWarning && !warnings.includes(this.sharedWarning)) warnings.push(this.sharedWarning);
     let frames = 0;
     let workers = 0;
     for (const c of this.children.values()) c.type === 'iframe' ? frames++ : workers++;

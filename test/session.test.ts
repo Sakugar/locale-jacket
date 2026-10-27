@@ -75,6 +75,9 @@ const ACCOUNTS = 'https://accounts.google.com/signin';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+/** History of a tab that has not committed its first page yet (the initial empty entry). */
+const newTabHistory = () => ({ currentIndex: 0, entries: [{ id: 1, url: '' }] });
+
 function snapshot(locale: string, language = locale): LocaleSnapshot {
   return {
     language,
@@ -159,6 +162,7 @@ describe('TabSession lifecycle', () => {
   it('restarts a GET load that was already in flight when the debugger attached, instead of reloading after it', async () => {
     const ctx = makeCtx(port, settings);
     ctx.pendingNavigation = async () => ({ url: GOOGLE, method: 'GET' });
+    port.history = newTabHistory();
     const t = new TabSession(1, ctx);
     await t.onBeforeNavigate(GOOGLE);
     const m = port.methods();
@@ -184,6 +188,7 @@ describe('TabSession lifecycle', () => {
   it('if the old load was already committing (profile commands cut off), the commit still reloads it once', async () => {
     const ctx = makeCtx(port, settings);
     ctx.pendingNavigation = async () => ({ url: GOOGLE, method: 'GET' });
+    port.history = newTabHistory();
     port.failures.set('Emulation.setLocaleOverride', 'Detached while handling command.');
     const t = new TabSession(1, ctx);
     await t.onBeforeNavigate(GOOGLE);
@@ -194,6 +199,38 @@ describe('TabSession lifecycle', () => {
     await flush();
     assert.equal(t.status().session, 'attached');
     assert.deepEqual(ctx.reloads, [1], 'falls back to the one automatic reload');
+  });
+
+  it('a stopped load that had already committed is reloaded, not navigated to again (one history entry)', async () => {
+    // Chrome commits a load that was committing when Page.stopLoading arrived; navigating to
+    // the same URL then adds a second entry for it (S6), a reload does not.
+    const ctx = makeCtx(port, settings);
+    ctx.pendingNavigation = async () => ({ url: GOOGLE, method: 'GET' });
+    port.history = { currentIndex: 0, entries: [{ id: 1, url: `${GOOGLE}#inbox` }] };
+    const t = new TabSession(1, ctx);
+    await t.onBeforeNavigate(GOOGLE);
+    const m = port.methods();
+    assert.ok(m.indexOf('Page.stopLoading') < m.indexOf('Page.getNavigationHistory'), 'history read after the stop');
+    assert.ok(m.indexOf('Emulation.setLocaleOverride') < m.indexOf('Page.reload'), 'profile first');
+    assert.ok(!m.includes('Page.navigate'), 'no second entry');
+    // The reload passes the gate with the profile already applied.
+    port.clear();
+    const again = paused(GOOGLE);
+    t.onRequestPaused(again);
+    assert.ok(!port.methods().includes('Fetch.failRequest'));
+    assert.equal(port.last('Fetch.continueRequest')?.params.requestId, again.requestId);
+
+    // Not committed (another page, or the history cannot be read): navigate as before.
+    for (const history of [{ currentIndex: 0, entries: [{ id: 1, url: EXAMPLE }] }, null]) {
+      const p = new FakePort();
+      if (history) p.history = history;
+      else p.failures.set('Page.getNavigationHistory', 'boom');
+      const c = makeCtx(p, settings);
+      c.pendingNavigation = async () => ({ url: GOOGLE, method: 'GET' });
+      await new TabSession(1, c).onBeforeNavigate(GOOGLE);
+      assert.deepEqual(p.last('Page.navigate')?.params, { url: GOOGLE, transitionType: 'link' });
+      assert.ok(!p.methods().includes('Page.reload'));
+    }
   });
 
   it('never restarts a POST or a load of unknown method, except the browser’s own loads at startup', async () => {
@@ -703,6 +740,39 @@ describe('child targets (OOPIFs and workers)', () => {
     assert.deepEqual(port.emulation('W2'), []);
   });
 
+  const worker = (sessionId: string, url = '') => ({ sessionId, targetInfo: { targetId: `T-${sessionId}`, type: 'worker', url }, waitingForDebugger: true });
+
+  it('auto-attaches on worker sessions too, so a worker started by a worker gets the override before it runs', async () => {
+    t.onAttachedToTarget(null, worker('W1', 'blob:https://mail.google.com/1'));
+    assert.deepEqual(
+      port.calls.filter((c) => c.target.sessionId === 'W1').map((c) => c.method),
+      ['Emulation.setUserAgentOverride', 'Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger'],
+      'browser-side commands only, nothing awaited, resumed last',
+    );
+    assert.deepEqual(port.last('Target.setAutoAttach')?.params, { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: 'iframe' }, { type: 'worker' }] });
+    // The nested worker is announced on the outer worker's session.
+    t.onAttachedToTarget('W1', worker('W2', 'blob:https://mail.google.com/2'));
+    assert.deepEqual(port.calls.filter((c) => c.target.sessionId === 'W2').map((c) => c.method), ['Emulation.setUserAgentOverride', 'Target.setAutoAttach', 'Runtime.runIfWaitingForDebugger']);
+    assert.deepEqual(port.emulation('W2')[0]?.params, { userAgent: '', acceptLanguage: 'en-US,en' });
+    t.onAttachedToTarget('W2', worker('W3'));
+    await flush();
+    assert.equal(t.status().workers, 3);
+  });
+
+  it('nested workers follow their frame’s profile in per-frame mode, and go when the frame goes', async () => {
+    settings.options.frameMode = 'per-frame';
+    t.onAttachedToTarget(null, iframe('F7'));
+    t.onAttachedToTarget('F7', worker('W7'));
+    t.onAttachedToTarget('W7', worker('W8'));
+    assert.deepEqual(port.emulation('W8')[0]?.params, { userAgent: '', acceptLanguage: 'en-US,en' }, 'inherits while the frame URL is unknown');
+    t.onTargetInfoChanged({ targetId: 'T-F7', type: 'iframe', url: 'https://www.apple.com/embed' });
+    assert.deepEqual(port.emulation('W8').at(-1)?.params, { userAgent: '', acceptLanguage: 'ja-JP,ja' }, 'the nested worker follows its frame');
+    t.onDetachedFromTarget('F7');
+    await flush();
+    assert.equal(t.status().frames, 0);
+    assert.equal(t.status().workers, 0, 'the whole chain is dropped');
+  });
+
   it('resumes the target even if every command fails', async () => {
     port.failures.set('F2:Emulation.setLocaleOverride', 'x');
     port.failures.set('F2:Emulation.setUserAgentOverride', 'x');
@@ -883,6 +953,53 @@ describe('SessionManager', () => {
     assert.equal(st.applied?.locale, 'ja-JP');
     assert.equal(st.late, true, 'first visit: the page started before the address was known');
     assert.deepEqual(reloads, [7], 'reloaded once; the next load is gated with the cached address');
+  });
+
+  it('a SYSTEM page sharing a spoofed same-site process is checked once and reported, not hidden', async () => {
+    const s = defaultSettings();
+    s.rules.unshift({ id: 'acc', type: 'DOMAIN', value: 'accounts.google.com', action: 'SYSTEM', profile: null, enabled: true, priority: 0, note: '' });
+    const ACCOUNTS = 'https://accounts.google.com/signin';
+    const reads: number[] = [];
+    let intl = 'en-US';
+    const port = new FakePort();
+    const m = new SessionManager({
+      port,
+      initialSettings: s,
+      suspended: false,
+      reloadTab: async () => undefined,
+      getTabUrl: async () => null,
+      listTabs: async () => [{ id: 1, url: GOOGLE }],
+      onStatus: () => undefined,
+      onTabGone: () => undefined,
+      log: () => undefined,
+      native: () => ({ locale: 'zh-CN', languages: ['zh-CN', 'zh'] }),
+      readPageLocale: async (tabId) => {
+        reads.push(tabId);
+        return { url: tabId === 4 ? ACCOUNTS : EXAMPLE, language: 'zh-CN', dateLocale: tabId === 4 ? intl : 'zh-CN' };
+      },
+    });
+    await m.reconcileAll();
+    assert.deepEqual([...port.attached], [1], 'mail.google.com is spoofed');
+    // A popup to the SYSTEM site, same-site with the spoofed tab: read once, without the debugger.
+    m.onCommitted(4, 0, { url: ACCOUNTS, transitionType: 'link' });
+    await settle();
+    assert.deepEqual(reads, [4]);
+    assert.ok(!port.attached.has(4), 'no debugger on the SYSTEM tab');
+    const st = m.status(4)!;
+    assert.equal(st.session, 'none');
+    assert.equal(st.warnings.length, 1);
+    assert.match(st.warnings[0]!, /en-US/);
+    // A SYSTEM page no spoofed tab is same-site with is not read at all.
+    m.onCommitted(5, 0, { url: EXAMPLE, transitionType: 'typed' });
+    await settle();
+    assert.deepEqual(reads, [4]);
+    assert.deepEqual(m.status(5)?.warnings, []);
+    // A page that reads native values is not reported.
+    intl = 'zh-CN';
+    m.onCommitted(4, 0, { url: ACCOUNTS, transitionType: 'reload' });
+    await settle();
+    assert.deepEqual(reads, [4, 4]);
+    assert.deepEqual(m.status(4)?.warnings, []);
   });
 
   it('a global default profile spoofs unmatched sites', async () => {

@@ -466,5 +466,6 @@ export const zhCN: Record<MessageKey, string> = {
   'opt.data.recordError': '查询时在此文件中发现损坏的记录：{error}。对 IP 规则而言，存放在文件这部分的地址一律视为不匹配。请重新下载或导入该文件。',
 
   'opt.io.confirmUnchecked': '有 {count} 个正则表达式未能及时完成安全检查。它们会被保留，但在扩展检查完之前不会匹配；未通过检查的会列在“会话与日志”页面。',
+  'bg.warn.sharedProcess': '此页面的 Intl 报告 {locale}：它与一个伪装成该语言的页面共享渲染进程，而 Chrome 每个进程只有一个 Intl 语言。navigator.language 和 Accept-Language 不受影响。',
   // @append-zh
 };

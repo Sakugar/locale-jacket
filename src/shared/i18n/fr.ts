@@ -466,5 +466,6 @@ export const fr: Record<MessageKey, string> = {
   'opt.data.recordError': 'Une recherche a trouvé un enregistrement corrompu dans ce fichier : {error}. Pour les règles IP, les adresses stockées dans cette partie du fichier sont considérées comme sans correspondance. Téléchargez ou importez à nouveau le fichier.',
 
   'opt.io.confirmUnchecked': '{count} expression(s) régulière(s) n’ont pas pu être vérifiées à temps. Elles sont conservées, mais ne correspondent à rien tant que l’extension ne les a pas vérifiées ; celles qu’elle refuse sont alors listées sur la page « Sessions et journal ».',
+  'bg.warn.sharedProcess': 'Intl renvoie {locale} sur cette page : elle partage son processus de rendu avec une page qui simule ces paramètres régionaux, et Chrome n’a qu’un seul jeu de paramètres régionaux Intl par processus. navigator.language et Accept-Language ne sont pas concernés.',
   // @append-fr
 };

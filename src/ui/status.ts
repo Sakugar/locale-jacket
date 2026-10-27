@@ -17,6 +17,9 @@ export function describeStatus(s: TabStatus | null, g: GlobalStatus | null): Sta
   if (!s) return { label: t('status.unknown'), kind: 'off', detail: t('status.unknownDetail') };
   const target = s.resolution.profile;
   if (!target) {
+    // Nothing is spoofed here, but the page can still be wrong (its Intl locale taken from
+    // another tab in the same renderer process): conflicts are shown, never hidden.
+    if (s.warnings.length) return { label: t('status.partial'), kind: 'warn', detail: s.warnings[0]! };
     return { label: t('status.system'), kind: 'off', detail: t(s.session === 'attached' ? 'status.systemAttachedDetail' : 'status.systemDetail') };
   }
   if (s.session === 'restricted') return { label: t('status.notAllowed'), kind: 'off', detail: t('status.notAllowedDetail') };

@@ -134,6 +134,20 @@ export function matchesSuffix(host: string, suffix: string): boolean {
   return host.length > suffix.length && host.endsWith(suffix) && host.charCodeAt(host.length - suffix.length - 1) === 46; /* '.' */
 }
 
+/**
+ * A coarse "site" key: the last two DNS labels (the whole host for IP addresses and
+ * single-label hosts). Same-site hosts always share it, but hosts that share it are not
+ * always same-site (there is no public suffix list here: `a.co.uk` and `b.co.uk` share
+ * `co.uk`). Use it only to decide when to look closer, never as proof.
+ */
+export function roughSite(host: string): string {
+  if (hostKind(host) !== 'domain') return host;
+  const last = host.lastIndexOf('.');
+  if (last < 0) return host;
+  const prev = host.lastIndexOf('.', last - 1);
+  return prev < 0 ? host : host.slice(prev + 1);
+}
+
 export function labelCount(host: string): number {
   // Same as host.split('.').length, without building the array.
   let n = 1;
