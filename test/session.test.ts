@@ -27,6 +27,8 @@ class FakePort implements DebuggerPort {
   probe: LocaleSnapshot | null = null;
   /** performance.timeOrigin of the open document (null = cannot be read). */
   timeOrigin: number | null = null;
+  /** The tab's main frame id; the page target's id stays 'MAIN' (targetIdForTab). */
+  mainFrame = 'MAIN';
   history = { currentIndex: 1, entries: [{ id: 10, url: APPLE }, { id: 11, url: GOOGLE }, { id: 12, url: APPLE }] };
 
   async attach(tabId: number): Promise<void> {
@@ -48,7 +50,11 @@ class FakePort implements DebuggerPort {
     const fail = this.failures.get(key) ?? this.failures.get(method);
     if (fail) throw new Error(fail);
     if (!this.attached.has(target.tabId)) throw new Error(`Debugger is not attached to the tab with id: ${target.tabId}.`);
-    if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 } as T;
+    if (method === 'Page.createIsolatedWorld') {
+      if ((params as { frameId?: string }).frameId !== this.mainFrame) throw new Error('{"code":-32602,"message":"No frame for given id found"}');
+      return { executionContextId: 1 } as T;
+    }
+    if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: this.mainFrame } } } as T;
     if (method === 'Runtime.evaluate' && (params as { expression?: string }).expression === 'performance.timeOrigin') return { result: { value: this.timeOrigin } } as T;
     if (method === 'Runtime.evaluate') return { result: { value: this.probe } } as T;
     if (method === 'Page.getNavigationHistory') return this.history as T;
@@ -412,6 +418,39 @@ describe('TabSession lifecycle', () => {
     assert.equal(t.status().late, true);
     assert.match(t.status().lateReason ?? '', /instead of zh-CN/);
     assert.deepEqual(ctx.reloads, [1]);
+  });
+
+  it('follows a new main frame (a prerendered page activated into the tab): probe and gate keep working', async () => {
+    const { t, ctx } = await settledOnGoogle(port, settings);
+    // The activated page keeps its own frame id; the target id (targetIdForTab) does not change.
+    port.mainFrame = 'PRERENDERED';
+    port.probe = snapshot('en-US');
+    await t.onCommitted({ url: GOOGLE, transitionType: 'link', timeStamp: ctx.now() });
+    assert.equal(t.status().late, false, t.status().lateReason ?? '');
+    assert.ok(ctx.logs.some((l) => /new main frame/.test(l.msg)));
+    // Reloads go through the gate again, so they are not flagged even without a probe.
+    port.probe = null;
+    t.onRequestPaused(paused(GOOGLE, 'PRERENDERED'));
+    await t.onCommitted({ url: GOOGLE, transitionType: 'reload' });
+    assert.equal(t.status().late, false, t.status().lateReason ?? '');
+    // A profile change in that tab is aborted and re-issued like in any other tab.
+    port.clear();
+    t.onRequestPaused(paused(APPLE, 'PRERENDERED'));
+    await flush();
+    assert.ok(port.methods().includes('Fetch.failRequest'), port.methods().join(', '));
+    const v = await t.verify();
+    assert.doesNotMatch(v.frames[0]?.error ?? '', /No frame/);
+  });
+
+  it('learns the new main frame from Page.frameNavigated before the next request', async () => {
+    const { t } = await settledOnGoogle(port, settings);
+    port.mainFrame = 'PRERENDERED';
+    t.onFrameNavigated({ id: 'CHILD', parentId: 'PRERENDERED' }); // a subframe changes nothing
+    t.onFrameNavigated({ id: 'PRERENDERED' });
+    t.onRequestPaused(paused(APPLE, 'PRERENDERED'));
+    await flush();
+    assert.ok(port.methods().includes('Fetch.failRequest'), port.methods().join(', '));
+    assert.ok(!port.methods().includes('Page.getFrameTree'));
   });
 
   it('a probe that matches clears the late flag (e.g. back/forward cache restore)', async () => {

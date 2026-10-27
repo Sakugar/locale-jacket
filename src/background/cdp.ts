@@ -10,7 +10,10 @@ export interface DebuggerPort {
   attach(tabId: number): Promise<void>;
   detach(tabId: number): Promise<void>;
   send<T = unknown>(target: Target, method: string, params?: object): Promise<T>;
-  /** CDP target id of the tab's page target (equals its main frame id). Browser-side, never blocked by navigations. */
+  /**
+   * CDP target id of the tab's page target: its main frame id, until a prerendered page is
+   * activated into the tab (that page keeps its own frame id). Browser-side, never blocked by navigations.
+   */
   targetIdForTab(tabId: number): Promise<string | null>;
 }
 

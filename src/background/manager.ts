@@ -193,6 +193,9 @@ export class SessionManager {
       case 'Target.attachedToTarget':
         t.onAttachedToTarget(source.sessionId ?? null, params as { sessionId: string; targetInfo: TargetInfo; waitingForDebugger: boolean });
         break;
+      case 'Page.frameNavigated':
+        if (!source.sessionId) t.onFrameNavigated((params as { frame: { id: string; parentId?: string } }).frame);
+        break;
       case 'Page.frameStartedNavigating':
         if (!source.sessionId) t.onNavigationStarted(params as { frameId: string; url: string; navigationType: string });
         break;

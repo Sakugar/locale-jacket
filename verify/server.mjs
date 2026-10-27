@@ -59,8 +59,10 @@ export function startServer({ port = 8787, quiet = false } = {}) {
         .replaceAll('{{HOST}}', escapeHtml(host));
       // ?delay=<ms> holds the response like a slow site would (up to 10 s).
       const delay = Math.min(Math.max(Number(url.searchParams.get('delay')) || 0, 0), 10000);
+      // ?prerenderable lets a same-site, cross-origin page prerender this one (Speculation Rules opt-in).
+      const optIn = url.searchParams.has('prerenderable') ? { 'Supports-Loading-Mode': 'credentialed-prerender' } : {};
       setTimeout(() => {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...noStore });
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...noStore, ...optIn });
         res.end(body);
       }, delay);
     };

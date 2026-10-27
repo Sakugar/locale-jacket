@@ -18,6 +18,9 @@ const s = document.createElement('script');
 s.type = 'speculationrules';
 s.textContent = JSON.stringify({ prerender: [{ source: 'list', urls: [target] }] });
 document.head.appendChild(s);
+// ?go=<ms>: follow the link by itself, so no debugger has to touch this page (DevTools disables prerendering).
+const go = Number(new URLSearchParams(location.search).get('go'));
+if (go > 0) setTimeout(() => document.getElementById('target').click(), go);
 </script>
 </body>
 </html>

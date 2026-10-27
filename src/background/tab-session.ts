@@ -317,9 +317,10 @@ export class TabSession {
 
     const t = { tabId: this.tabId };
     const send = this.ctx.port.send.bind(this.ctx.port);
-    // The page target's id is its main frame id. getTargets and the Fetch/Target
-    // domains are handled by the browser, so they work even while a navigation is
-    // pending; the renderer-side Page commands below may wait for that commit.
+    // The page target's id is its main frame id (until another main frame takes over, see
+    // inMainFrame). getTargets and the Fetch/Target domains are handled by the browser, so
+    // they work even while a navigation is pending; the renderer-side Page commands below
+    // may wait for that commit.
     this.mainFrameId = await this.ctx.port.targetIdForTab(this.tabId).catch(() => null);
     if (this.closed) {
       this.mayHoldSession = false;
@@ -583,12 +584,43 @@ export class TabSession {
       .catch(() => undefined);
   }
 
+  /**
+   * Run `fn` with the main frame's id. The page target's id is the main frame's id only
+   * until a prerendered page is activated into the tab: that page brings its own frame.
+   * If the frame is gone, look the main frame up and try once more with it.
+   */
+  private async inMainFrame<T>(fn: (frameId: string) => Promise<T>): Promise<T> {
+    const known = this.mainFrameId!;
+    try {
+      return await fn(known);
+    } catch (e) {
+      if (!/No frame/i.test(errorMessage(e))) throw e;
+      const tree = await this.ctx.port
+        .send<{ frameTree: { frame: { id: string } } }>({ tabId: this.tabId }, 'Page.getFrameTree')
+        .catch(() => null);
+      const id = tree?.frameTree.frame.id;
+      if (!id || id === known) throw e;
+      this.setMainFrame(id);
+      return fn(id);
+    }
+  }
+
+  private setMainFrame(id: string): void {
+    if (this.mainFrameId === id) return;
+    this.log('debug', 'The tab has a new main frame; following it.');
+    this.mainFrameId = id;
+  }
+
   /** Values recorded by the isolated-world probe when the current main document started. */
   private async readStartProbe(): Promise<LocaleSnapshot | null> {
     if (!this.mainFrameId) return null;
+    return this.inMainFrame((frameId) => this.readProbeIn(frameId));
+  }
+
+  private async readProbeIn(frameId: string): Promise<LocaleSnapshot | null> {
     const t = { tabId: this.tabId };
     const world = await this.ctx.port.send<{ executionContextId: number }>(t, 'Page.createIsolatedWorld', {
-      frameId: this.mainFrameId,
+      frameId,
       worldName: PROBE_WORLD,
     });
     const r = await this.ctx.port.send<{ result?: { value?: LocaleSnapshot | null } }>(t, 'Runtime.evaluate', {
@@ -739,6 +771,15 @@ export class TabSession {
       if (!best || distance < best.distance) best = { id: e.id, distance };
     });
     return best ? (best as { id: number }).id : null;
+  }
+
+  /**
+   * Page.frameNavigated on the page target. A main frame with another id than the one we
+   * know is a prerendered page activated into the tab; the gate and the probe must use its
+   * id from now on, or every later navigation in the tab looks ungated and late.
+   */
+  onFrameNavigated(frame: { id: string; parentId?: string }): void {
+    if (this.state === 'attached' && !frame.parentId) this.setMainFrame(frame.id);
   }
 
   /** Page.frameStartedNavigating for any frame of this target. */
@@ -1039,7 +1080,7 @@ export class TabSession {
     // sent: if those disagree (a navigation that never committed), the check must show it.
     const expectedMain = this.resolution.profile?.locale ?? null;
     try {
-      const v = await evalIn(undefined, this.mainFrameId);
+      const v = await this.inMainFrame((frameId) => evalIn(undefined, frameId));
       frames.push({ kind: 'main', url: v.url, start: v.start, live: v.live, expectedLocale: expectedMain, error: null });
     } catch (e) {
       frames.push({ kind: 'main', url: this.url ?? '', start: null, live: null, expectedLocale: expectedMain, error: errorMessage(e) });

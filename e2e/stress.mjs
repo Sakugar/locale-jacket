@@ -568,6 +568,29 @@ try {
     return expectRightOrReported(r, 'en-US', await status(tab.tabId), 'prerendered page');
   });
 
+  await test('page prerendered in a tab without a session: the tab follows its new main frame, reloads are not flagged', async () => {
+    // Like the address bar prerendering a site from the new-tab page: no debugger may touch the
+    // tab before the activation (DevTools disables prerendering), so the launcher clicks by
+    // itself. It is a SYSTEM page, so the extension is not attached either; the target is a
+    // same-site page with a profile. The activated page keeps its own main frame id.
+    const target = u('docs.google.localhost', '/plain.html?prerendered=2&prerenderable');
+    const { targetId } = await cdp.send('Target.createTarget', { url: u('accounts.google.localhost', `/prerender.html?go=2500&target=${encodeURIComponent(target)}`) });
+    openedInTest.push(targetId);
+    const tabId = await tabIdOf(targetId);
+    const t0 = Date.now();
+    await sleep(4500);
+    const tab = { targetId, s: await attach(cdp, targetId), tabId };
+    await cdp.send('Page.enable', {}, tab.s);
+    expectLocale(await report(tab), 'fr-FR', 'activated page');
+    const followed = (await logSince(t0)).some((l) => l.tabId === tabId && /new main frame/.test(l.msg));
+    note(followed ? 'the tab got a new main frame (prerender activated)' : 'the main frame did not change (not prerendered)');
+    await cdp.send('Page.reload', {}, tab.s);
+    await sleep(300);
+    expectLocale(await report(tab), 'fr-FR', 'reload after the activation');
+    const st = await status(tabId);
+    if (st.late) throw new Error(`reload after the activation flagged late: ${st.lateReason}`);
+  });
+
   // --------------------------------------------------- crashes and restarts
 
   await test('renderer crash: the reloaded page in the new process is spoofed again', async () => {
