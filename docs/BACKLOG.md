@@ -1,14 +1,12 @@
 # Development backlog
 
-Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. S1–S6 are fixed, S7 mostly fixed, S8 is open (found 2026-10-27), and code issues 1, 2, 3, 4, 6 and 7 are fixed (all unreleased). Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
+Open issues found up to the 1.3.3 release (2026-10-24), from the performance run, the review that followed it, and the release itself. Items S1–S5 were found by the stress suite (`npm run e2e:stress`, 2026-10-25), and its failing tests reproduce them. S1–S6 are fixed (released in 1.4.0), S7 mostly fixed, and S8 turned out to be Edge's own behaviour plus the test's timing (test fixed 2026-10-27, unreleased). Code issues 1, 2, 3, 4, 6 and 7 are fixed (1.4.0), and 5 is done (browser numbers re-measured 2026-10-27). Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
 
 Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone asks.
 
 | # | Issue | Area | Priority |
 |---|---|---|---|
-| S8 | Edge: a crashed tab's reload sometimes never commits (intermittent, stress test) | `src/background/tab-session.ts` | P2 |
 | S7 | The popup can briefly show the previous page's check under the new host (Edge; much rarer since the fix) | `src/popup/popup.ts` | P3 |
-| 5 | Browser timings not re-measured after the perf fixes | `e2e/launch-perf.mjs` | P2 |
 | 8 | First-request header missing for subscription GEOSITE rules below an IP rule | `src/shared/dnr.ts` | P3 |
 | 9 | Validation messages, activity log and fetch errors are English-only | `src/shared/config-io.ts`, `src/shared/i18n/*` | P3 |
 | 10 | The regex check refuses some harmless patterns | `src/shared/regex-safety.ts` | P3 |
@@ -49,12 +47,16 @@ Fixed: see `CHANGELOG.md` [Unreleased]. Cause: the restart-in-flight path (`Page
 - **Fix (unreleased):** `runVerify()` in `src/popup/popup.ts` accepts a result only when its main frame's `location.href` is on the host the popup shows. Otherwise it reads again, every 300 ms and at most 20 times per navigation. A check could start while `tab.url` already pointed to the next page but the tab still showed the old document.
 - **Result:** 32 of 34 Edge runs passed (before: 2 of 6). The two failures came before the test recorded diagnostics; the 28 runs since then all passed. If it fails again, the error shows the table, the page's real host and values, and the tab's status at that moment. That tells whether the result was stale or the new page really reported en-US for a moment.
 
-### S8. Edge: a crashed tab's reload sometimes never commits (P2, intermittent)
+### S8. Edge: a crashed tab's reload sometimes never commits (fixed in the test, unreleased; not an extension bug)
 
-- **What:** stress test "renderer crash…" fails in Edge 156 about 1 run in 8 (3 of 25 with the S3/S4/S6 fixes, 2 of 10 without them, so it is older than those fixes). Chrome passed every run. After `Page.crash` the test reloads the tab with `Page.navigate` (`transitionType: 'reload'`, like the sad tab's button). The navigate is accepted (it returns a loader id), but no document commits: 300 ms later the tab's page target has an empty URL and is still attached, and the page never reports.
-- **Extension log on a failing run:** the reload reaches the Fetch gate (`gate: apple.localhost → ja-JP`, same profile, so it is continued), then nothing more: no commit, no error, no warning from `Fetch.continueRequest`.
-- **Where to look:** whether the continued request reaches the verify server; whether Edge needs the overrides re-sent (or the `Fetch` domain re-enabled) for the new renderer after a crash; and whether this also happens without the extension. Diagnostics used: log what `Page.navigate` returned and the `Target.getTargets` page list when `report()` times out.
-- **Test:** "renderer crash: the reloaded page in the new process is spoofed again" (loop with `--edge --only "prerender|renderer crash|service worker and shared"`).
+- **Cause:** `Page.crash` doesn't kill an Edge renderer at once. Edge 156 reports `Target.targetCrashed` 1.2–1.8 s after the first crash in a browser and about 0.7 s after later ones (Chrome: about 0.1 s). The test reloaded after a fixed 1.5 s. When the crash wasn't reported yet, the reload committed into the dying renderer and was lost with it, which left a sad tab nothing reloaded.
+- **Evidence** (`research/crash-reload.mjs`, fresh Edge 156 per launch):
+  - With no extension, a reload 1 s after the crash was lost on the first crash in 10 of 10 launches.
+  - With the reload at 1.5 s: 2 of 13 lost without the extension, 3 of 12 with it. Every lost reload was sent before the crash was reported.
+  - Reloading after `Target.targetCrashed`: 20 of 20 loaded and were spoofed.
+- **Rarer:** now and then Edge reports the crash only after 20–30 s, and every reload until then is lost, with or without the extension. The trigger isn't known (seen in 6 of 22 runs in one sitting, 0 of 29 later).
+- **Fix:** the stress test waits for `Target.targetCrashed` before it reloads (a user can only press the sad tab's *Reload* then), with a 45 s timeout. Edge passed the crash subset in 25 of 25 runs, and the full stress suite 24/24 in Chrome and Edge.
+- **Checked in the extension, nothing needed:** overrides survive the crash (the reloaded page is ja-JP at document start), and child sessions are dropped on `Target.detachedFromTarget` and come back after the reload. Minor, left alone: a command sent to the dying renderer waits for the 10 s command timeout, which holds up that tab's queue (the Fetch gate isn't queued, so pages are still spoofed).
 
 ### S5. Refused stored regexes are named by position, not by pattern (fixed, unreleased)
 
@@ -92,10 +94,11 @@ Fixed: see `CHANGELOG.md` [Unreleased]. `subscriptionData` is stored in a compac
 - **What:** `test/perf.test.ts` asserted time ceilings. They are at least 10× the measured numbers, but a slow or busy CI machine could still fail them.
 - **Fixed:** the hostile stored-regex test asserts on work: what one check of such a pattern charges to an `analysisBudget`, that the first navigation checks no more patterns than `NAVIGATION_REGEX_BUDGET_MS` worth of units (it resets the navigation budget first), and that the second checks none. The other ceilings (resolveHost, analyzeRules, refusing a 20,000-rule file, profile validations) have no work counter in the code; they always run, but are enforced only with `LJ_PERF=1`, i.e. `npm run test:perf` (`scripts/test-perf.mjs`). Without it, `npm test` prints each time as a test diagnostic.
 
-### 5. Browser timings not re-measured after the perf fixes (P2)
+### 5. Browser timings not re-measured after the perf fixes (done, 2026-10-27)
 
-- **What:** the real-browser numbers in `handoff.md` (Performance) were taken before the 1.3.3 speed-ups. The fixes cut worker CPU per navigation (rule matching 4.3 ms → 0.009 ms with 5,000 rules), but page-load times weren't measured again.
-- **Do:** run `npm run e2e:launch -- --runs 10` and a 5,000-rule CPU-per-navigation run, then update `handoff.md`. Expect worker CPU per navigation near the 4-rule figure (3.4 ms) instead of 17 ms.
+Measured with the new `npm run e2e:nav-perf` (Chrome 156 and Edge 156) and `npm run e2e:launch -- --runs 10`. The numbers are in `handoff.md` (Performance).
+- **Worker CPU:** about 1.1–2.0 ms JS+GC per navigation, plus 0.5–0.9 ms native, the same with 4 and with 5,004 rules. The 5,000-rule jump to 17 ms is gone.
+- **Page loads:** the extra page-load time barely changed: +3 to +9 ms for a spoofed reload, +75 to +85 ms for a cross-site switch, and +84 ms (Chrome) or +138 ms (Edge) for a spoofed new tab. That cost comes from attaching, holding the request and the new renderer, not from worker CPU.
 
 ### 6. Corrupt mmdb records found at runtime aren't shown (fixed, unreleased)
 

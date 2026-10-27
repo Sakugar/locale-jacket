@@ -28,10 +28,10 @@ Everything below was observed in Chrome 155 / Edge 155 on Windows 11 (see `resea
   - **Already loaded** (very fast servers): its first scripts saw the real locale. A page that began less than 10 seconds before the extension attached is reloaded once; older pages are only flagged *Reload needed*.
   - Both belong to *Reload once if the profile arrived late* (on by default) and happen at most once per URL.
   - Measured with `npm run e2e:launch` (Chromium 153, headless, local server answering in 300 ms), the page rendered once, already spoofed, in:
-    - 10 of 10 new tabs in a running browser (about 70 ms slower than with no extension)
-    - 5 of 5 tabs that had to wake the stopped service worker
-    - 5 of 5 restored tabs
-    - 4 of 5 startup pages; the fifth was reloaded once (about 450 ms slower than with no extension, because the server is asked twice)
+    - 20 of 20 new tabs in a running browser (about 65 ms slower than with no extension)
+    - 10 of 10 tabs that had to wake the stopped service worker
+    - 10 of 10 restored tabs
+    - 10 of 10 startup pages (about 280 ms slower than with no extension, because the server is asked twice)
 
     With the server answering in about 2 ms, the page has usually loaded before the extension attaches and is reloaded once instead. Every final page was correct in every run.
   - The test can only load the extension with `--load-extension`, which installs it afresh on every start. An installed extension also has its header rules and event listeners already registered at startup, so the first request's `Accept-Language` is expected to be right there; this was not measured.

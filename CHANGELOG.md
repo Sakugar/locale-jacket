@@ -4,6 +4,12 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added
+- **`npm run e2e:nav-perf`** measures what the extension costs in real Chrome and Edge (`--edge`): page-load time with and without it (unmatched site, spoofed reload, spoofed new tab, cross-site profile switch, page with a cross-site frame and a worker), and its service worker's CPU per navigation and heap with 4 and with 5,000 rules.
+
+### Fixed
+- **The 1.4.0 known limitation "Edge: reloading a crashed tab sometimes leaves the page blank" is Edge's own behaviour, not the extension's.** Edge reports a renderer crash 0.7–1.8 s after it happens (now and then only after 20–30 s), and a reload sent before that goes to the dying renderer and is lost with it. This happens with no extension installed. The stress test now reloads only once the crash has been reported, as a user can only press the sad tab's *Reload* then, and passes in Edge every time.
+
 ## [1.4.0] - 2026-10-27
 
 ### Fixed

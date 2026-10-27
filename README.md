@@ -323,6 +323,7 @@ npm run e2e:edge    # the same in Microsoft Edge
 node e2e/run.mjs --headful            # watch it run
 npm run e2e:stress  # hard cases: restarts, crashes, navigation storms, popups, 5,000 rules, hostile regexes (e2e:stress:edge for Edge)
 npm run e2e:launch  # startup test and page-load timing (needs Chromium, see e2e/launch-perf.mjs; add -- --runs 10)
+npm run e2e:nav-perf # page-load cost and service-worker CPU/heap per navigation in Chrome (add -- --edge for Edge)
 npm run screenshots # UI screenshots into e2e/artifacts/ (add -- --ui=ja etc. for another language)
 npm run typecheck
 npm run test:perf   # the performance tests with their time ceilings enforced (npm test only reports the times)
