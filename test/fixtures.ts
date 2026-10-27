@@ -19,9 +19,9 @@ export function encodeGeosite(cats: Record<string, [number, string, string[]?][]
     const site: number[] = [...str(1, name.toUpperCase())];
     for (const [type, value, attrs = []] of entries) {
       const dom = [...varint(1 * 8 + 0), ...varint(type), ...str(2, value), ...attrs.flatMap((a) => field(3, [...str(1, a), ...varint(2 * 8), 1]))];
-      site.push(...field(2, dom));
+      for (const byte of field(2, dom)) site.push(byte); // no spread: categories can be large
     }
-    out.push(...field(1, site));
+    for (const byte of field(1, site)) out.push(byte);
   }
   return new Uint8Array(out);
 }

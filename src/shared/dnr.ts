@@ -11,7 +11,7 @@
 // highest-priority matching rule decides; an `allow` rule (used for SYSTEM)
 // cancels all lower-priority modifyHeaders rules.
 
-import type { GeositeList } from './geosite.js';
+import { plainDomainCount, type GeositeList } from './geosite.js';
 import { isAsciiKeyword, rulesInPrecedenceOrder } from './rules.js';
 import { isIpRuleType } from './types.js';
 import type { Rule, Settings } from './types.js';
@@ -84,11 +84,13 @@ export function compileDnrRules(settings: Pick<Settings, 'rules' | 'defaultActio
       }
       // Full-match entries are mirrored as suffixes: a slight over-match that only affects the
       // first request's header; the debugger session applies the exact rule.
-      const domains = [...new Set([...list.suffix, ...list.full])].filter((d) => /^[a-z0-9.-]+$/.test(d));
-      if (!domains.length || domains.length > DNR_MAX_GEOSITE_DOMAINS) {
-        skipped.push({ rule, reason: domains.length ? `${domains.length} domains exceed the ${DNR_MAX_GEOSITE_DOMAINS}-domain mirroring limit.` : 'Category has no plain domains to mirror.' });
+      // Counted first, so a category far over the limit (cn: 110,000) is not listed out.
+      const count = plainDomainCount(list);
+      if (!count || count > DNR_MAX_GEOSITE_DOMAINS) {
+        skipped.push({ rule, reason: count ? `${count} domains exceed the ${DNR_MAX_GEOSITE_DOMAINS}-domain mirroring limit.` : 'Category has no plain domains to mirror.' });
         return;
       }
+      const domains = [...new Set([...list.suffix, ...list.full])].filter((d) => /^[a-z0-9.-]+$/.test(d));
       if (list.keywords.length || list.regexes.length) {
         skipped.push({ rule, reason: `Mirrored partially: ${list.keywords.length + list.regexes.length} keyword/regex entries are applied by the debugger session only.` });
       }

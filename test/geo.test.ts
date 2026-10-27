@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { exportConfig, importConfigText } from '../src/shared/config-io.js';
-import { compileDnrRules } from '../src/shared/dnr.js';
-import { geositeMatches, indexGeosite, loadGeositeCategory, type GeositeList } from '../src/shared/geosite.js';
+import { compileDnrRules, DNR_MAX_GEOSITE_DOMAINS } from '../src/shared/dnr.js';
+import { DomainTable, geositeMatches, indexGeosite, loadGeositeCategory, plainDomainCount, type GeositeList } from '../src/shared/geosite.js';
 import { cidrContains, formatCidr, formatIp, isLanIp, parseCidr, parseIp, type IpAddr } from '../src/shared/ip.js';
 import { makeProfile } from '../src/shared/locale.js';
 import { asnOf, countryOf, MmdbReader } from '../src/shared/mmdb.js';
@@ -186,7 +186,128 @@ describe('geosite.dat reader', () => {
     assert.equal(all.regexes.length, 5);
     assert.ok(geositeMatches(all, 'geo-budget-3-abc.example'));
   });
+
+  // The full: and domain: entries are kept as byte ranges (DomainTable), not one string each.
+  // They must behave exactly like the Set of lowercased values they replace.
+  it('domain tables behave like a Set of the lowercased values', () => {
+    const t = indexGeosite(
+      encodeGeosite({
+        mixed: [
+          [2, 'Example.COM'],
+          [2, '..dotted.example'],
+          [2, 'example.com'], // duplicate after lowercasing
+          [2, 'BÜCHER.de'], // non-ASCII: decoded and lowercased as a string
+          [3, 'K.example'], // KELVIN SIGN lowercases to an ASCII "k"…
+          [3, 'k.example'], // …so this one is a duplicate
+          [3, 'Upper.Example'],
+          [2, '﻿'], // decodes to "" (byte-order mark): left out like an empty value
+          [2, '﻿.bom.example'], // the mark is dropped, then the leading dot
+          [2, '.'], // an empty suffix after the dots go, as before
+          [3, 'under_score.example'],
+        ],
+      }),
+    );
+    const l = loadGeositeCategory(t, 'mixed')!;
+    assert.equal(l.size, 10);
+    assert.deepEqual([...l.suffix], ['example.com', 'dotted.example', 'bücher.de', 'bom.example', '']);
+    assert.deepEqual([...l.full], ['k.example', 'upper.example', 'under_score.example']);
+    assert.equal(l.suffix.size, 5);
+    assert.equal(l.full.size, 3);
+    for (const d of [...l.suffix, ...l.full]) assert.ok(l.suffix.has(d) || l.full.has(d), d);
+    assert.ok(!l.suffix.has('Example.com'), 'lookups are exact, like Set.has');
+    assert.ok(!l.suffix.has('example.co') && !l.suffix.has('xample.com') && !l.full.has('K.example'));
+    assert.ok(geositeMatches(l, 'www.example.com') && geositeMatches(l, 'a.dotted.example') && geositeMatches(l, 'k.example'));
+    assert.ok(!geositeMatches(l, 'www.upper.example'), 'full is exact');
+    assert.equal(plainDomainCount(l), 5, 'example.com, dotted.example, bom.example, k.example, upper.example');
+  });
+
+  it('attribute keys compare like lowercased strings', () => {
+    const t = indexGeosite(encodeGeosite({ g: [[2, 'a.example', ['CN']], [2, 'b.example', ['ads', 'cn']], [2, 'c.example', ['cnx']], [2, 'd.example']] }));
+    assert.deepEqual([...loadGeositeCategory(t, 'g', 'cn')!.suffix], ['a.example', 'b.example']);
+    assert.deepEqual([...loadGeositeCategory(t, 'g', '!cn')!.suffix], ['c.example', 'd.example']);
+    assert.deepEqual([...loadGeositeCategory(t, 'g', 'ADS')!.suffix], ['b.example']);
+  });
+
+  it('random categories: same members, order, sizes and lookups as a Set', () => {
+    const rnd = random(20261026);
+    const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)]!;
+    const labels = ['a', 'B', 'cdn', 'Mail', 'xn--fiqs8s', 'bücher', '1', 'e-x', '.', '..', 'k', 'K', 'İ'];
+    const tlds = ['com', 'CN', 'org', 'de', ''];
+    for (let round = 0; round < 40; round++) {
+      const entries: [number, string][] = [];
+      const n = 1 + Math.floor(rnd() * 300);
+      for (let i = 0; i < n; i++) {
+        const parts = Array.from({ length: 1 + Math.floor(rnd() * 3) }, () => pick(labels));
+        entries.push([rnd() < 0.7 ? 2 : 3, `${rnd() < 0.1 ? '.' : ''}${parts.join('.')}.${pick(tlds)}`]);
+      }
+      const l = loadGeositeCategory(indexGeosite(encodeGeosite({ r: entries })), 'r')!;
+      const want = { suffix: new Set<string>(), full: new Set<string>() };
+      for (const [type, value] of entries) {
+        const v = value.toLowerCase();
+        if (type === 2) want.suffix.add(v.replace(/^\.+/, ''));
+        else want.full.add(v);
+      }
+      assert.equal(l.size, entries.length);
+      assert.deepEqual([...l.suffix], [...want.suffix], `round ${round}`);
+      assert.deepEqual([...l.full], [...want.full], `round ${round}`);
+      assert.equal(l.suffix.size, want.suffix.size);
+      const probes = [...want.suffix, ...want.full].flatMap((d) => [d, d.toUpperCase(), `x.${d}`, d.slice(1), `${d}.`]);
+      for (const p of probes) {
+        assert.equal(l.suffix.has(p), want.suffix.has(p), `suffix ${p}`);
+        assert.equal(l.full.has(p), want.full.has(p), `full ${p}`);
+        assert.equal(geositeMatches(l, p), geositeMatches({ ...l, ...want }, p), `matches ${p}`);
+      }
+      const plain = [...new Set([...want.suffix, ...want.full])].filter((d) => /^[a-z0-9.-]+$/.test(d)).length;
+      assert.equal(plainDomainCount(l), plain, `round ${round} plain count`);
+    }
+  });
+
+  it('a data set whose domains all collide falls back to a plain Set, with the same result', () => {
+    const rnd = random(7);
+    const entries: [number, string][] = Array.from({ length: 3000 }, (_, i) => [2, `${i % 3 ? '' : '.'}H${Math.floor(rnd() * 2000)}.Example${i % 7 ? '' : '.bücher'}`]);
+    const want = [...new Set(entries.map(([, v]) => v.toLowerCase().replace(/^\.+/, '')))];
+    const idx = indexGeosite(encodeGeosite({ c: entries }));
+    const imul = Math.imul;
+    Math.imul = () => 0; // every hash is the same
+    let l: GeositeList;
+    try {
+      l = loadGeositeCategory(idx, 'c')!;
+    } finally {
+      Math.imul = imul;
+    }
+    assert.ok((l.suffix as DomainTable).usesFallback);
+    assert.deepEqual([...l.suffix], want);
+    assert.equal(l.suffix.size, want.length);
+    assert.ok(want.every((d) => l.suffix.has(d)) && !l.suffix.has('h1.example.x'));
+    assert.equal(plainDomainCount(l), want.filter((d) => /^[a-z0-9.-]+$/.test(d)).length);
+    const normal = loadGeositeCategory(idx, 'c')!;
+    assert.ok(!(normal.suffix as DomainTable).usesFallback);
+    assert.deepEqual([...normal.suffix], want);
+  });
+
+  it('DNR counts a category over the mirroring limit without listing its domains', () => {
+    const big = Array.from({ length: DNR_MAX_GEOSITE_DOMAINS + 5 }, (_, i): [number, string] => [2, `d${i}.example`]);
+    const l = loadGeositeCategory(indexGeosite(encodeGeosite({ big: [...big, [3, 'd7.example'], [3, 'only-full.example']] })), 'big')!;
+    l.suffix[Symbol.iterator] = () => {
+      throw new Error('listed the domains');
+    };
+    const s = importConfigText('rules:\n  - GEOSITE,big,en-US\n').settings!;
+    const out = compileDnrRules(s, { geosite: () => l });
+    assert.equal(out.rules.length, 0);
+    assert.match(out.skipped.map((x) => x.reason).join('\n'), new RegExp(`${DNR_MAX_GEOSITE_DOMAINS + 6} domains exceed`));
+  });
 });
+
+/** Deterministic pseudo-random numbers in [0, 1) (mulberry32). */
+function random(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 // -------------------------------------------------------------------- rules
 
