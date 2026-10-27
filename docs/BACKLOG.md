@@ -1,6 +1,6 @@
 # Development backlog
 
-Open issues, and the history of fixed ones. Items S1–S8 were found by the stress suite (`npm run e2e:stress`, from 2026-10-25), and its tests reproduce them. S1–S7 and code issues 1, 2, 3, 4, 6 and 7 were fixed in 1.4.0. Since 1.4.0 (unreleased): S8 turned out to be Edge's own behaviour plus the test's timing (test fixed), 5 is done (browser numbers re-measured), and 13 is fixed. Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
+Open issues, and the history of fixed ones. Items S1–S8 were found by the stress suite (`npm run e2e:stress`, from 2026-10-25), and its tests reproduce them. S1–S7 and code issues 1, 2, 3, 4, 6 and 7 were fixed in 1.4.0. In 1.4.1: S8 turned out to be Edge's own behaviour plus the test's timing (test fixed), 5 is done (browser numbers re-measured), and 13 is fixed. Fixed items are in `CHANGELOG.md`. Limitations that users should know about are in [LIMITATIONS.md](LIMITATIONS.md). This file is for developers.
 
 Priority: **P1** fix next, **P2** worth doing, **P3** only if cheap or someone asks.
 
@@ -47,7 +47,7 @@ Fixed: see `CHANGELOG.md` [1.4.0]. Cause: the restart-in-flight path (`Page.stop
 - **Result:** 32 of 34 Edge runs passed (before: 2 of 6). The two failures came before the test recorded diagnostics; the 28 runs since then all passed. If it fails again, the error shows the table, the page's real host and values, and the tab's status at that moment. That tells whether the result was stale or the new page really reported en-US for a moment.
 - **Closed 2026-10-27:** 15 of 15 more Edge 156 runs of the test passed (`node e2e/run.mjs --edge --only "popup keeps its controls"`), 43 in a row since the diagnostics were added, plus the full e2e suite in Edge.
 
-### S8. Edge: a crashed tab's reload sometimes never commits (fixed in the test, unreleased; not an extension bug)
+### S8. Edge: a crashed tab's reload sometimes never commits (fixed in the test in 1.4.1; not an extension bug)
 
 - **Cause:** `Page.crash` doesn't kill an Edge renderer at once. Edge 156 reports `Target.targetCrashed` 1.2–1.8 s after the first crash in a browser and about 0.7 s after later ones (Chrome: about 0.1 s). The test reloaded after a fixed 1.5 s. When the crash wasn't reported yet, the reload committed into the dying renderer and was lost with it, which left a sad tab nothing reloaded.
 - **Evidence** (`research/crash-reload.mjs`, fresh Edge 156 per launch):
@@ -136,7 +136,7 @@ Measured with the new `npm run e2e:nav-perf` (Chrome 156 and Edge 156) and `npm 
 - **What:** in Edge, a spoofed site opened in a new tab shows a visible reload most of the time (9 of 10 runs in Edge 156, `npm run e2e:nav-perf`, 2026-10-27); Chrome usually gets the profile in before the load. Documented in `LIMITATIONS.md` (Timing).
 - **Why it stays:** the load starts before the debugger can attach. The restart-in-flight and reload-once paths in `tab-session.ts` are the fallback. Any change there must keep the invariants in `handoff.md` (never restart a POST, at most one reload per URL).
 
-### 13. "Reload needed" stuck on a tab after a prerendered page was activated (fixed, unreleased)
+### 13. "Reload needed" stuck on a tab after a prerendered page was activated (fixed in 1.4.1)
 
 - **What:** reported on claude.ai: every load in a tab, reloads included, was flagged *This page started loading before its profile could be applied*, although the page was spoofed. The log showed `Start probe unavailable: No frame for given id found` on each commit.
 - **Cause:** Chrome prerenders sites from the new-tab page (the address bar does this for sites visited often). Prerendering is only possible while no debugger is attached (`PrerenderingDisabledByDevTools`), so it happens before the extension attaches. The activated page keeps its own main frame id while the page target id stays the same, and `mainFrameId` was taken once from the target id (`targetIdForTab`). From then on the gate didn't recognise the tab's own document requests (no gate, no abort-and-re-issue on a profile change) and the start probe asked for a frame that no longer existed.
