@@ -4,6 +4,8 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-27
+
 ### Fixed
 - **A link that loads no page left the wrong locale on the current page.** Following a link to a site with another profile when that site answered with no page (`204 No Content`, or a download) left the page you were on reporting the other site's locale (`navigator.language` and every `Intl` constructor) until it was reloaded. The extension ignored every navigation error for 5 seconds after re-issuing a navigation. Now it ignores only the one error its own abort causes, so the failed navigation restores the current page's profile.
 - **Closed tabs could stay tracked for good.** A tab closed while the extension was still attaching to it (for example a link opened in a new tab and closed at once) could be brought back by a late event and kept as a failed session in the service worker's memory, about 4 in 10 such tabs. Closed tabs are now remembered and never tracked again.
@@ -24,6 +26,11 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 ### Added
 - **`npm run test:perf`** runs the performance tests with their time ceilings enforced (`LJ_PERF=1`). `npm test` runs the same code but only reports the times, so a slow or busy machine cannot fail it; where the code counts its own work (the regex check's analysis units), the tests assert on that work instead of time and always run.
 - **Stress tests** (`npm run e2e:stress`, `npm run e2e:stress:edge`): restarts, crashes, navigation storms, tabs closed while loading, same-process popups, blob/srcdoc/nested workers, 5,000 rules and hostile stored regexes, in real Chrome and Edge.
+
+### Known limitations
+- **Going back to 1.3.3 or older** after running 1.4.0: the older version cannot read the new storage format for subscription rules. It uses no subscription rules until it has fetched each subscription again, at its next update or with *Update all*. Your own rules and settings are not affected.
+- **Edge: reloading a crashed tab** sometimes leaves the page blank until it is reloaded again (about 1 in 8 runs of the stress test; seen before this release too, not in Chrome).
+- **A SYSTEM page is checked for a shared process once, when it loads.** If a spoofed same-site page joins its renderer process later, the *Partial* warning appears only after the SYSTEM page navigates or the settings change.
 
 ## [1.3.3] - 2026-10-24
 
@@ -207,7 +214,8 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 - The `Intl` locale is per renderer process, so a conflicting profile in a shared process is reported as *Partial*.
 - Service workers, shared workers and restricted pages are not spoofed. POST navigations that change profile are flagged *Reload needed*.
 
-[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/Sakugar/locale-jacket/compare/v1.3.3...v1.4.0
 [1.3.3]: https://github.com/Sakugar/locale-jacket/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/Sakugar/locale-jacket/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/Sakugar/locale-jacket/compare/v1.3.0...v1.3.1
