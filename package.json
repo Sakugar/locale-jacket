@@ -19,6 +19,7 @@
     "package": "node scripts/build.mjs && node scripts/package.mjs",
     "e2e:edge": "node scripts/build.mjs && node e2e/run.mjs --edge",
     "e2e:launch": "node scripts/build.mjs && node e2e/launch-perf.mjs",
+    "e2e:nav-perf": "node scripts/build.mjs && node e2e/nav-perf.mjs",
     "e2e:stress": "node scripts/build.mjs && node e2e/stress.mjs",
     "e2e:stress:edge": "node scripts/build.mjs && node e2e/stress.mjs --edge",
     "screenshots": "node scripts/build.mjs && node e2e/screenshots.mjs",
