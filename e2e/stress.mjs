@@ -573,8 +573,15 @@ try {
   await test('renderer crash: the reloaded page in the new process is spoofed again', async () => {
     const tab = await openTab(u('apple.localhost', '/plain.html?crash=1'));
     expectLocale(await report(tab), 'ja-JP', 'before the crash');
+    const t0 = Date.now();
+    const crashed = cdp.waitFor('Target.targetCrashed', (p) => p.targetId === tab.targetId, 45000);
     cdp.send('Page.crash', {}, tab.s).catch(() => undefined);
-    await sleep(1500);
+    // Reload only once the renderer is gone, as a user can only press the sad tab's button
+    // then. Edge reports a crash after 0.7–1.8 s (Chrome ~0.1 s), now and then only after
+    // 20–30 s; a reload sent before that commits into the dying process and is lost with
+    // it, with or without the extension (S8, research/crash-reload.mjs).
+    await crashed;
+    if (Date.now() - t0 > 5000) note(`the crash was reported after ${Date.now() - t0} ms`);
     // Like the sad tab's Reload button: a new renderer process for the same URL.
     await cdp.send('Page.navigate', { url: u('apple.localhost', '/plain.html?crash=1'), transitionType: 'reload' }, tab.s).catch(() => undefined);
     await sleep(300);
