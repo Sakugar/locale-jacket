@@ -4,6 +4,8 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-27
+
 ### Added
 - **`npm run e2e:nav-perf`** measures what the extension costs in real Chrome and Edge (`--edge`): page-load time with and without it (unmatched site, spoofed reload, spoofed new tab, cross-site profile switch, page with a cross-site frame and a worker), and its service worker's CPU per navigation and heap with 4 and with 5,000 rules.
 
@@ -221,7 +223,8 @@ All notable changes to Locale Jacket are documented here. The format follows [Ke
 - The `Intl` locale is per renderer process, so a conflicting profile in a shared process is reported as *Partial*.
 - Service workers, shared workers and restricted pages are not spoofed. POST navigations that change profile are flagged *Reload needed*.
 
-[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/Sakugar/locale-jacket/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/Sakugar/locale-jacket/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/Sakugar/locale-jacket/compare/v1.3.3...v1.4.0
 [1.3.3]: https://github.com/Sakugar/locale-jacket/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/Sakugar/locale-jacket/compare/v1.3.1...v1.3.2
